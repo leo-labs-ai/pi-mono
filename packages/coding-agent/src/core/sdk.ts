@@ -406,9 +406,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// Sessions without pi-tool-search (which would re-add them via alwaysActive)
 	// previously got `Bash` without them, making run_in_background:true unusable.
 	//
-	// `Read`/`Edit`/`Write`/`Grep`/`Glob` are now provided by the
-	// my-pi/extensions/native-tool-overrides extension (not core), so they are
-	// referenced as plain strings rather than ToolName values.
+	// `Read`/`Edit`/`Write`/`Grep` are not core ToolName values. Core registers
+	// lowercase `read`/`edit`/`write`/`grep`. `Glob` is a core tool. Uppercase
+	// file-tool names resolve only when an extension registers those aliases.
 	const defaultActiveToolNames: string[] = [
 		"Read",
 		"Bash",
