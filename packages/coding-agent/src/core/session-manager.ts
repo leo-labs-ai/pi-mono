@@ -15,8 +15,10 @@ import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
+	constants,
 	createReadStream,
 	existsSync,
+	fstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -26,7 +28,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { basename, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -1267,7 +1269,7 @@ export class SessionManager {
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
 			if (this.flushed) {
-				appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+				this._appendPersistedLine(`${JSON.stringify(entry)}\n`);
 			} else {
 				// Mark as not flushed so when assistant arrives, all entries get written
 				this.flushed = false;
@@ -1276,17 +1278,155 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
-				}
-			} finally {
-				closeSync(fd);
-			}
+			this._createPersistedSessionFile();
 			this.flushed = true;
 		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+			this._appendPersistedLine(`${JSON.stringify(entry)}\n`);
+		}
+	}
+
+	private _isFsCode(error: unknown, code: string): boolean {
+		return typeof error === "object" && error !== null && "code" in error && error.code === code;
+	}
+
+	private _isEnoent(error: unknown): boolean {
+		return this._isFsCode(error, "ENOENT");
+	}
+
+	private _recoverMissingSessionDir(error: unknown): void {
+		if (!this._isEnoent(error) || !this.sessionFile) throw error;
+		const sessionDir = dirname(this.sessionFile);
+		if (existsSync(sessionDir)) return;
+		mkdirSync(sessionDir, { recursive: true });
+		// Session id only. The absolute file path would leak the home directory.
+		console.warn(`Warning: recreated missing session directory for session ${this.sessionId}`);
+	}
+
+	/**
+	 * ENOENT recovery for a flushed session.
+	 *
+	 * A missing file is exclusively created from resident entries. Resident entries
+	 * may be pruned, so an existing file is never truncated or replaced. Its new
+	 * line is appended only when the session header id matches and the inode is
+	 * unchanged. Append does not create: if that file disappears, one exclusive
+	 * create runs, and a second EEXIST fails without writing.
+	 */
+	private _appendPersistedLine(line: string): void {
+		try {
+			this._appendExistingFile(line);
+		} catch (error) {
+			this._recoverMissingSessionDir(error);
+			this._recoverFlushedSessionFile(line);
+		}
+	}
+
+	private _appendExistingFile(line: string): void {
+		const fd = openSync(this.sessionFile!, constants.O_WRONLY | constants.O_APPEND);
+		try {
+			writeFileSync(fd, line);
+		} finally {
+			closeSync(fd);
+		}
+	}
+
+	private _recoverFlushedSessionFile(line: string): void {
+		try {
+			this._createFileFromResidentEntries();
+		} catch (error) {
+			if (!this._isFsCode(error, "EEXIST")) throw error;
+			this._appendToMatchingRestoredFile(line);
+		}
+	}
+
+	private _createFileFromResidentEntries(): void {
+		const fd = openSync(this.sessionFile!, "wx");
+		try {
+			for (const entry of this.fileEntries) {
+				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+			}
+		} finally {
+			closeSync(fd);
+		}
+	}
+
+	private _leaveRestoredFileUntouched(): never {
+		throw new Error(`Session ${this.sessionId} file changed while recovering a missing directory; left it untouched`);
+	}
+
+	private _createResidentFileUnlessPresent(): void {
+		try {
+			this._createFileFromResidentEntries();
+		} catch (error) {
+			if (this._isFsCode(error, "EEXIST")) this._leaveRestoredFileUntouched();
+			throw error;
+		}
+	}
+
+	/** Undefined means the path disappeared and the caller should exclusively create it. */
+	private _matchingRestoredIdentity(): { dev: number; ino: number } | undefined {
+		try {
+			const header = readSessionHeader(this.sessionFile!);
+			if (!header || header.id !== this.sessionId) {
+				throw new Error(`Refusing to modify session ${this.sessionId}: restored file header does not match`);
+			}
+			const stat = statSync(this.sessionFile!);
+			return { dev: stat.dev, ino: stat.ino };
+		} catch (error) {
+			if (this._isEnoent(error)) return undefined;
+			if (error instanceof SessionHeaderScanLimitError) {
+				throw new Error(`Refusing to modify session ${this.sessionId}: restored file header is unreadable`);
+			}
+			throw error;
+		}
+	}
+
+	private _appendToMatchingRestoredFile(line: string): void {
+		const identity = this._matchingRestoredIdentity();
+		if (!identity) {
+			this._createResidentFileUnlessPresent();
+			return;
+		}
+
+		let fd: number;
+		try {
+			fd = openSync(this.sessionFile!, constants.O_RDWR | constants.O_APPEND);
+		} catch (error) {
+			if (this._isEnoent(error)) {
+				this._createResidentFileUnlessPresent();
+				return;
+			}
+			throw error;
+		}
+
+		let recreate = false;
+		try {
+			const stat = fstatSync(fd);
+			if (stat.dev !== identity.dev || stat.ino !== identity.ino) this._leaveRestoredFileUntouched();
+			if (stat.nlink === 0) {
+				recreate = true;
+			} else {
+				const previous = Buffer.alloc(1);
+				const needsNewline =
+					stat.size > 0 && readSync(fd, previous, 0, 1, stat.size - 1) === 1 && previous[0] !== 0x0a;
+				writeFileSync(fd, needsNewline ? `\n${line}` : line);
+			}
+		} finally {
+			closeSync(fd);
+		}
+		if (recreate) this._createResidentFileUnlessPresent();
+	}
+
+	private _createPersistedSessionFile(): void {
+		try {
+			this._createFileFromResidentEntries();
+		} catch (error) {
+			this._recoverMissingSessionDir(error);
+			try {
+				this._createFileFromResidentEntries();
+			} catch (retryError) {
+				if (this._isFsCode(retryError, "EEXIST")) this._leaveRestoredFileUntouched();
+				throw retryError;
+			}
 		}
 	}
 
