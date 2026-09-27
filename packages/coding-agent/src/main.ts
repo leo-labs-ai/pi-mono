@@ -906,6 +906,7 @@ export async function main(args: string[], options?: MainOptions) {
 		if (created.session.model && cliThinkingOverride) {
 			created.session.setThinkingLevel(created.session.thinkingLevel);
 		}
+		diagnostics.push(...created.session.getStartupDiagnostics());
 
 		return {
 			...created,
