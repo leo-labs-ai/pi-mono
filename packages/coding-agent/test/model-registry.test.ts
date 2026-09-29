@@ -946,6 +946,8 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((model) => model.id === "anthropic/claude-opus-4.1");
 			const modelA = models.find((model) => model.id === "fixture/model-a");
 			const modelB = models.find((model) => model.id === "fixture/model-b");
 
@@ -985,6 +987,7 @@ describe("ModelRegistry", () => {
 						"fixture/model-a": {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
 						},
+						"anthropic/claude-opus-4.1": {
 						"fixture/model-b": {
 							compat: { openRouterRouting: { only: ["anthropic"] } },
 						},
@@ -995,6 +998,8 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
 			const modelA = models.find((m) => m.id === "fixture/model-a");
 			const modelB = models.find((m) => m.id === "fixture/model-b");
 
@@ -1027,6 +1032,9 @@ describe("ModelRegistry", () => {
 			expect(modelA?.name).toBe("Proxied Model A");
 
 			// Other models should have the baseUrl but not the name override
+			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
+			expect(opus?.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(opus?.name).not.toBe("Proxied Sonnet");
 			const modelB = models.find((m) => m.id === "fixture/model-b");
 			expect(modelB?.baseUrl).toBe("https://my-proxy.example.com/v1");
 			expect(modelB?.name).not.toBe("Proxied Model A");

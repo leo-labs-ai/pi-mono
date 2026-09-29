@@ -120,6 +120,7 @@ export interface AgentOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
+	onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
 	shouldStopAfterTurn?: (context: AgentTurnContext, signal?: AbortSignal) => boolean | Promise<boolean>;
@@ -210,6 +211,7 @@ export class Agent {
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
+	public onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
 	public beforeToolCall?: (
 		context: BeforeToolCallContext,
 		signal?: AbortSignal,
@@ -255,6 +257,7 @@ export class Agent {
 		this.getApiKey = runtimeOptions.getApiKey;
 		this.onPayload = runtimeOptions.onPayload;
 		this.onResponse = runtimeOptions.onResponse;
+		this.onProviderStreamEvent = runtimeOptions.onProviderStreamEvent;
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
 		this.afterToolCall = runtimeOptions.afterToolCall;
 		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
@@ -552,6 +555,7 @@ export class Agent {
 			cacheAffinityKey: this.cacheAffinityKey,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
+			onProviderStreamEvent: this.onProviderStreamEvent,
 			transport: this.transport,
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,

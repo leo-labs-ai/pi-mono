@@ -1,23 +1,23 @@
-# @lue-labs/pi-agent-core
+# @earendil-works/pi-agent-core
 
-Stateful agent with tool execution and event streaming. Built on `@lue-labs/pi-ai`.
+Stateful agent with tool execution and event streaming. Built on `@earendil-works/pi-ai`.
 
 ## Installation
 
 ```bash
-npm install @lue-labs/pi-agent-core
+npm install @earendil-works/pi-agent-core
 ```
 
 ### SQLite session backends
 
-The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@lue-labs/pi-session-backend-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other session backends to ship as their own packages in the future.
+The SQLite session backend and the `node:sqlite` adapter live in a separate package, `@earendil-works/pi-session-backend-sqlite-node`, so the core package does not pull in runtime builtins or native SQLite dependencies by default. The backend accepts a runtime-specific SQLite factory, allowing other session backends to ship as their own packages in the future.
 
 ## Quick Start
 
 ```typescript
-import { Agent } from "@lue-labs/pi-agent-core";
-import { createModels } from "@lue-labs/pi-ai";
-import { anthropicProvider } from "@lue-labs/pi-ai/providers/anthropic";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { createModels } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 
 const models = createModels();
 models.setProvider(anthropicProvider());
@@ -127,26 +127,6 @@ The `beforeToolCall` hook runs after `tool_execution_start` and validated argume
 
 Tools, blocked `beforeToolCall` results, and `afterToolCall` overrides can return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
 
-The `Agent` class accepts `shouldStopAfterTurn` in `AgentOptions`. Low-level loop callers can set the same hook in `AgentLoopConfig`:
-
-```typescript
-const stream = agentLoop(
-  prompts,
-  context,
-  {
-    model,
-    convertToLlm,
-    shouldStopAfterTurn: async ({ message, toolResults, context, newMessages }) => {
-      return shouldCompactBeforeNextTurn(context.messages);
-    },
-  },
-  undefined,
-  models.streamSimple.bind(models),
-);
-```
-
-`shouldStopAfterTurn` runs after `turn_end` is emitted and after the assistant response and any tool executions have completed normally. Its context includes `hasMoreToolCalls`, which is `false` when the assistant made no tool calls or every finalized result terminated the batch. If it returns `true`, the loop emits `agent_end` and exits before polling steering or follow-up queues, and before starting another LLM call. It does not abort the provider stream, does not cancel running tools, and does not alter the assistant message stop reason. The `AgentOptions` callback also receives the active run's `AbortSignal` as its second argument.
-
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
 
 ### Request preparation and turn finalization
@@ -236,7 +216,7 @@ const agent = new Agent({
   initialState: {
     systemPrompt: string,
     model: Model<any>,
-    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "adaptive",
+    thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max",
     tools: AgentTool<any>[],
     messages: AgentMessage[],
   },
@@ -454,7 +434,7 @@ Follow-up messages are checked only when there are no more tool calls and no ste
 Extend `AgentMessage` via declaration merging:
 
 ```typescript
-declare module "@lue-labs/pi-agent-core" {
+declare module "@earendil-works/pi-agent-core" {
   interface CustomAgentMessages {
     notification: { role: "notification"; text: string; timestamp: number };
   }
@@ -531,12 +511,16 @@ Thrown errors are caught by the agent and reported to the LLM as tool errors wit
 
 Return `terminate: true` from `execute()`, a blocked `beforeToolCall`, or `afterToolCall` to hint that the agent should stop after the current tool batch. This only takes effect when every finalized tool result in the batch is terminating. The hint is runtime-only; emitted `toolResult` transcript messages remain standard LLM tool results.
 
+### MCP and Codemode
+
+`@earendil-works/pi-mcp` connects to MCP servers and `@earendil-works/pi-codemode` runs model-written JavaScript that calls tools. [examples/mcp-codemode](examples/mcp-codemode) wraps both as `AgentTool`s: one tool per MCP tool, and a `codemode` tool whose scripts call the agent's tools through `runToolCall()`, so `beforeToolCall` and `afterToolCall` apply to those calls too.
+
 ## Proxy Usage
 
 For browser apps that proxy through a backend:
 
 ```typescript
-import { Agent, streamProxy } from "@lue-labs/pi-agent-core";
+import { Agent, streamProxy } from "@earendil-works/pi-agent-core";
 
 const agent = new Agent({
   streamFn: (model, context, options) =>
@@ -553,7 +537,7 @@ const agent = new Agent({
 For direct control without the Agent class:
 
 ```typescript
-import { agentLoop, agentLoopContinue } from "@lue-labs/pi-agent-core";
+import { agentLoop, agentLoopContinue } from "@earendil-works/pi-agent-core";
 
 const context: AgentContext = {
   messages: [{ role: "system", content: "You are helpful.", timestamp: Date.now() }],

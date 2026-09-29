@@ -19,6 +19,11 @@ import { manifestEntryPath, readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo } from "../source-info.ts";
 import { recordTiming, time, timingsEnabled } from "../timings.ts";
 import { createForkExtensionAPI } from "./extension-api-fork.ts";
+import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
+import { readPiManifest } from "../pi-manifest.ts";
+import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
+import { time } from "../timings.ts";
+import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type {
 	AgentTelemetry,
 	DeferredExtension,
@@ -30,6 +35,7 @@ import type {
 	ExtensionLoadRequest,
 	ExtensionRuntime,
 	ExtensionSetting,
+	ExtensionVirtualModel,
 	LoadExtensionsResult,
 	MarkdownTransformer,
 	MessageRenderer,
@@ -121,13 +127,13 @@ function getAliases(): Record<string, string> {
 		// upstream scopes (@earendil-works/* current, @mariozechner/* legacy).
 		// Map them onto the fork's @lue-labs/* entries so value imports resolve
 		// in the bundled binary (type-only imports already erase at runtime).
-		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
-		"@earendil-works/pi-agent-core": piAgentCoreEntry,
-		"@earendil-works/pi-tui": piTuiEntry,
-		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
-		"@earendil-works/pi-ai/compat": piAiCompatEntry,
-		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
-		"@earendil-works/pi-ai": piAiCompatEntry,
+		"@lue-labs/pi-coding-agent": piCodingAgentEntry,
+		"@lue-labs/pi-agent-core": piAgentCoreEntry,
+		"@lue-labs/pi-tui": piTuiEntry,
+		"@lue-labs/pi-ai/providers/all": piAiProvidersEntry,
+		"@lue-labs/pi-ai/compat": piAiCompatEntry,
+		"@lue-labs/pi-ai/oauth": piAiOauthEntry,
+		"@lue-labs/pi-ai": piAiCompatEntry,
 		"@mariozechner/pi-coding-agent": piCodingAgentEntry,
 		"@mariozechner/pi-agent-core": piAgentCoreEntry,
 		"@mariozechner/pi-tui": piTuiEntry,
@@ -250,6 +256,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		getAllTools: notInitialized,
 		getToolDefinitions: notInitialized,
 		getCustomEntries: notInitialized,
+		getSettings: notInitialized,
 		setActiveTools: notInitialized,
 		setDeferredOverrides: notInitialized,
 		setToolNamespaces: notInitialized,
@@ -265,6 +272,9 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		pendingProviderRegistrations: [],
 		suppressNewToolActivation: false,
 		pendingNativeProviderRegistrations: [],
+		mcpServers: new McpServerRegistry(),
+		pendingVirtualModelRegistrations: [],
+		createContext: notInitialized,
 		assertActive,
 		invalidate: (message) => {
 			if (state.staleMessage) return;
@@ -313,6 +323,14 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		hideOverlayFn: slotNoOp,
 		hasMainPaneFn: () => false,
 		services: new Map(),
+		registerVirtualModel: (definition, extensionPath = "<unknown>") => {
+			runtime.pendingVirtualModelRegistrations.push({ definition, extensionPath });
+		},
+		unregisterVirtualModel: (provider, id) => {
+			runtime.pendingVirtualModelRegistrations = runtime.pendingVirtualModelRegistrations.filter(
+				({ definition }) => definition.provider !== provider || definition.id !== id,
+			);
+		},
 	};
 
 	return runtime;
@@ -514,6 +532,11 @@ function createExtensionAPI(
 			return runtime.getAllTools();
 		},
 
+		getSettings() {
+			assertActive();
+			return runtime.getSettings();
+		},
+
 		setActiveTools(toolNames: string[]): void {
 			assertActive();
 			runtime.setActiveTools(toolNames);
@@ -552,6 +575,46 @@ function createExtensionAPI(
 		unregisterProvider(name: string) {
 			assertActive();
 			applyRuntimeChange(() => runtime.unregisterProvider(name, extension.path));
+		},
+
+		registerMcpServer(name: string, config: McpServerConfig) {
+			assertActive();
+			const validated = validateMcpServerConfig(name, config);
+			if (typeof validated === "string") {
+				throw new Error(`Invalid MCP server registered by extension "${extension.path}": ${validated}`);
+			}
+			const owner = runtime.mcpServers.get(name)?.extensionPath;
+			if (owner !== undefined && owner !== extension.path) {
+				throw new Error(`MCP server "${name}" is already registered by extension "${owner}"`);
+			}
+			const server = { name, config: structuredClone(validated), extensionPath: extension.path };
+			applyRuntimeChange(() => runtime.mcpServers.register(server));
+		},
+
+		unregisterMcpServer(name: string) {
+			assertActive();
+			applyRuntimeChange(() => runtime.mcpServers.unregister(name, extension.path));
+		},
+
+		getMcpServers() {
+			assertActive();
+			return runtime.mcpServers.list();
+		},
+
+		registerVirtualModel<TState>(model: ExtensionVirtualModel<TState>) {
+			assertActive();
+			// Routing runs after the runner binds, so the context is created per request. The state
+			// comes from the session branch that this router wrote.
+			const definition: VirtualModelDefinition = {
+				...model,
+				route: (request) => model.route(request as ModelRouteRequest<TState>, runtime.createContext()),
+			};
+			applyRuntimeChange(() => runtime.registerVirtualModel(definition, extension.path));
+		},
+
+		unregisterVirtualModel(provider: string, id: string) {
+			assertActive();
+			applyRuntimeChange(() => runtime.unregisterVirtualModel(provider, id));
 		},
 
 		events: {
@@ -650,11 +713,8 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
  * Create an Extension object with empty collections.
  */
 function createExtension(extensionPath: string, resolvedPath: string): Extension {
-	const source =
-		extensionPath.startsWith("<") && extensionPath.endsWith(">")
-			? extensionPath.slice(1, -1).split(":")[0] || "temporary"
-			: "local";
-	const baseDir = extensionPath.startsWith("<") ? undefined : path.dirname(resolvedPath);
+	const source = getSyntheticPathSource(extensionPath) ?? "local";
+	const baseDir = isSyntheticPath(extensionPath) ? undefined : path.dirname(resolvedPath);
 
 	return {
 		path: extensionPath,
@@ -766,6 +826,8 @@ async function loadExtensionsInternal(
 	const extensions: Extension[] = [];
 	const deferredExtensions: DeferredExtension[] = [];
 	const errors: ExtensionLoadError[] = [];
+	const errors: Array<{ path: string; error: string }> = [];
+	const warnings: Array<{ path: string; warning: string }> = [];
 	const cacheToken = useCache ? useExtensionCacheCwd(cwd) : undefined;
 	const resolvedCwd = cacheToken?.cwd ?? resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
@@ -808,6 +870,7 @@ async function loadExtensionsInternal(
 		deferredExtensions,
 		errors,
 		eventBus: resolvedEventBus,
+		warnings,
 		runtime: resolvedRuntime,
 	};
 }

@@ -47,6 +47,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	routedModel?: { model: { id: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
 	const entries =

@@ -2,7 +2,6 @@ import { fauxAssistantMessage } from "@lue-labs/pi-ai";
 import { Container, Text } from "@lue-labs/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
-import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme, type Theme, theme } from "../../../src/modes/interactive/theme/theme.ts";
 import { createHarness } from "../harness.ts";
@@ -44,6 +43,8 @@ function createUiContext(
 		setToolsExpanded: () => {},
 	};
 }
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, createTestUiContext } from "../harness.ts";
 
 type LoadedResourcesResult<T> = { [K in keyof T]: T[K] } & { diagnostics: [] };
 
@@ -293,7 +294,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext((message) => events.push(`notify:${message}`)),
+						uiContext: createTestUiContext({ notify: (message) => events.push(`notify:${message}`) }),
 						mode: "tui",
 					});
 				},
@@ -334,7 +335,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext(() => {}),
+						uiContext: createTestUiContext(),
 						mode: "tui",
 					});
 				},
@@ -386,7 +387,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext(() => {}),
+						uiContext: createTestUiContext(),
 						mode: "tui",
 					});
 				},
@@ -438,7 +439,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			await harness.session.bindExtensions({
-				uiContext: createUiContext((message) => events.push(message)),
+				uiContext: createTestUiContext({ notify: (message) => events.push(message) }),
 				mode: "tui",
 			});
 			expect(events).toEqual(["start:startup", "notify:startup"]);

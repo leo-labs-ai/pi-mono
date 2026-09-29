@@ -5,9 +5,6 @@
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"paths": {
-			"*": [
-				"./*"
-			],
 			"@earendil-works/chord": [
 				"./packages/chord/src/index.ts"
 			],
@@ -23,101 +20,32 @@
 			"@earendil-works/chord/node": [
 				"./packages/chord/src/node.ts"
 			],
-			"@lue-labs/pi-telemetry": [
-				"./packages/telemetry/src/index.ts"
-			],
-			"@lue-labs/pi-telemetry/testing": [
-				"./packages/telemetry/src/testing/index.ts"
-			],
-			"@lue-labs/pi-ai": [
-				"./packages/ai/src/index.ts"
-			],
-			"@lue-labs/pi-ai/oauth": [
-				"./packages/ai/src/oauth.ts"
-			],
-			"@lue-labs/pi-ai/*": [
-				"./packages/ai/src/*.ts",
-				"./packages/ai/src/providers/*.ts"
-			],
-			"@lue-labs/pi-ai/dist/*": [
-				"./packages/ai/src/*"
-			],
-			"@lue-labs/pi-agent-core": [
-				"./packages/agent/src/index.ts"
-			],
-			"@lue-labs/pi-agent-core/harness/session/testing": [
-				"./packages/agent/src/harness/session/testing/index.ts"
-			],
-			"@lue-labs/pi-agent-core/session/testing": [
-				"./packages/agent/src/harness/session/testing/index.ts"
-			],
-			"@lue-labs/pi-agent-core/node": [
-				"./packages/agent/src/node.ts"
-			],
-			"@lue-labs/pi-agent-core/*": [
-				"./packages/agent/src/*.ts",
-				"./packages/agent/src/*/index.ts",
-				"./packages/agent/src/*"
-			],
-			"@lue-labs/pi-session-backend-sqlite-node": [
-				"./packages/session-backends/sqlite-node/src/index.ts"
-			],
-			"@lue-labs/pi-coding-agent": [
-				"./packages/coding-agent/src/index.ts"
-			],
-			"@lue-labs/pi-coding-agent/experimental/plugin": [
-				"./packages/coding-agent/src/experimental/plugin.ts"
-			],
-			"@lue-labs/pi-coding-agent/hooks": [
-				"./packages/coding-agent/src/core/hooks/index.ts"
-			],
-			"@lue-labs/pi-coding-agent/*": [
-				"./packages/coding-agent/src/*"
-			],
-			"@lue-labs/pi-protocol": [
-				"./packages/protocol/src/index.ts"
-			],
-			"@lue-labs/pi-protocol/*": [
-				"./packages/protocol/src/*"
-			],
-			"@lue-labs/pi-client": [
-				"./packages/client/src/index.ts"
-			],
-			"@lue-labs/pi-client/unix": [
-				"./packages/client/src/unix.ts"
-			],
-			"@lue-labs/pi-client/*": [
-				"./packages/client/src/*"
-			],
-			"@lue-labs/pi-server": [
-				"./packages/server/src/index.ts"
-			],
-			"@lue-labs/pi-server/unix": [
-				"./packages/server/src/transports/unix/index.ts"
-			],
-			"@lue-labs/pi-server/*": [
-				"./packages/server/src/*"
-			],
-			"typebox": [
-				"./node_modules/typebox"
-			],
-			"@lue-labs/pi-tui": [
-				"./packages/tui/src/index.ts"
-			],
-			"@lue-labs/pi-tui/*": [
-				"./packages/tui/src/*"
-			],
-			"@earendil-works/pi-agent-old": [
-				"./packages/agent-old/src/index.ts"
-			],
-			"@earendil-works/pi-agent-old/*": [
-				"./packages/agent-old/src/*"
-			],
 			"@earendil-works/pi-telemetry": [
 				"./packages/telemetry/src/index.ts"
 			],
 			"@earendil-works/pi-telemetry/testing": [
 				"./packages/telemetry/src/testing/index.ts"
+			],
+			"@earendil-works/pi-codemode": [
+				"./packages/codemode/src/index.ts"
+			],
+			"@earendil-works/pi-codemode/declarations": [
+				"./packages/codemode/src/declarations.ts"
+			],
+			"@earendil-works/pi-codemode/source": [
+				"./packages/codemode/src/source.ts"
+			],
+			"@earendil-works/pi-codemode/worker": [
+				"./packages/codemode/src/runtime/worker.ts"
+			],
+			"@earendil-works/pi-mcp": [
+				"./packages/mcp/src/index.ts"
+			],
+			"@earendil-works/pi-mcp/oauth": [
+				"./packages/mcp/src/oauth/index.ts"
+			],
+			"@earendil-works/pi-mcp/testing": [
+				"./packages/mcp/src/testing/index.ts"
 			],
 			"@earendil-works/pi-ai": [
 				"./packages/ai/src/index.ts"
@@ -135,6 +63,9 @@
 			"@earendil-works/pi-durable": [
 				"./packages/durable/src/index.ts"
 			],
+			"@earendil-works/pi-durable/testing": [
+				"./packages/durable/src/testing/index.ts"
+			],
 			"@earendil-works/pi-durable/*": [
 				"./packages/durable/src/*"
 			],
@@ -145,9 +76,6 @@
 				"./packages/agent/src/harness/session/testing/index.ts"
 			],
 			"@earendil-works/pi-agent-core/experimental/pico3": [
-				"./packages/agent/src/harness/pico3/index.ts"
-			],
-			"@lue-labs/pi-agent-core/experimental/pico3": [
 				"./packages/agent/src/harness/pico3/index.ts"
 			],
 			"@earendil-works/pi-agent-core/node": [
@@ -197,24 +125,138 @@
 			"@earendil-works/pi-server/*": [
 				"./packages/server/src/*"
 			],
+			"typebox": [
+				"./node_modules/typebox"
+			],
 			"@earendil-works/pi-tui": [
 				"./packages/tui/src/index.ts"
 			],
 			"@earendil-works/pi-tui/*": [
 				"./packages/tui/src/*"
+			],
+			"@earendil-works/pi-agent-old": [
+				"./packages/agent-old/src/index.ts"
+			],
+			"@earendil-works/pi-agent-old/*": [
+				"./packages/agent-old/src/*"
+			],
+			"@lue-labs/pi-telemetry": [
+				"./packages/telemetry/src/index.ts"
+			],
+			"@lue-labs/pi-telemetry/testing": [
+				"./packages/telemetry/src/testing/index.ts"
+			],
+			"@lue-labs/pi-ai": [
+				"./packages/ai/src/index.ts"
+			],
+			"@lue-labs/pi-ai/oauth": [
+				"./packages/ai/src/oauth.ts"
+			],
+			"@lue-labs/pi-ai/*": [
+				"./packages/ai/src/*.ts",
+				"./packages/ai/src/providers/*.ts"
+			],
+			"@lue-labs/pi-ai/dist/*": [
+				"./packages/ai/src/*"
+			],
+			"@lue-labs/pi-durable": [
+				"./packages/durable/src/index.ts"
+			],
+			"@lue-labs/pi-durable/testing": [
+				"./packages/durable/src/testing/index.ts"
+			],
+			"@lue-labs/pi-durable/*": [
+				"./packages/durable/src/*"
+			],
+			"@lue-labs/pi-agent-core": [
+				"./packages/agent/src/index.ts"
+			],
+			"@lue-labs/pi-agent-core/harness/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
+			],
+			"@lue-labs/pi-agent-core/experimental/pico3": [
+				"./packages/agent/src/harness/pico3/index.ts"
+			],
+			"@lue-labs/pi-agent-core/node": [
+				"./packages/agent/src/node.ts"
+			],
+			"@lue-labs/pi-agent-core/*": [
+				"./packages/agent/src/*.ts",
+				"./packages/agent/src/*/index.ts",
+				"./packages/agent/src/*"
+			],
+			"@lue-labs/pi-session-backend-sqlite-node": [
+				"./packages/session-backends/sqlite-node/src/index.ts"
+			],
+			"@lue-labs/pi-coding-agent": [
+				"./packages/coding-agent/src/index.ts"
+			],
+			"@lue-labs/pi-coding-agent/experimental/plugin": [
+				"./packages/coding-agent/src/experimental/plugin.ts"
+			],
+			"@lue-labs/pi-coding-agent/hooks": [
+				"./packages/coding-agent/src/core/hooks/index.ts"
+			],
+			"@lue-labs/pi-coding-agent/*": [
+				"./packages/coding-agent/src/*"
+			],
+			"@lue-labs/pi-protocol": [
+				"./packages/protocol/src/index.ts"
+			],
+			"@lue-labs/pi-protocol/*": [
+				"./packages/protocol/src/*"
+			],
+			"@lue-labs/pi-client": [
+				"./packages/client/src/index.ts"
+			],
+			"@lue-labs/pi-client/unix": [
+				"./packages/client/src/unix.ts"
+			],
+			"@lue-labs/pi-client/*": [
+				"./packages/client/src/*"
+			],
+			"@lue-labs/pi-server": [
+				"./packages/server/src/index.ts"
+			],
+			"@lue-labs/pi-server/unix": [
+				"./packages/server/src/transports/unix/index.ts"
+			],
+			"@lue-labs/pi-server/*": [
+				"./packages/server/src/*"
+			],
+			"@lue-labs/pi-tui": [
+				"./packages/tui/src/index.ts"
+			],
+			"@lue-labs/pi-tui/*": [
+				"./packages/tui/src/*"
+			],
+			"@lue-labs/pi-agent-old": [
+				"./packages/agent-old/src/index.ts"
+			],
+			"@lue-labs/pi-agent-old/*": [
+				"./packages/agent-old/src/*"
+			],
+			"*": [
+				"./*"
+			],
+			"@lue-labs/pi-agent-core/session/testing": [
+				"./packages/agent/src/harness/session/testing/index.ts"
 			]
 		}
 	},
 	"include": [
+		"scripts/model-catalog-protocol.ts",
+		"scripts/model-catalog-protocol.test.ts",
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
 		"packages/session-backends/*/src/**/*",
 		"packages/session-backends/*/test/**/*",
-		"packages/coding-agent/examples/**/*"
+		"packages/coding-agent/examples/**/*",
+		"packages/agent/examples/**/*"
 	],
 	"exclude": [
-		"packages/coding-agent/examples/extensions/sandbox/**",
+		"**/dist/**",
 		"packages/coding-agent/examples/extensions/gondolin/**",
-		"**/dist/**"
+		"packages/coding-agent/examples/extensions/sandbox/**"
 	]
 }

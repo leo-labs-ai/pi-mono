@@ -11,7 +11,14 @@ import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue, runAgentLoop } from "../src/agent-loop.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentLoopConfig,
+	AgentMessage,
+	AgentTool,
+	AgentToolCall,
+} from "../src/types.ts";
 
 // Mock stream for testing - mimics MockAssistantStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {

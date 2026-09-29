@@ -1,3 +1,5 @@
+import type { Terminal, WheelScrollLines } from "@lue-labs/pi-tui";
+import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@lue-labs/pi-tui";
 import type { Terminal } from "@lue-labs/pi-tui";
 import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@lue-labs/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
@@ -12,6 +14,7 @@ export interface InteractiveTuiOptions {
 	readonly terminal?: Terminal;
 	readonly onRightClickPaste?: () => void;
 	readonly fullscreenCopyOnSelect?: boolean;
+	readonly fullscreenWheelScrollLines?: WheelScrollLines;
 }
 
 /** Composition root shared by coding-agent presentations. */
@@ -34,6 +37,7 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
 			openUrl: openBrowser,
 			onRightClickPaste: options.onRightClickPaste,
 			copyOnSelect: options.fullscreenCopyOnSelect,
+			wheelScrollLines: options.fullscreenWheelScrollLines ?? "auto",
 			copySelection: async (text) => {
 				try {
 					await copyToClipboard(text);

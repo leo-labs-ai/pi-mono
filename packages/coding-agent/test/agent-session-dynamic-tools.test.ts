@@ -199,7 +199,7 @@ describe("AgentSession dynamic tool registration", () => {
 			origin: "top-level",
 		});
 		expect(readTool?.sourceInfo).toMatchObject({
-			path: "<builtin:read>",
+			path: "builtin:read",
 			source: "builtin",
 			scope: "temporary",
 			origin: "top-level",

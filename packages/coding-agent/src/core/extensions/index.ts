@@ -75,6 +75,7 @@ export type {
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
+	ExecuteToolOptions,
 	Extension,
 	ExtensionActions,
 	// API
@@ -100,8 +101,10 @@ export type {
 	ExtensionRuntime,
 	ExtensionSetting,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
 	ForkAgentOptions,
 	ForkAgentResult,
@@ -125,6 +128,7 @@ export type {
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
 	MessageEndEventResult,
@@ -145,6 +149,7 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
@@ -182,6 +187,7 @@ export type {
 	TelemetryEvent,
 	TerminalInputHandler,
 	ThinkingLevelSelectEvent,
+	ToolAnnotations,
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -193,7 +199,11 @@ export type {
 	ToolExecutionMode,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	ToolExposure,
 	ToolInfo,
+	ToolLoadout,
+	ToolLoadoutChanges,
+	ToolNamespace,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,

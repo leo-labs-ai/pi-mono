@@ -3,7 +3,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@lue-labs/pi-tui"
 import type { AgentSession } from "../../../core/agent-session.ts";
 import { computeCacheHealth } from "../../../core/cache-health.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
-import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
 import { FooterUsageTracker, type UsageTotals } from "./footer-usage.ts";
 
@@ -58,6 +58,17 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 
 	if (!isInsideHome) return cwd;
 	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
+}
+
+interface SessionStats {
+	session: AgentSession;
+	sessionId: string;
+	leafId: string | null;
+	entryCount: number;
+	limitsModel: unknown;
+	usageTotals: UsageTotals;
+	latestCacheHitRate: number | undefined;
+	contextUsage: ContextUsage | undefined;
 }
 
 /**
@@ -204,7 +215,7 @@ export class FooterComponent implements Component {
 		const usageTotals = createUsageTotals();
 		let _latestCacheHitRate: number | undefined;
 
-		for (const entry of this.session.sessionManager.getEntries()) {
+		for (const entry of sessionManager.getEntries()) {
 			if (entry.type === "usage") {
 				addUsageToTotals(usageTotals, entry.usage);
 			} else if (entry.type === "message" && entry.message.role === "assistant") {
@@ -224,6 +235,22 @@ export class FooterComponent implements Component {
 		// Calculate context usage from session (handles compaction correctly).
 		// After compaction, tokens are unknown until the next LLM response.
 		const contextUsage = this.session.getContextUsage();
+		this.sessionStats = {
+			session: this.session,
+			sessionId,
+			leafId,
+			entryCount,
+			limitsModel,
+			usageTotals,
+			latestCacheHitRate,
+			contextUsage,
+		};
+		return this.sessionStats;
+	}
+
+	render(width: number): string[] {
+		const state = this.session.state;
+		const { usageTotals, latestCacheHitRate, contextUsage } = this.getSessionStats();
 		const contextWindow = contextUsage?.contextWindow ?? state.model?.contextWindow ?? 0;
 		const contextUsageDetails = contextUsage?.details;
 		const deferredToolTokens = contextUsageDetails?.deferredToolSchemaTokens ?? 0;
