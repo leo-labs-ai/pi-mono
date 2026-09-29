@@ -21,7 +21,6 @@
  * so each branch sees the values written on its own path.
  */
 
-import type { AgentTool } from "@lue-labs/pi-agent-core";
 import type { CodemodeJsonSchema, CodemodeTool } from "@earendil-works/pi-codemode";
 import {
 	MCP_TYPESCRIPT_PREAMBLE,
@@ -31,6 +30,7 @@ import {
 	toCodemodeIdentifier,
 } from "@earendil-works/pi-codemode/declarations";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
+import type { AgentTool } from "@lue-labs/pi-agent-core";
 import { type Static, Type } from "typebox";
 import type {
 	ToolDefinition,

@@ -2,7 +2,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels } from "@earendil-works/pi-ai";
 import {
 	createRegistry,
 	defineDoc,
@@ -14,6 +13,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { createModels } from "@lue-labs/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";

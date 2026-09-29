@@ -2,7 +2,7 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/07-configuration.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels, Type } from "@earendil-works/pi-ai";
+import { createModels, Type } from "@lue-labs/pi-ai";
 import { createRegistry, Harness, MemoryStorage, type ToolRegistration } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;

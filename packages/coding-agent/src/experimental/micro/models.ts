@@ -1,8 +1,4 @@
-import type {
-	Models as PicoModels,
-	RequestOptions,
-	SystemMessage,
-} from "@lue-labs/pi-agent-core/experimental/pico3";
+import type { Models as PicoModels, RequestOptions, SystemMessage } from "@lue-labs/pi-agent-core/experimental/pico3";
 import type {
 	Context as AiContext,
 	AssistantMessageEvent,

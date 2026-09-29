@@ -1,7 +1,7 @@
 // Reload extension code through the registry.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/10-registry-reload.ts
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "@lue-labs/pi-ai";
 import { createRegistry, type ToolRegistration } from "../../src/index.ts";
 
 function exampleTool(name: string, description: string): ToolRegistration {

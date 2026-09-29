@@ -2,7 +2,7 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/15-system-prompt.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels, fauxAssistantMessage, fauxProvider } from "@earendil-works/pi-ai";
+import { createModels, fauxAssistantMessage, fauxProvider } from "@lue-labs/pi-ai";
 import {
 	type Conversation,
 	ConversationConfig,

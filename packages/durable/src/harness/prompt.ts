@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import type { Message, SystemMessage } from "@earendil-works/pi-ai";
+import type { Message, SystemMessage } from "@lue-labs/pi-ai";
 import { SystemEntry } from "../entries.ts";
 import type { ContextEdit, TypedEntryDraft } from "../types.ts";
 import type { ContextView, PromptInput, PromptSection, ToolRegistration } from "./types.ts";

@@ -1,14 +1,5 @@
 import type { Context } from "@earendil-works/chord";
 import {
-	createModels,
-	type FauxProviderHandle,
-	type FauxResponseStep,
-	fauxProvider,
-	type Message,
-	type Models,
-	type RegisterFauxProviderOptions,
-} from "@earendil-works/pi-ai";
-import {
 	type Conversation,
 	ConversationConfig,
 	createRegistry,
@@ -17,6 +8,15 @@ import {
 	type Registry,
 	type Storage,
 } from "@earendil-works/pi-durable";
+import {
+	createModels,
+	type FauxProviderHandle,
+	type FauxResponseStep,
+	fauxProvider,
+	type Message,
+	type Models,
+	type RegisterFauxProviderOptions,
+} from "@lue-labs/pi-ai";
 import { context } from "./session-support.ts";
 
 /** Models and registry that survive a close/reopen, like a host process's own objects. */

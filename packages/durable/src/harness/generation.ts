@@ -9,7 +9,7 @@ import {
 	type ModelThinkingLevel,
 	retryDelayMs,
 	type SimpleStreamOptions,
-} from "@earendil-works/pi-ai";
+} from "@lue-labs/pi-ai";
 import { AssistantEntry, SystemEntry } from "../entries.ts";
 import { defineTask } from "../tasks.ts";
 import type { ConversationId, EntryId, NextTaskState, TaskRuntime, Tx } from "../types.ts";

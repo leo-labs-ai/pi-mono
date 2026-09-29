@@ -1,5 +1,4 @@
 import type { Context } from "@earendil-works/chord";
-import { createModels } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	createRegistry,
@@ -15,6 +14,7 @@ import {
 	type TaskId,
 	type TaskRuntime,
 } from "@earendil-works/pi-durable";
+import { createModels } from "@lue-labs/pi-ai";
 import { describe, expect, it } from "vitest";
 import { user } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";

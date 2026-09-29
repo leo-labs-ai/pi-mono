@@ -1,13 +1,4 @@
 import {
-	type AssistantMessage,
-	fauxAssistantMessage,
-	fauxToolCall,
-	type Message,
-	type Models,
-	type SimpleStreamOptions,
-	type SystemMessage,
-} from "@earendil-works/pi-ai";
-import {
 	AssistantEntry,
 	type CommitPublication,
 	type Conversation,
@@ -23,6 +14,15 @@ import {
 	type TaskId,
 	UserEntry,
 } from "@earendil-works/pi-durable";
+import {
+	type AssistantMessage,
+	fauxAssistantMessage,
+	fauxToolCall,
+	type Message,
+	type Models,
+	type SimpleStreamOptions,
+	type SystemMessage,
+} from "@lue-labs/pi-ai";
 import { describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";

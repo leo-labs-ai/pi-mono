@@ -4,12 +4,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import type { FacetBundleArtifact } from "@earendil-works/chord/node";
-import {
-	BACKGROUND_CONTEXT,
-	type JsonlSessionMetadata,
-	JsonlSessionRepo,
-	TODO_CONTEXT,
-} from "@lue-labs/pi-agent-core";
+import { BACKGROUND_CONTEXT, type JsonlSessionMetadata, JsonlSessionRepo, TODO_CONTEXT } from "@lue-labs/pi-agent-core";
 import { NodeExecutionEnv } from "@lue-labs/pi-agent-core/node";
 import { Client, ServerError as ClientServerError, DisconnectedError } from "@lue-labs/pi-client";
 import { createUnixTransportFactory, type UnixServerRoute } from "@lue-labs/pi-client/unix";

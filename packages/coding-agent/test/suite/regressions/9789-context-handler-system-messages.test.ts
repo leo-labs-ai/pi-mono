@@ -1,10 +1,5 @@
 import type { AgentMessage } from "@lue-labs/pi-agent-core";
-import {
-	fauxAssistantMessage,
-	getCurrentSystemPrompt,
-	getCurrentTools,
-	type TranscriptContext,
-} from "@lue-labs/pi-ai";
+import { fauxAssistantMessage, getCurrentSystemPrompt, getCurrentTools, type TranscriptContext } from "@lue-labs/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness, type Harness } from "../harness.ts";

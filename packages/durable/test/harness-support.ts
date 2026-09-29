@@ -1,3 +1,10 @@
+import {
+	createRegistry,
+	Harness,
+	type Registry,
+	type Storage,
+	type ToolRegistration,
+} from "@earendil-works/pi-durable";
 import type {
 	AssistantMessage,
 	Message,
@@ -6,15 +13,8 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 	UserMessage,
-} from "@earendil-works/pi-ai";
-import { createModels, Type } from "@earendil-works/pi-ai";
-import {
-	createRegistry,
-	Harness,
-	type Registry,
-	type Storage,
-	type ToolRegistration,
-} from "@earendil-works/pi-durable";
+} from "@lue-labs/pi-ai";
+import { createModels, Type } from "@lue-labs/pi-ai";
 import { context } from "./session-support.ts";
 
 export function tool(name: string, description = `${name} tool`): ToolRegistration {

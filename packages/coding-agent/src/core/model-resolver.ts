@@ -3,13 +3,7 @@
  */
 
 import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import {
-	type Api,
-	type AuthOperationOptions,
-	type KnownProvider,
-	type Model,
-	modelsAreEqual,
-} from "@lue-labs/pi-ai";
+import { type Api, type AuthOperationOptions, type KnownProvider, type Model, modelsAreEqual } from "@lue-labs/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";

@@ -9,12 +9,7 @@ import {
 	type ServiceCall,
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
-import {
-	BACKGROUND_CONTEXT,
-	type Context,
-	type JsonlSessionMetadata,
-	TODO_CONTEXT,
-} from "@lue-labs/pi-agent-core";
+import { BACKGROUND_CONTEXT, type Context, type JsonlSessionMetadata, TODO_CONTEXT } from "@lue-labs/pi-agent-core";
 import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@lue-labs/pi-server";
 import { Check } from "typebox/value";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";

@@ -1,6 +1,6 @@
 import type { JsonValue } from "@earendil-works/chord";
-import { Type } from "@earendil-works/pi-ai";
 import { createRegistry, defineTask, GenerationTask, type ToolRegistration } from "@earendil-works/pi-durable";
+import { Type } from "@lue-labs/pi-ai";
 import { describe, expect, it } from "vitest";
 
 type AppTool = ToolRegistration & { readonly snippet?: string };

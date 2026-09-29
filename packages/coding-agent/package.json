@@ -72,8 +72,8 @@
 		"undici": "8.10.2",
 		"yaml": "2.9.0",
 		"@earendil-works/chord": "^0.99.0",
-		"@earendil-works/pi-codemode": "^0.99.0",
-		"@earendil-works/pi-mcp": "^0.99.0",
+		"@earendil-works/pi-codemode": "0.99.0",
+		"@earendil-works/pi-mcp": "0.99.0",
 		"quickjs-wasi": "3.6.2"
 	},
 	"overrides": {

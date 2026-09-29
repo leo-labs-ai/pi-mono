@@ -1,6 +1,6 @@
 import type { Context, Draft, JsonValue } from "@earendil-works/chord";
 import { withoutAbortSignal } from "@earendil-works/chord/context";
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel } from "@lue-labs/pi-ai";
 import { SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";
 import type {

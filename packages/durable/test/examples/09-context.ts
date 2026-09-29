@@ -8,7 +8,7 @@ import {
 	type Message,
 	type StopReason,
 	type ToolResultMessage,
-} from "@earendil-works/pi-ai";
+} from "@lue-labs/pi-ai";
 import { createRegistry, Harness, MemoryStorage } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;

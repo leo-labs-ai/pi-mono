@@ -1,4 +1,4 @@
-import type { ModelThinkingLevel } from "@earendil-works/pi-ai";
+import type { ModelThinkingLevel } from "@lue-labs/pi-ai";
 import { defineDoc } from "../documents.ts";
 import type { ConversationRetryPolicy, ConversationStreamOptions } from "./types.ts";
 

@@ -1,4 +1,3 @@
-import type { SystemMessage } from "@earendil-works/pi-ai";
 import {
 	type Conversation,
 	createRegistry,
@@ -9,6 +8,7 @@ import {
 	SystemEntry,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
+import type { SystemMessage } from "@lue-labs/pi-ai";
 import { describe, expect, it } from "vitest";
 import { planSystemEntries, renderSections, replaySections } from "../src/harness/prompt.ts";
 import { openHarness, user } from "./harness-support.ts";

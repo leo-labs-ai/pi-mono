@@ -12,7 +12,6 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { oauthErrorHtml, oauthSuccessHtml } from "@lue-labs/pi-ai/utils/oauth-page";
 import type { AuthProvider, McpFetch } from "@earendil-works/pi-mcp";
 import {
 	authorizeMcp,
@@ -26,6 +25,7 @@ import {
 	type OAuthClientInformationMixed,
 	parseWwwAuthenticate,
 } from "@earendil-works/pi-mcp/oauth";
+import { oauthErrorHtml, oauthSuccessHtml } from "@lue-labs/pi-ai/utils/oauth-page";
 import lockfile from "proper-lockfile";
 import { APP_NAME, getAgentDir } from "../../config.ts";
 import { type AuthStorageBackend, FileAuthStorageBackend } from "../../core/auth-storage.ts";

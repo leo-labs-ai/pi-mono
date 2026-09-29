@@ -8,7 +8,7 @@ import type {
 	ToolResultMessage,
 	Transport,
 	UserMessage,
-} from "@earendil-works/pi-ai";
+} from "@lue-labs/pi-ai";
 import type {
 	ConversationId,
 	ConversationOwnership,

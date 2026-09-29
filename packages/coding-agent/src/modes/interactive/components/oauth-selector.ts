@@ -1,13 +1,5 @@
 import type { ApiKeyAuth, AuthCheck, OAuthAuth } from "@lue-labs/pi-ai";
-import {
-	Container,
-	type Focusable,
-	fuzzyFilter,
-	getKeybindings,
-	Input,
-	Spacer,
-	TruncatedText,
-} from "@lue-labs/pi-tui";
+import { Container, type Focusable, fuzzyFilter, getKeybindings, Input, Spacer, TruncatedText } from "@lue-labs/pi-tui";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
