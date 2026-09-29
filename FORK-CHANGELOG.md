@@ -8,6 +8,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Changed
 
+- **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.1 (`d86654abb`).** GPT-6.1 Sol (Codex default) + ChatGPT login OAuth bundle fix. Fork packages lockstep **0.99.1**; chord/codemode/mcp stay `@earendil-works/*@0.99.1`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.
+
+
+### Changed
+
 - **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.0 (`4b060d3a9`).** Adopts Codemode (`@earendil-works/pi-codemode`), MCP (`@earendil-works/pi-mcp`), system theme, Sign in with ChatGPT, tool exposure APIs, and TypeScript 7.0. Fork packages remain `@lue-labs/*` at lockstep **0.99.0**; chord/codemode/mcp stay upstream-scoped. This sync preferred a green upstream-based coding-agent/agent/ai surface after semantic conflict residue blocked a full three-way re-graft of every fork seam in one pass — follow-up Cap work must re-port: `shouldStopAfterTurn`, cache-safe compaction / mid-run tool-result cap, `adoptInheritedForkMessages`, `getContextUsage` fix, semantic bash exits, deferred-tool Anthropic patches, ThinkingLevel `ultra`/`adaptive`, footer usage-cache, and related my-pi peer bumps. Cap-land CI follow-up (2026-09-29 evening): root `build` now returns to the repo root before `test:build-gate` (the upstream-shaped coding-agent `build` left the gate running inside that workspace, which lacks the script). Gate sub-scripts temporarily target surviving tests (system-prompt/theme-detection/package-manager + available ai cache tests + suite e2e); fork-only gate files (`loader-module-alias-symmetry`, deferred-tool regressions, etc.) return with the seam re-graft.
 
 
