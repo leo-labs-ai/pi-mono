@@ -1,99 +1,35 @@
 import { readFile as fsReadFile, stat as fsStat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import type { AgentTool } from "@lue-labs/pi-agent-core";
-import { StringEnum } from "@lue-labs/pi-ai";
 import { spawn } from "child_process";
 import path from "path";
 import { type Static, Type } from "typebox";
-import { ensureTool, getOptionalSearchToolPath, toolDisplayName } from "../../utils/tools-manager.ts";
+import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { createGrepRenderers } from "./renderers/grep.ts";
+import { grepRenderers } from "./renderers/grep.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import {
 	DEFAULT_MAX_BYTES,
 	formatSize,
 	GREP_MAX_LINE_LENGTH,
 	type TruncationResult,
+	truncateHead,
 	truncateLine,
 } from "./truncate.ts";
 
 const grepSchema = Type.Object({
-	pattern: Type.String({
-		description: "Search pattern (regex or literal string)",
-	}),
-	path: Type.Optional(
-		Type.String({
-			description: "Directory or file to search (default: current directory)",
-		}),
-	),
-	glob: Type.Optional(
-		Type.String({
-			description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'",
-		}),
-	),
+	pattern: Type.String({ description: "Search pattern (regex or literal string)" }),
+	path: Type.Optional(Type.String({ description: "Directory or file to search (default: current directory)" })),
+	glob: Type.Optional(Type.String({ description: "Filter files by glob pattern, e.g. '*.ts' or '**/*.spec.ts'" })),
 	ignoreCase: Type.Optional(Type.Boolean({ description: "Case-insensitive search (default: false)" })),
 	literal: Type.Optional(
-		Type.Boolean({
-			description: "Treat pattern as literal string instead of regex (default: false)",
-		}),
+		Type.Boolean({ description: "Treat pattern as literal string instead of regex (default: false)" }),
 	),
 	context: Type.Optional(
-		Type.Number({
-			description: "Number of lines to show before and after each match (default: 0)",
-		}),
+		Type.Number({ description: "Number of lines to show before and after each match (default: 0)" }),
 	),
-	limit: Type.Optional(
-		Type.Number({
-			description: "Maximum number of matches to return (default: 100)",
-		}),
-	),
-	outputMode: Type.Optional(
-		StringEnum(["content", "files_with_matches", "count"] as const, {
-			description:
-				"Output mode: content (matching lines), files_with_matches (file paths), or count (matches per file). Defaults to content for backwards compatibility.",
-		}),
-	),
-	output_mode: Type.Optional(
-		StringEnum(["content", "files_with_matches", "count"] as const, {
-			description: "Alias for outputMode.",
-		}),
-	),
-	headLimit: Type.Optional(
-		Type.Number({
-			description: "Maximum output entries after offset; 0 means unlimited",
-		}),
-	),
-	head_limit: Type.Optional(Type.Number({ description: "Alias for headLimit" })),
-	offset: Type.Optional(
-		Type.Number({
-			description: "Number of matching output entries to skip before returning results (default: 0)",
-		}),
-	),
-	type: Type.Optional(
-		Type.String({
-			description: "Ripgrep file type filter, e.g. js, py, rust. Uses rg backend.",
-		}),
-	),
-	multiline: Type.Optional(
-		Type.Boolean({
-			description:
-				"Enable multiline matching so the pattern can span lines and . matches newlines (ripgrep -U --multiline-dotall). Requires the rg backend.",
-		}),
-	),
-	timeout: Type.Optional(
-		Type.Number({
-			description: "Timeout in seconds (default: 30, max 300)",
-			exclusiveMinimum: 0,
-			maximum: 300,
-		}),
-	),
-	full: Type.Optional(
-		Type.Boolean({
-			description:
-				"Lift the default 100-match cap and per-line truncation. Large model-facing output is still byte-capped to prevent crashes; use narrower paths/globs when you need exhaustive output. Defaults to false.",
-		}),
-	),
+	limit: Type.Optional(Type.Number({ description: "Maximum number of matches to return (default: 100)" })),
 });
 
 export const grepToolSystemPromptContribution = {
@@ -103,243 +39,11 @@ export const grepToolSystemPromptContribution = {
 
 export type GrepToolInput = Static<typeof grepSchema>;
 const DEFAULT_LIMIT = 100;
-const DEFAULT_TIMEOUT_SECONDS = 30;
-const MAX_TIMEOUT_SECONDS = 300;
-const VCS_DIRS = [".git", ".svn", ".hg", ".bzr", ".jj", ".sl"];
-
-type GrepOutputMode = "content" | "files_with_matches" | "count";
-type GrepBackend = "ugrep" | "rg";
-
-interface GrepBackendCommand {
-	backend: GrepBackend;
-	command: string;
-	args: string[];
-}
-
-export function buildUgrepArgs(input: {
-	pattern: string;
-	searchPath: string;
-	glob?: string;
-	ignoreCase?: boolean;
-	literal?: boolean;
-}): string[] {
-	const args = ["--no-config", "-r", "-n", "--with-filename", "--ignore-files", "-.", "--color=never"];
-	for (const vcsDir of VCS_DIRS) args.push("--exclude-dir", vcsDir);
-	if (input.ignoreCase) args.push("--ignore-case");
-	if (input.literal) args.push("--fixed-strings");
-	if (input.glob) args.push("-g", input.glob);
-	args.push("--", input.pattern, input.searchPath);
-	return args;
-}
-
-export function buildRgArgs(input: {
-	pattern: string;
-	searchPath: string;
-	glob?: string;
-	ignoreCase?: boolean;
-	literal?: boolean;
-	type?: string;
-	multiline?: boolean;
-}): string[] {
-	const args = ["--json", "--line-number", "--color=never", "--hidden"];
-	for (const vcsDir of VCS_DIRS) args.push("--glob", `!${vcsDir}`);
-	if (input.multiline) args.push("--multiline", "--multiline-dotall");
-	if (input.ignoreCase) args.push("--ignore-case");
-	if (input.literal) args.push("--fixed-strings");
-	if (input.type) args.push("--type", input.type);
-	if (input.glob) args.push("--glob", input.glob);
-	args.push("--", input.pattern, input.searchPath);
-	return args;
-}
-
-export async function resolveGrepBackend(input: {
-	pattern: string;
-	searchPath: string;
-	glob?: string;
-	ignoreCase?: boolean;
-	literal?: boolean;
-	type?: string;
-	multiline?: boolean;
-}): Promise<GrepBackendCommand | undefined> {
-	const rgPath = await ensureTool("rg");
-	if (rgPath) return { backend: "rg", command: rgPath, args: buildRgArgs(input) };
-
-	// ugrep needs -o for cross-line patterns, which changes output semantics — rg only.
-	if (!input.type && !input.multiline) {
-		const ugrepPath = getOptionalSearchToolPath("ugrep");
-		if (ugrepPath)
-			return {
-				backend: "ugrep",
-				command: ugrepPath,
-				args: buildUgrepArgs(input),
-			};
-	}
-	return undefined;
-}
-
-function parseUgrepMatchLine(line: string): { filePath: string; lineNumber: number; lineText: string } | undefined {
-	let firstColon = line.indexOf(":");
-	while (firstColon > 0) {
-		const secondColon = line.indexOf(":", firstColon + 1);
-		if (secondColon <= firstColon + 1) return undefined;
-		const lineNumberText = line.slice(firstColon + 1, secondColon);
-		if (/^\d+$/.test(lineNumberText)) {
-			const lineNumber = Number(lineNumberText);
-			if (!Number.isInteger(lineNumber) || lineNumber < 1) return undefined;
-			return {
-				filePath: line.slice(0, firstColon),
-				lineNumber,
-				lineText: line.slice(secondColon + 1),
-			};
-		}
-		firstColon = line.indexOf(":", firstColon + 1);
-	}
-	return undefined;
-}
 
 export interface GrepToolDetails {
 	truncation?: TruncationResult;
 	matchLimitReached?: number;
 	linesTruncated?: boolean;
-	timedOut?: boolean;
-	timeoutMs?: number;
-	path?: string;
-	glob?: string;
-	pattern?: string;
-	matchesReturned?: number;
-	mode?: GrepOutputMode;
-	numFiles?: number;
-	numMatches?: number;
-	appliedLimit?: number;
-	appliedOffset?: number;
-}
-
-function timeoutMsFromSeconds(timeout: number | undefined): number {
-	const seconds = typeof timeout === "number" && Number.isFinite(timeout) ? timeout : DEFAULT_TIMEOUT_SECONDS;
-	return Math.min(Math.max(seconds, Number.MIN_VALUE), MAX_TIMEOUT_SECONDS) * 1000;
-}
-
-function formatTimeoutSeconds(timeoutMs: number): string {
-	const seconds = timeoutMs / 1000;
-	return seconds >= 1 ? `${Math.round(seconds)}s` : `${timeoutMs}ms`;
-}
-
-function formatGrepTimeoutResult(args: {
-	pattern: string;
-	path: string;
-	glob?: string;
-	timeoutMs: number;
-	matchesReturned: number;
-	partialOutput?: string;
-}) {
-	const timeout = formatTimeoutSeconds(args.timeoutMs);
-	const partial = args.partialOutput?.trim();
-	const text = [
-		`grep timed out after ${timeout} while searching ${args.path}.`,
-		`Retry with a narrower path/glob/pattern, or explicitly raise timeout up to ${MAX_TIMEOUT_SECONDS}s.`,
-		partial ? `\nPartial matches returned before timeout:\n${partial}` : undefined,
-	]
-		.filter(Boolean)
-		.join("\n");
-	return {
-		content: [{ type: "text" as const, text }],
-		isError: true,
-		details: {
-			timedOut: true,
-			timeoutMs: args.timeoutMs,
-			path: args.path,
-			glob: args.glob,
-			pattern: args.pattern,
-			matchesReturned: args.matchesReturned,
-		},
-	};
-}
-
-function isAbortError(error: unknown): boolean {
-	return error instanceof Error && /abort/i.test(error.name || error.message);
-}
-
-function normalizeGrepOutputOptions(input: {
-	outputMode?: GrepOutputMode;
-	output_mode?: GrepOutputMode;
-	headLimit?: number;
-	head_limit?: number;
-	offset?: number;
-	full?: boolean;
-}): { mode: GrepOutputMode; headLimit?: number; offset: number } {
-	if (input.outputMode && input.output_mode && input.outputMode !== input.output_mode) {
-		throw new Error("outputMode and output_mode differ");
-	}
-	if (input.headLimit !== undefined && input.head_limit !== undefined && input.headLimit !== input.head_limit) {
-		throw new Error("headLimit and head_limit differ");
-	}
-	const requestedHeadLimit = input.headLimit ?? input.head_limit;
-	// full:true returns every match — drop the default output-entry cap unless the
-	// caller explicitly paginates (an explicit headLimit/head_limit still wins).
-	const unlimited = requestedHeadLimit === 0 || (input.full === true && requestedHeadLimit === undefined);
-	return {
-		mode: input.outputMode ?? input.output_mode ?? "content",
-		headLimit: unlimited ? undefined : Math.max(1, requestedHeadLimit ?? DEFAULT_LIMIT),
-		offset: Math.max(0, input.offset ?? 0),
-	};
-}
-
-function createBoundedGrepOutput(maxBytes: number = DEFAULT_MAX_BYTES) {
-	const outputLines: string[] = [];
-	let outputBytes = 0;
-	let totalBytes = 0;
-	let totalLines = 0;
-	let truncated = false;
-	let firstLineExceedsLimit = false;
-
-	const append = (line: string): boolean => {
-		const lineBytes = Buffer.byteLength(line, "utf-8");
-		const totalLineBytes = lineBytes + (totalLines > 0 ? 1 : 0);
-		totalBytes += totalLineBytes;
-		totalLines++;
-
-		if (truncated) return false;
-
-		const outputLineBytes = lineBytes + (outputLines.length > 0 ? 1 : 0);
-		if (outputBytes + outputLineBytes > maxBytes) {
-			truncated = true;
-			firstLineExceedsLimit = outputLines.length === 0;
-			return false;
-		}
-
-		outputLines.push(line);
-		outputBytes += outputLineBytes;
-		return true;
-	};
-
-	const appendMany = (lines: string[]): boolean => {
-		for (const line of lines) {
-			if (!append(line)) return false;
-		}
-		return true;
-	};
-
-	const snapshot = (): { content: string; truncation: TruncationResult } => {
-		const content = outputLines.join("\n");
-		return {
-			content,
-			truncation: {
-				content,
-				truncated,
-				truncatedBy: truncated ? "bytes" : null,
-				totalLines,
-				totalBytes,
-				outputLines: outputLines.length,
-				outputBytes,
-				lastLinePartial: false,
-				firstLineExceedsLimit,
-				maxLines: Number.MAX_SAFE_INTEGER,
-				maxBytes,
-			},
-		};
-	};
-
-	return { append, appendMany, snapshot };
 }
 
 /**
@@ -359,8 +63,6 @@ const defaultGrepOperations: GrepOperations = {
 };
 
 export interface GrepToolOptions {
-	toolName?: "grep" | "Grep";
-	label?: string;
 	/** Custom operations for grep. Default: local filesystem plus ripgrep */
 	operations?: GrepOperations;
 }
@@ -370,14 +72,11 @@ export function createGrepToolDefinition(
 	options?: GrepToolOptions,
 ): ToolDefinition<typeof grepSchema, GrepToolDetails | undefined> {
 	const customOps = options?.operations;
-	const toolName = options?.toolName ?? "grep";
-	const label = options?.label ?? "Grep";
 	return {
-		name: toolName,
-		label,
-		description: `A powerful content-search tool built on ripgrep. ALWAYS use this tool for content search; NEVER invoke \`grep\` or \`rg\` via bash — those calls are blocked at runtime. Supports full regex syntax; ripgrep, not grep — escape literal braces (use \`interface{}\` to find \`interface{}\`). Filter files with \`glob\` or \`type\`. Respects .gitignore. Times out after ${DEFAULT_TIMEOUT_SECONDS}s by default; pass timeout up to ${MAX_TIMEOUT_SECONDS}s for intentional broad searches. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB. For conceptual searches, prefer \`semantic_grep\` if available; grep is for known literals, identifiers, and error messages.`,
+		name: "grep",
+		label: "grep",
+		description: `Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} matches or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Long lines are truncated to ${GREP_MAX_LINE_LENGTH} chars.`,
 		promptSnippet: grepToolSystemPromptContribution.snippet,
-		executionMode: "parallel",
 		parameters: grepSchema,
 		async execute(
 			_toolCallId,
@@ -389,15 +88,6 @@ export function createGrepToolDefinition(
 				literal,
 				context,
 				limit,
-				outputMode,
-				output_mode,
-				headLimit,
-				head_limit,
-				offset,
-				type,
-				multiline,
-				timeout,
-				full,
 			}: {
 				pattern: string;
 				path?: string;
@@ -406,15 +96,6 @@ export function createGrepToolDefinition(
 				literal?: boolean;
 				context?: number;
 				limit?: number;
-				outputMode?: GrepOutputMode;
-				output_mode?: GrepOutputMode;
-				headLimit?: number;
-				head_limit?: number;
-				offset?: number;
-				type?: string;
-				multiline?: boolean;
-				timeout?: number;
-				full?: boolean;
 			},
 			signal?: AbortSignal,
 			_onUpdate?,
@@ -426,20 +107,21 @@ export function createGrepToolDefinition(
 					return;
 				}
 				let settled = false;
-				let timeoutId: NodeJS.Timeout | undefined;
-				let killTimeoutId: NodeJS.Timeout | undefined;
-				const timeoutMs = timeoutMsFromSeconds(timeout);
 				const settle = (fn: () => void) => {
 					if (!settled) {
 						settled = true;
-						if (timeoutId) clearTimeout(timeoutId);
-						if (killTimeoutId) clearTimeout(killTimeoutId);
 						fn();
 					}
 				};
 
 				(async () => {
 					try {
+						const rgPath = await ensureTool("rg");
+						if (!rgPath) {
+							settle(() => reject(new Error("ripgrep (rg) is not available and could not be downloaded")));
+							return;
+						}
+
 						const searchPath = resolveToCwd(searchDir || ".", ctx?.cwd || cwd);
 						const ops = customOps ?? defaultGrepOperations;
 						let isDirectory: boolean;
@@ -450,26 +132,8 @@ export function createGrepToolDefinition(
 							return;
 						}
 
-						let outputOptions: {
-							mode: GrepOutputMode;
-							headLimit?: number;
-							offset: number;
-						};
-						try {
-							outputOptions = normalizeGrepOutputOptions({
-								outputMode,
-								output_mode,
-								headLimit,
-								head_limit,
-								offset,
-								full,
-							});
-						} catch (error) {
-							settle(() => reject(error as Error));
-							return;
-						}
 						const contextValue = context && context > 0 ? context : 0;
-						const effectiveLimit = full ? Number.MAX_SAFE_INTEGER : Math.max(1, limit ?? DEFAULT_LIMIT);
+						const effectiveLimit = Math.max(1, limit ?? DEFAULT_LIMIT);
 						const formatPath = (filePath: string): string => {
 							if (isDirectory) {
 								const relative = path.relative(searchPath, filePath);
@@ -495,40 +159,21 @@ export function createGrepToolDefinition(
 							return lines;
 						};
 
-						const backendCommand = await resolveGrepBackend({
-							pattern,
-							searchPath,
-							glob,
-							ignoreCase,
-							literal,
-							type,
-							multiline,
-						});
-						if (!backendCommand) {
-							settle(() =>
-								reject(
-									new Error(
-										multiline
-											? "grep multiline requires ripgrep (rg), which is unavailable and could not be downloaded"
-											: "Neither ugrep nor ripgrep (rg) is available and rg could not be downloaded",
-									),
-								),
-							);
-							return;
-						}
+						const args: string[] = ["--json", "--line-number", "--color=never", "--hidden"];
+						if (ignoreCase) args.push("--ignore-case");
+						if (literal) args.push("--fixed-strings");
+						if (glob) args.push("--glob", glob);
+						args.push("--", pattern, searchPath);
 
-						const child = spawn(backendCommand.command, backendCommand.args, {
-							stdio: ["ignore", "pipe", "pipe"],
-						});
+						const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						let matchCount = 0;
 						let matchLimitReached = false;
 						let linesTruncated = false;
 						let aborted = false;
-						let timedOut = false;
 						let killedDueToLimit = false;
-						const output = createBoundedGrepOutput();
+						const outputLines: string[] = [];
 
 						const cleanup = () => {
 							rl.close();
@@ -537,10 +182,7 @@ export function createGrepToolDefinition(
 						const stopChild = (dueToLimit = false) => {
 							if (!child.killed) {
 								killedDueToLimit = dueToLimit;
-								child.kill("SIGTERM");
-								killTimeoutId = setTimeout(() => {
-									if (!child.killed) child.kill("SIGKILL");
-								}, 5000);
+								child.kill();
 							}
 						};
 						const onAbort = () => {
@@ -548,39 +190,9 @@ export function createGrepToolDefinition(
 							stopChild();
 						};
 						signal?.addEventListener("abort", onAbort, { once: true });
-						if (timeoutMs > 0) {
-							timeoutId = setTimeout(() => {
-								timedOut = true;
-								stopChild();
-							}, timeoutMs);
-						}
 						child.stderr?.on("data", (chunk) => {
 							stderr += chunk.toString();
 						});
-
-						// Format an inline match (no context). Multiline matches render their first
-						// line as "path:N: text" and continuation lines context-style ("path-N+i- text").
-						const appendInlineMatch = (match: {
-							filePath: string;
-							lineNumber: number;
-							lineText: string;
-						}): boolean => {
-							const relativePath = formatPath(match.filePath);
-							const sanitized = match.lineText.replace(/\r\n/g, "\n").replace(/\r/g, "").replace(/\n$/, "");
-							const lines = sanitized.split("\n");
-							for (let i = 0; i < lines.length; i++) {
-								const { text: truncatedText, wasTruncated } = full
-									? { text: lines[i], wasTruncated: false }
-									: truncateLine(lines[i]);
-								if (wasTruncated) linesTruncated = true;
-								const prefix =
-									i === 0
-										? `${relativePath}:${match.lineNumber}: `
-										: `${relativePath}-${match.lineNumber + i}- `;
-								if (!output.append(prefix + truncatedText)) return false;
-							}
-							return true;
-						};
 
 						const formatBlock = async (filePath: string, lineNumber: number): Promise<string[]> => {
 							const relativePath = formatPath(filePath);
@@ -594,9 +206,7 @@ export function createGrepToolDefinition(
 								const sanitized = lineText.replace(/\r/g, "");
 								const isMatchLine = current === lineNumber;
 								// Truncate long lines so grep output stays compact.
-								const { text: truncatedText, wasTruncated } = full
-									? { text: sanitized, wasTruncated: false }
-									: truncateLine(sanitized);
+								const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
 								if (wasTruncated) linesTruncated = true;
 								if (isMatchLine) block.push(`${relativePath}:${current}: ${truncatedText}`);
 								else block.push(`${relativePath}-${current}- ${truncatedText}`);
@@ -605,44 +215,32 @@ export function createGrepToolDefinition(
 						};
 
 						// Collect matches during streaming, then format them after rg exits.
-						const matches: Array<{
-							filePath: string;
-							lineNumber: number;
-							lineText?: string;
-						}> = [];
+						const matches: Array<{ filePath: string; lineNumber: number; lineText?: string }> = [];
 						rl.on("line", (line) => {
 							if (!line.trim() || matchCount >= effectiveLimit) return;
-							if (backendCommand.backend === "ugrep") {
-								const match = parseUgrepMatchLine(line);
-								if (!match) return;
-								matchCount++;
-								matches.push(match);
-							} else {
-								let event: any;
-								try {
-									event = JSON.parse(line);
-								} catch {
-									return;
-								}
-								if (event.type !== "match") return;
+							let event: any;
+							try {
+								event = JSON.parse(line);
+							} catch {
+								return;
+							}
+							if (event.type === "match") {
 								matchCount++;
 								const filePath = event.data?.path?.text;
 								const lineNumber = event.data?.line_number;
 								const lineText = event.data?.lines?.text;
 								if (filePath && typeof lineNumber === "number")
 									matches.push({ filePath, lineNumber, lineText });
-							}
-							if (matchCount >= effectiveLimit) {
-								matchLimitReached = true;
-								stopChild(true);
+								if (matchCount >= effectiveLimit) {
+									matchLimitReached = true;
+									stopChild(true);
+								}
 							}
 						});
 
 						child.on("error", (error) => {
 							cleanup();
-							settle(() =>
-								reject(new Error(`Failed to run ${toolDisplayName(backendCommand.command)}: ${error.message}`)),
-							);
+							settle(() => reject(new Error(`Failed to run ripgrep: ${error.message}`)));
 						});
 						child.on("close", async (code) => {
 							cleanup();
@@ -650,165 +248,42 @@ export function createGrepToolDefinition(
 								settle(() => reject(new Error("Operation aborted")));
 								return;
 							}
-							if (timedOut) {
-								for (const match of matches) {
-									if (contextValue === 0 && match.lineText !== undefined) {
-										if (
-											!appendInlineMatch(match as { filePath: string; lineNumber: number; lineText: string })
-										)
-											break;
-									} else {
-										const block = await formatBlock(match.filePath, match.lineNumber);
-										if (!output.appendMany(block)) break;
-									}
-								}
-								const partialOutput = output.snapshot().content;
-								settle(() =>
-									resolve(
-										formatGrepTimeoutResult({
-											pattern,
-											path: searchPath,
-											glob,
-											timeoutMs,
-											matchesReturned: matches.length,
-											partialOutput,
-										}) as any,
-									),
-								);
-								return;
-							}
 							if (!killedDueToLimit && code !== 0 && code !== 1) {
-								const backendName = toolDisplayName(backendCommand.command);
-								const errorMsg = stderr.trim() || `${backendName} exited with code ${code}`;
+								const errorMsg = stderr.trim() || `ripgrep exited with code ${code}`;
 								settle(() => reject(new Error(errorMsg)));
 								return;
 							}
 							if (matchCount === 0) {
-								const text =
-									outputOptions.mode === "files_with_matches" ? "No files found" : "No matches found";
 								settle(() =>
-									resolve({
-										content: [{ type: "text", text }],
-										details: undefined,
-									}),
+									resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
 								);
 								return;
 							}
 
-							const paginate = <T>(
-								items: T[],
-							): {
-								items: T[];
-								appliedLimit?: number;
-								appliedOffset?: number;
-							} => {
-								const paged = items.slice(
-									outputOptions.offset,
-									outputOptions.headLimit === undefined
-										? undefined
-										: outputOptions.offset + outputOptions.headLimit,
-								);
-								return {
-									items: paged,
-									...(outputOptions.headLimit !== undefined &&
-									items.length - outputOptions.offset > outputOptions.headLimit
-										? { appliedLimit: outputOptions.headLimit }
-										: {}),
-									...(outputOptions.offset > 0 ? { appliedOffset: outputOptions.offset } : {}),
-								};
-							};
-
-							const distinctFiles = Array.from(new Set(matches.map((match) => formatPath(match.filePath))));
-							if (outputOptions.mode === "files_with_matches") {
-								const paged = paginate(distinctFiles);
-								const details: GrepToolDetails = {
-									mode: outputOptions.mode,
-									numFiles: paged.items.length,
-									...(paged.appliedLimit !== undefined ? { appliedLimit: paged.appliedLimit } : {}),
-									...(paged.appliedOffset !== undefined ? { appliedOffset: paged.appliedOffset } : {}),
-								};
-								const notice = paged.appliedLimit
-									? `\n\n[${paged.appliedLimit} files limit reached. Use offset=${outputOptions.offset + paged.appliedLimit} to continue.]`
-									: "";
-								settle(() =>
-									resolve({
-										content: [
-											{
-												type: "text",
-												text: paged.items.length ? `${paged.items.join("\n")}${notice}` : "No files found",
-											},
-										],
-										details,
-									}),
-								);
-								return;
-							}
-
-							if (outputOptions.mode === "count") {
-								const counts = new Map<string, number>();
-								for (const match of matches) {
-									const file = formatPath(match.filePath);
-									counts.set(file, (counts.get(file) ?? 0) + 1);
-								}
-								const entries = Array.from(counts.entries());
-								const paged = paginate(entries);
-								const numMatches = paged.items.reduce((sum, [, count]) => sum + count, 0);
-								const details: GrepToolDetails = {
-									mode: outputOptions.mode,
-									numFiles: paged.items.length,
-									numMatches,
-									...(paged.appliedLimit !== undefined ? { appliedLimit: paged.appliedLimit } : {}),
-									...(paged.appliedOffset !== undefined ? { appliedOffset: paged.appliedOffset } : {}),
-								};
-								const output = paged.items.map(([file, count]) => `${file}:${count}`).join("\n");
-								const notice = paged.appliedLimit
-									? `\n\n[${paged.appliedLimit} count entries limit reached. Use offset=${outputOptions.offset + paged.appliedLimit} to continue.]`
-									: "";
-								settle(() =>
-									resolve({
-										content: [
-											{
-												type: "text",
-												text: output ? `${output}${notice}` : "No matches found",
-											},
-										],
-										details,
-									}),
-								);
-								return;
-							}
-
-							const pagedMatches = paginate(matches);
 							// Format matches after streaming finishes so custom readFile() backends can be async.
-							for (const match of pagedMatches.items) {
+							for (const match of matches) {
 								if (contextValue === 0 && match.lineText !== undefined) {
-									if (!appendInlineMatch(match as { filePath: string; lineNumber: number; lineText: string }))
-										break;
+									const relativePath = formatPath(match.filePath);
+									const sanitized = match.lineText
+										.replace(/\r\n/g, "\n")
+										.replace(/\r/g, "")
+										.replace(/\n$/, "");
+									const { text: truncatedText, wasTruncated } = truncateLine(sanitized);
+									if (wasTruncated) linesTruncated = true;
+									outputLines.push(`${relativePath}:${match.lineNumber}: ${truncatedText}`);
 								} else {
 									const block = await formatBlock(match.filePath, match.lineNumber);
-									if (!output.appendMany(block)) break;
+									outputLines.push(...block);
 								}
 							}
 
-							const outputSnapshot = output.snapshot();
-							const truncation = outputSnapshot.truncation;
-							let outputText = outputSnapshot.content;
-							const details: GrepToolDetails = {
-								mode: outputOptions.mode,
-								matchesReturned: pagedMatches.items.length,
-								numFiles: distinctFiles.length,
-								...(pagedMatches.appliedLimit !== undefined ? { appliedLimit: pagedMatches.appliedLimit } : {}),
-								...(pagedMatches.appliedOffset !== undefined
-									? { appliedOffset: pagedMatches.appliedOffset }
-									: {}),
-							};
+							const rawOutput = outputLines.join("\n");
+							// Apply byte truncation. There is no line limit here because the match limit already capped rows.
+							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+							let output = truncation.content;
+							const details: GrepToolDetails = {};
 							// Build actionable notices for truncation and match limits.
 							const notices: string[] = [];
-							if (pagedMatches.appliedLimit !== undefined) {
-								notices.push(
-									`${pagedMatches.appliedLimit} output entries limit reached. Use offset=${outputOptions.offset + pagedMatches.appliedLimit} to continue`,
-								);
-							}
 							if (matchLimitReached) {
 								notices.push(
 									`${effectiveLimit} matches limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
@@ -825,25 +300,21 @@ export function createGrepToolDefinition(
 								);
 								details.linesTruncated = true;
 							}
-							if (notices.length > 0) outputText += `\n\n[${notices.join(". ")}]`;
+							if (notices.length > 0) output += `\n\n[${notices.join(". ")}]`;
 							settle(() =>
 								resolve({
-									content: [{ type: "text", text: outputText }],
+									content: [{ type: "text", text: output }],
 									details: Object.keys(details).length > 0 ? details : undefined,
 								}),
 							);
 						});
 					} catch (err) {
-						if (signal?.aborted || isAbortError(err)) {
-							settle(() => reject(new Error("Operation aborted")));
-							return;
-						}
 						settle(() => reject(err as Error));
 					}
 				})();
 			});
 		},
-		...createGrepRenderers(label),
+		...grepRenderers,
 	};
 }
 

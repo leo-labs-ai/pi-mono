@@ -56,12 +56,15 @@ describe("defaultTools setting", () => {
 	}
 
 	it("uses the configured list as the initial built-in selection", async () => {
-		const session = await createSession(["grep", "Glob"]);
+		const session = await createSession(["grep", "find"]);
 
-		const allToolNames = session.getAllTools().map((tool) => tool.name);
-		expect(allToolNames).toEqual(expect.arrayContaining(["grep", "Glob"]));
-		expect(allToolNames).not.toContain("find");
-		expect(session.getActiveToolNames()).toEqual(["grep", "Glob"]);
+		expect(
+			session
+				.getAllTools()
+				.map((tool) => tool.name)
+				.sort(),
+		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		expect(session.getActiveToolNames()).toEqual(["grep", "find"]);
 		expect(session.systemPrompt).toContain("- grep:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
@@ -73,6 +76,24 @@ describe("defaultTools setting", () => {
 		expect(session.getActiveToolNames()).toEqual(["read", "powershell", "edit", "write"]);
 		expect(session.systemPrompt).toContain("- powershell: Execute PowerShell commands");
 		expect(session.systemPrompt).not.toContain("- bash:");
+		session.dispose();
+	});
+
+	it("activates an inactive extension tool with +name", async () => {
+		const session = await createSession(["+inactive_tool", "-write"], {}, [
+			(pi) => {
+				pi.registerTool({
+					name: "inactive_tool",
+					label: "Inactive Tool",
+					description: "Extension tool registered inactive",
+					parameters: Type.Object({}),
+					execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					defaultActive: false,
+				});
+			},
+		]);
+
+		expect(session.getActiveToolNames().sort()).toEqual(["bash", "edit", "inactive_tool", "read"]);
 		session.dispose();
 	});
 
@@ -144,9 +165,12 @@ describe("defaultTools setting", () => {
 			model: getModel("anthropic", "claude-sonnet-4-5")!,
 		});
 
-		const allToolNames = session.getAllTools().map((tool) => tool.name);
-		expect(allToolNames).toContain("ls");
-		expect(allToolNames).not.toContain("find");
+		expect(
+			session
+				.getAllTools()
+				.map((tool) => tool.name)
+				.sort(),
+		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["ls"]);
 		session.dispose();
 	});

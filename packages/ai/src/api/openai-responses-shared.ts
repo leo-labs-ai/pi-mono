@@ -20,17 +20,16 @@ import type {
 	ImageContent,
 	Model,
 	StopReason,
+	StreamOptions,
 	SystemMessage,
 	TextContent,
 	TextSignatureV1,
 	ThinkingContent,
 	Tool,
 	ToolCall,
-	ToolReferenceContent,
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
-import { stripSystemPromptDynamicBoundary } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -45,7 +44,6 @@ import {
 	resolveGrammarConstrainedSampling,
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
-import { splitSystemPromptAtDynamicBoundary } from "./openai-prompt-cache.ts";
 import { transformMessages } from "./transform-messages.ts";
 
 // =============================================================================
@@ -82,8 +80,7 @@ type ToolResultOutputContent = Array<ResponseInputText | ResponseInputImage>;
 
 function convertToolResultOutput<TApi extends Api>(
 	model: Model<TApi>,
-	// Fork: tool result content may carry tool_reference items; the filters below drop them.
-	content: readonly (TextContent | ImageContent | ToolReferenceContent)[],
+	content: readonly (TextContent | ImageContent)[],
 ): string | ToolResultOutputContent {
 	const textResult = content
 		.filter((c): c is TextContent => c.type === "text")
@@ -111,6 +108,7 @@ function convertToolResultOutput<TApi extends Api>(
 }
 
 export interface OpenAIResponsesStreamOptions {
+	onProviderStreamEvent?: StreamOptions["onProviderStreamEvent"];
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	resolveServiceTier?: (
@@ -125,18 +123,7 @@ export interface OpenAIResponsesStreamOptions {
 
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
-	/**
-	 * Tag each replayed assistant turn from the exact same model (provider, API, and model id) with
-	 * the provider effort it was generated at (`AssistantMessage.providerThinkingLevel`) so
-	 * `insertConfigurationUpdates` can rebuild the `configuration_update` items that preceded it.
-	 * Turns from other models never seed the effort history. Only meaningful for models with
-	 * `compat.supportsMidConvoEffort`.
-	 */
-	midConvoEffort?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
-	deferredTools?: ReadonlyMap<string, Tool>;
-	promptCacheBreakpoints?: boolean;
-	deferredToolsMode?: "additional-tools" | "tool-search";
 	/** Whether later system messages are sent in place; otherwise they are folded into the leading prompt. */
 	supportsMidConvoSystemMessages?: boolean;
 	supportsAdditionalTools?: boolean;
@@ -144,210 +131,11 @@ export interface ConvertResponsesMessagesOptions {
 	toolOptions?: ConvertResponsesToolsOptions;
 }
 
-const EXPLICIT_PROMPT_CACHE_BREAKPOINT = { mode: "explicit" } as const;
-
-// =============================================================================
-// Mid-conversation reasoning effort (`configuration_update`)
-// =============================================================================
-
-/** Effort values a `configuration_update` item accepts (OpenAI GPT-6 Astra). */
-export type ConfigurationUpdateEffort = "low" | "medium" | "high" | "xhigh" | "max";
-
-export function isConfigurationUpdateEffort(value: unknown): value is ConfigurationUpdateEffort {
-	return value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max";
-}
-
-/**
- * Provider effort to persist on the response (`AssistantMessage.providerThinkingLevel`) when the
- * model transport supports `configuration_update`; `undefined` keeps legacy request-level effort.
- */
-export type MidConvoEffortModel = Model<"openai-responses"> | Model<"openai-codex-responses">;
-
-export function supportsMidConvoEffort(model: MidConvoEffortModel): boolean {
-	return model.compat?.supportsMidConvoEffort === true;
-}
-
-export function resolveMidConvoEffort(
-	model: MidConvoEffortModel,
-	wireEffort: string | null | undefined,
-): ConfigurationUpdateEffort | undefined {
-	return supportsMidConvoEffort(model) && isConfigurationUpdateEffort(wireEffort) ? wireEffort : undefined;
-}
-
-/**
- * Effort the provider will actually sample the next turn at, read back from the final request:
- * the last `configuration_update` wins, otherwise the request-level `reasoning.effort`. Used to
- * record `providerThinkingLevel` after `onPayload` so replay reflects the wire, not our intent.
- */
-export function effectiveRequestEffort(
-	model: MidConvoEffortModel,
-	request: { input?: unknown; reasoning?: { effort?: unknown } | null },
-): ConfigurationUpdateEffort | undefined {
-	if (!supportsMidConvoEffort(model)) return undefined;
-	let effort: unknown = request.reasoning?.effort;
-	if (Array.isArray(request.input)) {
-		for (const item of request.input) {
-			// SAFETY: `configuration_update` is not in the SDK's input union yet; we only read the
-			// two fields the wire contract defines and validate the value before trusting it.
-			const candidate = item as { type?: unknown; reasoning?: { effort?: unknown } };
-			if (candidate?.type === "configuration_update") effort = candidate.reasoning?.effort;
-		}
-	}
-	return isConfigurationUpdateEffort(effort) ? effort : undefined;
-}
-
-const assistantEffortTag = Symbol("openaiAssistantEffort");
-type TaggedResponseInputItem = ResponseInputItem & { [assistantEffortTag]?: ConfigurationUpdateEffort };
-
-interface ConfigurationUpdateItem {
-	type: "configuration_update";
-	reasoning: { effort: ConfigurationUpdateEffort };
-}
-
-export interface MidConvoEffortPlan {
-	input: ResponseInput;
-	/** Request-level `reasoning.effort`: pinned to the effort the conversation started with. */
-	requestEffort: ConfigurationUpdateEffort;
-}
-
-/**
- * Express effort changes as positional `configuration_update` items instead of a new
- * request-level `reasoning.effort`, which is part of the prompt-cache key and misses the whole
- * prefix when it changes (`reasoning_effort_changed`). The request-level value stays pinned to
- * the first replayed turn's effort; each later turn re-emits the update that preceded it, so
- * the replayed prefix is byte-stable and only the trailing update for `activeEffort` moves.
- * Two updates are never adjacent (the API rejects that): a change with no turn in between
- * replaces the previous update in place.
- */
-export function insertConfigurationUpdates(
-	input: ResponseInput,
-	activeEffort: ConfigurationUpdateEffort,
-): MidConvoEffortPlan {
-	const output: ResponseInput = [];
-	let requestEffort: ConfigurationUpdateEffort | undefined;
-	let effectiveEffort: ConfigurationUpdateEffort | undefined;
-	// SAFETY: openai@6.46 has no `configuration_update` input type yet; the item shape follows the
-	// GPT-6 Astra docs and only this function writes or inspects it, so the casts through `unknown`
-	// are the single boundary between our typed plan and the SDK's `ResponseInputItem` union.
-	const pushUpdate = (effort: ConfigurationUpdateEffort) => {
-		const last = output[output.length - 1] as unknown as ConfigurationUpdateItem | undefined;
-		if (last?.type === "configuration_update") {
-			last.reasoning = { effort };
-		} else {
-			output.push({ type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem);
-		}
-		effectiveEffort = effort;
-	};
-	for (const item of input) {
-		// SAFETY: the tag is a module-private symbol only `convertResponsesMessages` sets; reading it
-		// on an untagged item yields `undefined`, and the spread below removes it before the wire.
-		const historicalEffort = (item as TaggedResponseInputItem)[assistantEffortTag];
-		if (historicalEffort === undefined) {
-			output.push(item);
-			continue;
-		}
-		if (requestEffort === undefined) {
-			requestEffort = historicalEffort;
-			effectiveEffort = historicalEffort;
-		} else if (historicalEffort !== effectiveEffort) {
-			pushUpdate(historicalEffort);
-		}
-		const { [assistantEffortTag]: _tag, ...untagged } = item as TaggedResponseInputItem;
-		output.push(untagged as ResponseInputItem);
-	}
-	if (requestEffort === undefined) {
-		requestEffort = activeEffort;
-		effectiveEffort = activeEffort;
-	}
-	if (effectiveEffort !== activeEffort) pushUpdate(activeEffort);
-	return { input: output, requestEffort };
-}
-
-/**
- * Mark the last breakpoint-capable content block of the previous (second-to-last)
- * user message. Earlier-turn breakpoints stay readable server-side (latest 50), so
- * this creates a durable mid-conversation anchor: if the implicit latest-message
- * cache entry is evicted, reads fall back to this prefix instead of a full re-write.
- * The prefix up to here was already cached by the prior turn, so the incremental
- * write cost is ~0.
- */
-function markPreviousUserMessageBreakpoint(messages: ResponseInput): void {
-	let seenLatestUserMessage = false;
-	for (let i = messages.length - 1; i >= 0; i--) {
-		const item = messages[i] as { role?: string; content?: unknown };
-		if (item.role !== "user" || !Array.isArray(item.content) || item.content.length === 0) continue;
-		if (!seenLatestUserMessage) {
-			seenLatestUserMessage = true;
-			continue;
-		}
-		const lastBlock = item.content[item.content.length - 1] as { type?: string; prompt_cache_breakpoint?: unknown };
-		if (lastBlock.type === "input_text" || lastBlock.type === "input_image") {
-			lastBlock.prompt_cache_breakpoint = EXPLICIT_PROMPT_CACHE_BREAKPOINT;
-		}
-		return;
-	}
-}
-
 export interface ConvertResponsesToolsOptions {
 	strict?: boolean | null;
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	toolSearchResult?: boolean;
-	/** Sort tools and JSON Schema object keys for byte-stable prompt-cache prefixes. */
-	deterministic?: boolean;
-	/** Force `defer_loading: true` on every tool passed. */
-	deferLoading?: boolean;
-	/** Emit native `defer_loading: true` for explicitly deferred tools. */
-	emitDeferLoading?: boolean;
-}
-
-type ResponsesUsageLike = {
-	input_tokens?: number;
-	output_tokens?: number;
-	total_tokens?: number;
-	input_tokens_details?: {
-		cached_tokens?: number;
-		cache_write_tokens?: number;
-	};
-	output_tokens_details?: {
-		reasoning_tokens?: number;
-	};
-	cache_creation_input_tokens?: number;
-	cache_creation?: {
-		ephemeral_5m_input_tokens?: number;
-		ephemeral_1h_input_tokens?: number;
-	};
-	cache_creation_ephemeral_5m_input_tokens?: number;
-	cache_creation_ephemeral_1h_input_tokens?: number;
-};
-
-function positiveNumber(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-export function parseOpenAIResponsesUsage(usage: ResponsesUsageLike): Usage {
-	const cacheRead = positiveNumber(usage.input_tokens_details?.cached_tokens);
-	const nestedCacheWrite5m = positiveNumber(usage.cache_creation?.ephemeral_5m_input_tokens);
-	const nestedCacheWrite1h = positiveNumber(usage.cache_creation?.ephemeral_1h_input_tokens);
-	const flatCacheWrite5m = positiveNumber(usage.cache_creation_ephemeral_5m_input_tokens);
-	const flatCacheWrite1h = positiveNumber(usage.cache_creation_ephemeral_1h_input_tokens);
-	const cacheWriteBreakdown = nestedCacheWrite5m + nestedCacheWrite1h || flatCacheWrite5m + flatCacheWrite1h;
-	const cacheWrite =
-		positiveNumber(usage.input_tokens_details?.cache_write_tokens) ||
-		positiveNumber(usage.cache_creation_input_tokens) ||
-		cacheWriteBreakdown;
-	const cacheWrite1h = cacheWrite > 0 ? nestedCacheWrite1h || flatCacheWrite1h || undefined : undefined;
-	const inputTokens = positiveNumber(usage.input_tokens);
-	return {
-		input: Math.max(0, inputTokens - cacheRead - cacheWrite),
-		output: positiveNumber(usage.output_tokens),
-		cacheRead,
-		cacheWrite,
-		...(cacheWrite1h ? { cacheWrite1h } : {}),
-		reasoning: positiveNumber(usage.output_tokens_details?.reasoning_tokens),
-		totalTokens: positiveNumber(usage.total_tokens),
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	};
 }
 
 // =============================================================================
@@ -362,7 +150,6 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const normalizedContext = resolveTranscript(context, options?.supportsMidConvoSystemMessages);
 	const messages: ResponseInput = [];
-	const loadedToolNames = new Set<string>();
 
 	const normalizeIdPart = (part: string): string => {
 		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -436,31 +223,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			if (!isLeadingSystemMessage || includeInitialSystemMessage) {
 				const text = isLeadingSystemMessage ? getSystemMessageText(msg) : renderSystemMessageUpdate(msg);
 				if (text.length > 0) {
-					if (isLeadingSystemMessage && options?.promptCacheBreakpoints) {
-						const { stable, dynamic } = splitSystemPromptAtDynamicBoundary(text);
-						const content: ResponseInputContent[] = [];
-						if (stable) {
-							content.push({
-								type: "input_text",
-								text: sanitizeSurrogates(stable),
-								prompt_cache_breakpoint: EXPLICIT_PROMPT_CACHE_BREAKPOINT,
-							} satisfies ResponseInputText);
-						}
-						if (dynamic) {
-							content.push({
-								type: "input_text",
-								text: sanitizeSurrogates(dynamic),
-							} satisfies ResponseInputText);
-						}
-						if (content.length > 0) messages.push({ role: instructionRole, content });
-					} else {
-						messages.push({
-							role: instructionRole,
-							content: sanitizeSurrogates(
-								isLeadingSystemMessage ? stripSystemPromptDynamicBoundary(text) : text,
-							),
-						});
-					}
+					messages.push({ role: instructionRole, content: sanitizeSurrogates(text) });
 				}
 			}
 		} else if (msg.role === "user") {
@@ -566,15 +329,6 @@ export function convertResponsesMessages<TApi extends Api>(
 				}
 			}
 			if (output.length === 0) continue;
-			if (
-				options?.midConvoEffort &&
-				isSameModel &&
-				isConfigurationUpdateEffort(assistantMsg.providerThinkingLevel)
-			) {
-				// SAFETY: `output` is non-empty here (an assistant turn always emits at least one item); the
-				// symbol-keyed tag is stripped by `insertConfigurationUpdates` before serialization.
-				(output[0] as TaggedResponseInputItem)[assistantEffortTag] = assistantMsg.providerThinkingLevel;
-			}
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
 			const [callId] = msg.toolCallId.split("|");
@@ -593,47 +347,8 @@ export function convertResponsesMessages<TApi extends Api>(
 					output,
 				});
 			}
-
-			const deferredTools: Tool[] = [];
-			for (const name of msg.addedToolNames ?? []) {
-				const tool = options?.deferredTools?.get(name);
-				if (!tool || loadedToolNames.has(name)) continue;
-				loadedToolNames.add(name);
-				deferredTools.push(tool);
-			}
-			if (deferredTools.length > 0 && options?.deferredToolsMode === "additional-tools") {
-				messages.push({
-					type: "additional_tools",
-					role: "developer",
-					tools: convertResponsesTools(deferredTools, options.toolOptions),
-				} satisfies ResponseInputItem);
-			} else if (deferredTools.length > 0 && options?.deferredToolsMode === "tool-search") {
-				const names = deferredTools.map((tool) => tool.name);
-				const searchCallId = `pi_tool_load_${shortHash(`${msg.toolCallId}:${names.join(",")}`)}`;
-				messages.push({
-					type: "tool_search_call",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					arguments: { query: names.join(" "), limit: names.length },
-				} satisfies ResponseInputItem);
-				messages.push({
-					type: "tool_search_output",
-					call_id: searchCallId,
-					execution: "client",
-					status: "completed",
-					tools: convertResponsesTools(deferredTools, {
-						...options.toolOptions,
-						toolSearchResult: true,
-					}),
-				} satisfies ResponseToolSearchOutputItemParam);
-			}
 		}
 		if (!isLeadingSystemMessage) msgIndex++;
-	}
-
-	if (options?.promptCacheBreakpoints) {
-		markPreviousUserMessageBreakpoint(messages);
 	}
 
 	return messages;
@@ -643,33 +358,12 @@ export function convertResponsesMessages<TApi extends Api>(
 // Tool conversion
 // =============================================================================
 
-function sortJsonSchemaForCache(value: unknown): unknown {
-	if (value === null || typeof value !== "object") return value;
-	if (Array.isArray(value)) {
-		return value.map((item) => sortJsonSchemaForCache(item));
-	}
-
-	const input = value as Record<string, unknown>;
-	const out: Record<string, unknown> = {};
-	for (const key of Object.keys(input).sort()) {
-		const child = input[key];
-		out[key] = key === "required" && Array.isArray(child) ? child.slice().sort() : sortJsonSchemaForCache(child);
-	}
-	return out;
-}
-
 export function convertResponsesTools(tools: readonly Tool[], options?: ConvertResponsesToolsOptions): OpenAITool[] {
 	const defaultStrict = options?.strict === undefined ? false : options.strict;
 	const supportsStrictMode = options?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = options?.supportsOpenAIGrammarTools ?? false;
-	const emitDeferLoading = options?.emitDeferLoading === true;
-	const sourceTools = options?.deterministic
-		? tools.slice().sort((a, b) => a.name.localeCompare(b.name) || a.description.localeCompare(b.description))
-		: tools;
 
-	return sourceTools.map((tool) => {
-		const deferLoading =
-			options?.deferLoading || (emitDeferLoading && tool.deferLoading === true && tool.alwaysLoad !== true);
+	return tools.map((tool) => {
 		const grammar = resolveGrammarConstrainedSampling(tool, supportsOpenAIGrammarTools);
 		if (grammar) {
 			return {
@@ -693,10 +387,8 @@ export function convertResponsesTools(tools: readonly Tool[], options?: ConvertR
 			type: "function",
 			name: tool.name,
 			description: tool.description,
-			parameters: (options?.deterministic
-				? sortJsonSchemaForCache(getJsonSchemaToolParameters(tool, strict === true))
-				: getJsonSchemaToolParameters(tool, strict === true)) as Record<string, unknown>,
-			...(options?.toolSearchResult || deferLoading ? { defer_loading: true } : {}),
+			parameters: getJsonSchemaToolParameters(tool, strict === true) as Record<string, unknown>,
+			...(options?.toolSearchResult ? { defer_loading: true } : {}),
 		};
 		if (supportsStrictMode) {
 			functionTool.strict = strict;
@@ -867,7 +559,21 @@ export async function processResponsesStream<TApi extends Api>(
 			output.responseId = response.id;
 		}
 		if (response?.usage) {
-			output.usage = parseOpenAIResponsesUsage(response.usage);
+			const inputDetails = response.usage.input_tokens_details as
+				| { cached_tokens?: number; cache_write_tokens?: number }
+				| undefined;
+			const cachedTokens = inputDetails?.cached_tokens || 0;
+			const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
+			output.usage = {
+				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
+				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
+				output: response.usage.output_tokens || 0,
+				cacheRead: cachedTokens,
+				cacheWrite: cacheWriteTokens,
+				reasoning: response.usage.output_tokens_details?.reasoning_tokens || 0,
+				totalTokens: response.usage.total_tokens || 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			};
 		}
 		calculateCost(model, output.usage);
 		if (options?.applyServiceTierPricing) {
@@ -892,6 +598,7 @@ export async function processResponsesStream<TApi extends Api>(
 	};
 
 	for await (const event of openaiStream) {
+		await options?.onProviderStreamEvent?.(event, model);
 		if (event.type === "response.created") {
 			output.responseId = event.response.id;
 		} else if (event.type === "response.output_item.added") {
@@ -965,14 +672,14 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.custom_tool_call_input.delta") {
 			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot?.block.customInput) continue;
+			if (!slot || !slot.block.customInput) continue;
 			pushToolCallDelta(
 				slot,
 				appendCustomToolCallInput(slot.block, getCustomToolCallInput(slot.block) + event.delta, false),
 			);
 		} else if (event.type === "response.custom_tool_call_input.done") {
 			const slot = getSlot(event.output_index, "toolCall");
-			if (!slot?.block.customInput) continue;
+			if (!slot || !slot.block.customInput) continue;
 			pushToolCallDelta(slot, appendCustomToolCallInput(slot.block, event.input, true));
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
@@ -1053,6 +760,20 @@ export async function processResponsesStream<TApi extends Api>(
 	}
 	if (!sawTerminalResponseEvent) {
 		throw new Error("OpenAI Responses stream ended before a terminal response event");
+	}
+	// The agent runs every tool call in the final message. Refuse to hand over calls whose
+	// output_item.done never arrived: their arguments may be cut off or mixed up, e.g. when a
+	// non-compliant server omits output_index. Finished calls have their scratch buffers removed.
+	if (output.stopReason === "toolUse") {
+		for (const block of output.content) {
+			if (block.type !== "toolCall") continue;
+			const toolCall = block as StreamingToolCall;
+			if (toolCall.partialJson !== undefined || toolCall.customInput !== undefined) {
+				throw new Error(
+					`OpenAI Responses stream completed with an unfinished tool call: ${toolCall.name} (${toolCall.id})`,
+				);
+			}
+		}
 	}
 }
 

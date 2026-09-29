@@ -10,27 +10,35 @@
 
 import type {
 	AgentMessage,
+	AgentTool,
+	AgentToolCallOutcome,
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 	ToolExecutionMode,
 } from "@lue-labs/pi-agent-core";
 import type {
+	AnyModel,
 	Api,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
+	ClassifierApi,
 	ConstrainedSamplingConfig,
+	ImageApi,
 	ImageContent,
+	JsonValue,
 	Message,
 	Model,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	Provider,
+	ProviderClassifier,
 	ProviderHeaders,
+	ProviderId,
+	ProviderImages,
 	RefreshModelsContext,
 	SimpleStreamOptions,
 	TextContent,
-	ToolReferenceContent,
 	ToolResultMessage,
 	TranscriptContext,
 	Usage,
@@ -40,7 +48,6 @@ import type {
 	AutocompleteProvider,
 	Component,
 	EditorComponent,
-	EditorHighlighter,
 	EditorTheme,
 	KeyId,
 	OverlayHandle,
@@ -49,9 +56,6 @@ import type {
 } from "@lue-labs/pi-tui";
 import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-import type { AgentSession } from "../agent-session.ts";
-import type { AgentChainDefinition } from "../agents/chains.ts";
-import type { AgentDefinition } from "../agents/types.ts";
 import type { BashResult } from "../bash-executor.ts";
 import type { CacheWarmingDecisionEvent, CacheWarmingDecisionEventResult } from "../cache-warmer.ts";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
@@ -59,6 +63,7 @@ import type { EventBus } from "../event-bus.ts";
 import type { ExecOptions, ExecResult } from "../exec.ts";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
 import type { KeybindingsManager } from "../keybindings.ts";
+import type { McpServerConfig, McpServerRegistry, RegisteredMcpServer } from "../mcp-servers.ts";
 import type { CustomMessage } from "../messages.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
@@ -72,18 +77,18 @@ import type {
 	SessionEntry,
 	SessionManager,
 } from "../session-manager.ts";
+import type { Settings } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
-import type { Task } from "../tasks/types.ts";
 import type { BashOperations } from "../tools/bash.ts";
 import type { EditToolDetails } from "../tools/edit.ts";
 import type {
 	BashToolDetails,
 	BashToolInput,
 	EditToolInput,
-	GlobToolDetails,
-	GlobToolInput,
+	FindToolDetails,
+	FindToolInput,
 	GrepToolDetails,
 	GrepToolInput,
 	LsToolDetails,
@@ -94,29 +99,12 @@ import type {
 	ReadToolInput,
 	WriteToolInput,
 } from "../tools/index.ts";
-import type { ForkAgentOptions, ForkAgentResult, TranscriptApi, TranscriptEntry } from "./fork-agent-types.ts";
-import type { ExtensionFooterSpec, ExtensionMainPaneFactory, ExtensionOverlayFactory } from "./ui-slots.ts";
+import type { ModelRoute, ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 
 export type { ExecOptions, ExecResult } from "../exec.ts";
-export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 export type { BuildSystemPromptOptions, NormalizedBuildSystemPromptOptions } from "../system-prompt.ts";
-export type {
-	AgentHandle,
-	ForkAgentOptions,
-	ForkAgentResult,
-	TranscriptApi,
-	TranscriptEntry,
-} from "./fork-agent-types.ts";
-export type {
-	ExtensionFooterRenderCtx,
-	ExtensionFooterSpec,
-	ExtensionMainPaneAPI,
-	ExtensionMainPaneComponent,
-	ExtensionMainPaneFactory,
-	ExtensionOverlayAPI,
-	ExtensionOverlayFactory,
-} from "./ui-slots.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
+export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 
 // ============================================================================
 // UI Context
@@ -255,14 +243,6 @@ export interface ExtensionUIContext {
 	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
 
 	/**
-	 * Style spans of the input editor's text in place, e.g. to show that a token
-	 * was recognized. The highlighter receives the editor's full text and returns
-	 * absolute `{ start, end, style }` ranges. Highlighters from all extensions are
-	 * merged; overlapping ranges resolve to the earliest-starting one.
-	 */
-	addInputHighlighter(highlighter: EditorHighlighter): void;
-
-	/**
 	 * Set a custom editor component via factory function.
 	 * Pass undefined to restore the default editor.
 	 *
@@ -329,23 +309,6 @@ export interface ContextUsage {
 	contextWindow: number;
 	/** Context usage as percentage of context window, or null if tokens is unknown. */
 	percent: number | null;
-	/** Optional diagnostic detail used by TUI/status surfaces; callers must tolerate absence. */
-	details?: {
-		source: "provider_usage" | "loaded_estimate";
-		/** Loaded context estimate: system prompt + transcript + schemas that are actually loaded. */
-		loadedContextTokens?: number;
-		/** Provider-reported usage when available; usually conservative for compaction/extensions. */
-		providerUsageTokens?: number;
-		systemPromptTokens?: number;
-		transcriptTokens?: number;
-		loadedToolSchemaTokens?: number;
-		deferredToolSchemaTokens?: number;
-		/** True when deferred schema split reflects native provider-side tool loading. */
-		nativeDeferredTools?: boolean;
-		loadedToolCount?: number;
-		deferredToolCount?: number;
-		loadedDeferredToolCount?: number;
-	};
 }
 
 export interface CompactOptions {
@@ -368,20 +331,6 @@ export interface ExtensionContext {
 	hasUI: boolean;
 	/** Current working directory */
 	cwd: string;
-	/**
-	 * Origin of this AgentSession. Set once at session construction from
-	 * `CreateAgentSessionOptions.source` (or `--source` on the CLI) and never
-	 * mutated. Hooks that fire on per-session or per-turn events without a
-	 * dedicated `source` field (`session_start`, `session_shutdown`,
-	 * `turn_end`, `tool_call`, `tool_result`, tool execution) read this to
-	 * tell user-driven sessions from machine-driven ones (in-process
-	 * child-agent delegations, Pi children spawned with `pi --source
-	 * child-agent`). Per-turn events that DO carry source (`input`,
-	 * `before_agent_start`) should prefer `event.source` since extension
-	 * steers can inject an `"extension"` turn into an otherwise
-	 * `"interactive"` session. Defaults to `"interactive"`.
-	 */
-	source: InputSource;
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
 	/** Model registry for API key resolution */
@@ -395,57 +344,54 @@ export interface ExtensionContext {
 	scopedModels: readonly ScopedModel[];
 	/** Current thinking level, when provided by the session runtime. */
 	thinkingLevel?: ThinkingLevel;
-	/** Whether no turn-starting call, compaction, or agent run is active. */
+	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
 	/** Whether project-local trust is active for this context. */
 	isProjectTrusted(): boolean;
 	/** The current abort signal, or undefined when the agent is not streaming. */
 	signal: AbortSignal | undefined;
-	/** Abort the current agent operation. Optional reason is surfaced on the aborted assistant message. */
-	abort(reason?: unknown): void;
-	/**
-	 * Request that the current agent run stop after the active turn finishes.
-	 * Unlike abort(), this preserves the completed assistant/tool messages and
-	 * lets normal turn_end hooks run before the run parks.
-	 */
-	requestStopAfterTurn(reason?: string): void;
+	/** Abort the current agent operation */
+	abort(): void;
 	/** Whether there are queued messages waiting */
 	hasPendingMessages(): boolean;
 	/** Gracefully shutdown pi and exit. Available in all contexts. */
 	shutdown(): void;
-	/** Reload runtime resources and extension/package membership. Available in all contexts. */
-	reload(): Promise<void>;
 	/** Get current context usage for the active model. */
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+}
+
+/** Options for {@link ExtensionToolContext.executeTool}. */
+export interface ExecuteToolOptions {
+	/** Defaults to the calling tool's signal. */
+	signal?: AbortSignal;
+	/** Receives partial results of the nested tool, in addition to `tool_execution_update` events. */
+	onUpdate?: AgentToolUpdateCallback;
+}
+
+/**
+ * Context passed to tool `execute()` in a session: the extension context plus `executeTool()`
+ * for running other tools through the same validation, hooks, and permission checks as
+ * model-issued calls.
+ *
+ * A tool wrapped with `wrapToolDefinition()` without a context factory, such as a built-in tool
+ * created with `createBashTool()` and run in a plain `Agent` or called directly, gets no context.
+ */
+export interface ExtensionToolContext extends ExtensionContext {
+	/** Tools {@link executeTool} can call. */
+	readonly tools: readonly AgentTool[];
 	/**
-	 * Get the system prompt after running all `before_agent_start` handlers in
-	 * preview mode. Use for diagnostic UIs (e.g. /context) that need to show
-	 * what the LLM will actually see, including extension rewrites that would
-	 * normally only be applied at turn time. Handlers receive `event.preview = true`
-	 * and must not fire side effects in that branch.
-	 */
-	getEffectiveSystemPrompt(): Promise<string>;
-	/**
-	 * Fork a child agent that inherits the parent's frozen turn-start system
-	 * prompt for cache-preserving subagents. The child runs in the background
-	 * (does not block the calling hook) and is observed via the returned
-	 * `AgentHandle` (`.wait()`, `.abort()`, `.status`).
+	 * Run another tool. The call gets the id `<calling id>/<n>`, and the `tool_call`, `tool_result`,
+	 * and `tool_execution_*` events carry `parentToolCallId`. It does not appear in the transcript;
+	 * a bounded record of it is kept as `nestedCalls` on the calling tool's result message.
 	 *
-	 * Caching: the parent's system prompt bytes are re-used 1:1 in the child's
-	 * first request. Override `opts.model` to a non-default value and that
-	 * invariant breaks — the child reprocesses the whole prefix.
+	 * Never rejects for tool failures: unknown tools, validation errors, blocked calls, and thrown
+	 * errors come back as `isError: true`.
 	 */
-	forkAgent(opts: ForkAgentOptions): Promise<ForkAgentResult>;
-	/**
-	 * Structured transcript message API. Use `transcript.append(entry)` to
-	 * inject system-style messages (e.g. memory-saved notices) into the live
-	 * transcript between user/assistant turns.
-	 */
-	readonly transcript: TranscriptApi;
+	executeTool(name: string, args: unknown, options?: ExecuteToolOptions): Promise<AgentToolCallOutcome>;
 }
 
 /**
@@ -495,8 +441,8 @@ export interface ExtensionCommandContext extends ExtensionContext {
  */
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; wakeOnIdle?: boolean },
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void>;
 
 	sendUserMessage(
@@ -546,6 +492,69 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 }
 
 /**
+ * How the model reaches a tool. "Callable" means callable from other tools through
+ * `ctx.executeTool()`, as the `codemode` tool does.
+ *
+ * - `direct`: declared to the model while active, and callable while active.
+ * - `model-only`: declared to the model while active, never callable. Use it for orchestrating or
+ *   interactive tools.
+ * - `codemode`: callable whenever registered. Not declared to the model unless explicitly
+ *   activated. Codemode tools list it in their description.
+ * - `deferred`: like `codemode`, but codemode tools do not list it; tool search can find it.
+ * - `hidden`: registered but unreachable. Activating it has no effect.
+ *
+ * `direct` and `model-only` tools are activated when they are registered; the others are not.
+ * The active tool set (`getActiveTools`/`setActiveTools`) is the set declared to the model.
+ */
+export type ToolExposure = "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+
+/**
+ * Hints about what a tool does, with the meaning of MCP tool annotations. They come from the tool's
+ * author and are not verified; permission extensions can use them to decide which calls to confirm.
+ */
+export interface ToolAnnotations {
+	/** The tool does not modify its environment. */
+	readOnlyHint?: boolean;
+	/** The tool may delete or overwrite data, rather than only add to it. Meaningful when not read-only. */
+	destructiveHint?: boolean;
+	/** Repeating a call with the same arguments has no further effect. Meaningful when not read-only. */
+	idempotentHint?: boolean;
+	/** The tool reaches an open world of external entities, such as the web, rather than a closed domain. */
+	openWorldHint?: boolean;
+}
+
+/** A group of related tools, such as the tools of one MCP server. Codemode tools list them together. */
+export interface ToolNamespace {
+	/** For example `mcp__docs`. */
+	name: string;
+	/** Shown once above the group's tools. */
+	description?: string;
+}
+
+/** The tools of a session as {@link ToolDefinition.prepareLoadout} sees them. */
+export interface ToolLoadout {
+	/** Tools declared to the model (the active tools), in order, with their original descriptions. */
+	readonly declared: readonly AgentTool[];
+	/** Tools callable through `ctx.executeTool()`. */
+	readonly callable: readonly AgentTool[];
+	/** Every registered tool. */
+	readonly registered: readonly AgentTool[];
+	getExposure(name: string): ToolExposure;
+	getNamespace(name: string): ToolNamespace | undefined;
+}
+
+/** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */
+export interface ToolLoadoutChanges {
+	/** Model-facing descriptions of declared tools, by tool name. */
+	descriptions?: Readonly<Record<string, string>>;
+	/**
+	 * Declared tools whose declarations requests leave out. They stay active and callable, and the
+	 * transcript still declares them, so the active set survives `/tree` and resume.
+	 */
+	hiddenDeclarations?: readonly string[];
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
@@ -559,57 +568,46 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
-	/** Mark this tool for progressive/provider-native deferred loading when supported. */
-	deferLoading?: boolean;
-	/** Keep this tool eagerly loaded even when other tools are deferred. */
-	alwaysLoad?: boolean;
-	/**
-	 * Opt in to resumability for interactive (side-effect-free, UI-only) tools.
-	 *
-	 * When a session's transcript ends on an assistant message with exactly one
-	 * unresolved tool call for a tool that sets this to `true`, the runtime
-	 * re-executes that call as soon as the session is loaded/resumed (e.g. after
-	 * `pi --resume` following a killed process), instead of leaving it to the
-	 * generic orphaned-tool-call synthetic-error fallback. This lets a UI dialog
-	 * (like AskUserQuestion) genuinely re-present itself and resolve normally.
-	 *
-	 * Defaults to `false`/unset, which preserves today's behavior (and its
-	 * safety property: a stale `bash`/`edit` call is never silently re-run on
-	 * resume). Only set this for tools whose `execute()` is safe to invoke again
-	 * with the same arguments and that do not perform side effects before
-	 * awaiting user/UI input — pending state must live entirely in the
-	 * transcript's persisted tool call, not in extension-local memory.
-	 */
-	resumePendingCall?: boolean;
-	/**
-	 * Names of core base builtins (e.g. "read", "edit", "bash_output") that this
-	 * tool fully supersedes. When the tool is registered, the listed base builtins
-	 * are dropped from the tool registry so the override is the single tool for that
-	 * capability — no duplicate (`Read`/`read`) schemas. No-op when nothing declares
-	 * a replacement, so vanilla/upstream sessions keep their base tools. Resolved
-	 * once at registry build (no per-turn state), keeping the tools[] prefix
-	 * cache-stable.
-	 */
-	replacesBuiltins?: readonly string[];
-	/** Concise searchable hint used by tool discovery surfaces. */
-	searchHint?: string;
-	/**
-	 * Optional namespace/group label. Set post-registration by the policy owner
-	 * (tool-search) via setToolNamespaces so provider serializers can group
-	 * related tools into a provider-native namespace. Pure serialization metadata.
-	 */
-	namespace?: string;
-	/** Optional provider allow-list. When set, hide the tool from other providers' active/deferred surfaces. */
-	providers?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
-	renderShell?: "default" | "self" | "hidden";
+	renderShell?: "default" | "self";
 
 	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
 	prepareArguments?: (args: unknown) => Static<TParams>;
+
+	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`; codemode scripts then receive it instead of the text content.
+	 */
+	outputSchema?: TSchema;
+
+	/**
+	 * How the model reaches the tool. Default: `"direct"`. See {@link ToolExposure}.
+	 */
+	exposure?: ToolExposure;
+
+	/** Group the tool belongs to, for example its MCP server. */
+	namespace?: ToolNamespace;
+
+	/** Hints about what the tool does, for example from an MCP server. */
+	annotations?: ToolAnnotations;
+
+	/**
+	 * Whether registering the tool activates it. Default: `true` for `direct` and `model-only` tools;
+	 * other exposures are never activated on registration. A tool with `defaultActive: false` is
+	 * activated by naming it in `--tools` or the `defaultTools` setting, or with `setActiveTools()`.
+	 */
+	defaultActive?: boolean;
+
+	/**
+	 * Adjust how the loadout is presented to the model while this tool is active. Called whenever
+	 * the active tools change. Tools that orchestrate other tools use it, for example to list the
+	 * callable tools in their own description.
+	 */
+	prepareLoadout?: (loadout: ToolLoadout) => ToolLoadoutChanges | undefined;
 
 	/**
 	 * Per-tool execution mode override.
@@ -626,7 +624,7 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 		params: Static<TParams>,
 		signal: AbortSignal | undefined,
 		onUpdate: AgentToolUpdateCallback<TDetails> | undefined,
-		ctx: ExtensionContext,
+		ctx: ExtensionToolContext,
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
@@ -698,6 +696,18 @@ export interface ResourcesDiscoverResult {
 	themePaths?: string[];
 }
 
+/**
+ * Fired when an extension registers or unregisters an MCP server after the extensions are bound
+ * (see {@link ExtensionAPI.registerMcpServer}). Servers registered while extensions load are read
+ * with `pi.getMcpServers()` on `session_start`. Handling this event marks an extension as the one
+ * that connects registered servers.
+ */
+export interface McpServersChangeEvent {
+	type: "mcp_servers_change";
+	/** Every registered server after the change. */
+	servers: RegisteredMcpServer[];
+}
+
 // ============================================================================
 // Session Events
 // ============================================================================
@@ -709,20 +719,6 @@ export interface SessionStartEvent {
 	reason: "startup" | "reload" | "new" | "resume" | "fork";
 	/** Previously active session file. Present for "new", "resume", and "fork". */
 	previousSessionFile?: string;
-	/**
-	 * Verbatim metadata supplied by the launcher via `ForkAgentOptions.metadata`
-	 * (in-process `ctx.forkAgent` forks only). Lets an extension running inside
-	 * the child correlate it with per-call launcher state. Undefined for normal
-	 * (non-fork) session starts.
-	 */
-	forkMetadata?: Record<string, unknown>;
-}
-
-/** Fired when the current session metadata changes. */
-export interface SessionInfoChangedEvent {
-	type: "session_info_changed";
-	/** Current normalized session name. Undefined when the name is cleared. */
-	name: string | undefined;
 }
 
 /** Fired when the current session metadata changes. */
@@ -885,6 +881,15 @@ export interface AfterProviderResponseEvent {
 	headers: Record<string, string>;
 }
 
+/** Fired for a parsed provider stream event before Pi normalizes it. */
+export interface ProviderStreamEvent {
+	type: "provider_stream_event";
+	provider: ProviderId;
+	api: Api;
+	model: string;
+	data: unknown;
+}
+
 /** Fired after user submits prompt but before agent loop. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
@@ -892,10 +897,6 @@ export interface BeforeAgentStartEvent {
 	prompt: string;
 	/** Images attached to the user prompt, if any. */
 	images?: ImageContent[];
-	/** Source that initiated the turn. */
-	source: InputSource;
-	/** True for a side-effect-free prompt preview. */
-	preview?: boolean;
 	/** The current system prompt, rendered from systemPromptOptions and earlier handler changes. */
 	readonly systemPrompt: string;
 	/** Mutable prompt sections. Later handlers observe mutations made by earlier handlers. */
@@ -1034,18 +1035,14 @@ export interface MessageEndEvent {
 	message: AgentMessage;
 }
 
-/** Fired once when a custom message is accepted by the session */
-export interface CustomMessageEvent {
-	type: "custom_message";
-	message: CustomMessage;
-}
-
 /** Fired when a tool starts executing */
 export interface ToolExecutionStartEvent {
 	type: "tool_execution_start";
 	toolCallId: string;
 	toolName: string;
 	args: any;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 /** Fired during tool execution with partial/streaming output */
@@ -1055,6 +1052,8 @@ export interface ToolExecutionUpdateEvent {
 	toolName: string;
 	args: any;
 	partialResult: any;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 /** Fired when a tool finishes executing */
@@ -1064,6 +1063,8 @@ export interface ToolExecutionEndEvent {
 	toolName: string;
 	result: any;
 	isError: boolean;
+	/** Set when another tool (for example a codemode script) made this call. */
+	parentToolCallId?: string;
 }
 
 // ============================================================================
@@ -1087,11 +1088,6 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
-/** Internal notification fired after the configured tool registry is refreshed. */
-export interface ToolsChangedEvent {
-	type: "tools_changed";
-}
-
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -1111,19 +1107,8 @@ export interface UserBashEvent {
 // Input Events
 // ============================================================================
 
-/**
- * Origin of a single agent turn. Hooks that should only fire for user input
- * (memory recall, persistent-memory inject, save-prompt) gate on this.
- *
- * - `"interactive"` — a real human typed into the TUI or invoked `pi --print`.
- * - `"rpc"`         — an RPC client sent a `prompt` command.
- * - `"extension"`   — an extension hook called `steer` or `sendCustomMessage`.
- * - `"child-agent"` — an in-process delegated run from the built-in `agent`
- *                    tool / `ctx.forkAgent`, or an out-of-process Pi child
- *                    spawned with `pi --source child-agent`. Replaces the
- *                    legacy `PI_MEMORY_SUBAGENT=1` env contract.
- */
-export type InputSource = "interactive" | "rpc" | "extension" | "child-agent";
+/** Source of user input */
+export type InputSource = "interactive" | "rpc" | "extension";
 
 /** Fired when user input is received, before agent processing */
 export interface InputEvent {
@@ -1150,11 +1135,14 @@ export type InputEventResult =
 
 interface ToolCallEventBase {
 	type: "tool_call";
+	/**
+	 * The call's id. For calls another tool made (with `parentToolCallId` set), pi assigns
+	 * `<parent id>/<n>`; such ids never appear as tool calls or tool results in the transcript, only
+	 * in the parent result's `nestedCalls` record.
+	 */
 	toolCallId: string;
-	/** Agent-run id this call belongs to (sub-agent runs only; undefined for the top-level session). */
-	agentId?: string;
-	/** The run that spawned this call's agent run; undefined at top level. */
-	parentAgentId?: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
 }
 
 export interface BashToolCallEvent extends ToolCallEventBase {
@@ -1187,9 +1175,9 @@ export interface GrepToolCallEvent extends ToolCallEventBase {
 	input: GrepToolInput;
 }
 
-export interface GlobToolCallEvent extends ToolCallEventBase {
-	toolName: "Glob";
-	input: GlobToolInput;
+export interface FindToolCallEvent extends ToolCallEventBase {
+	toolName: "find";
+	input: FindToolInput;
 }
 
 export interface LsToolCallEvent extends ToolCallEventBase {
@@ -1215,20 +1203,24 @@ export type ToolCallEvent =
 	| EditToolCallEvent
 	| WriteToolCallEvent
 	| GrepToolCallEvent
-	| GlobToolCallEvent
+	| FindToolCallEvent
 	| LsToolCallEvent
 	| CustomToolCallEvent;
 
 interface ToolResultEventBase {
 	type: "tool_result";
+	/** The call's id; `<parent id>/<n>` for nested calls, see `ToolCallEvent`. */
 	toolCallId: string;
+	/** Set when another tool (for example a codemode script) issued this call. */
+	parentToolCallId?: string;
 	input: Record<string, unknown>;
-	content: (TextContent | ImageContent | ToolReferenceContent)[];
+	content: (TextContent | ImageContent)[];
+	/**
+	 * Machine-readable result for tools that declare an `outputSchema`. Handlers that redact
+	 * `content` should also replace this; replacing `content` alone drops it.
+	 */
+	structuredContent?: JsonValue;
 	isError: boolean;
-	/** Agent-run id this result belongs to (sub-agent runs only; undefined for the top-level session). */
-	agentId?: string;
-	/** The run that spawned this result's agent run; undefined at top level. */
-	parentAgentId?: string;
 	/** Usage from the tool execution itself, if available. */
 	usage?: Usage;
 }
@@ -1263,9 +1255,9 @@ export interface GrepToolResultEvent extends ToolResultEventBase {
 	details: GrepToolDetails | undefined;
 }
 
-export interface GlobToolResultEvent extends ToolResultEventBase {
-	toolName: "Glob";
-	details: GlobToolDetails | undefined;
+export interface FindToolResultEvent extends ToolResultEventBase {
+	toolName: "find";
+	details: FindToolDetails | undefined;
 }
 
 export interface LsToolResultEvent extends ToolResultEventBase {
@@ -1286,7 +1278,7 @@ export type ToolResultEvent =
 	| EditToolResultEvent
 	| WriteToolResultEvent
 	| GrepToolResultEvent
-	| GlobToolResultEvent
+	| FindToolResultEvent
 	| LsToolResultEvent
 	| CustomToolResultEvent;
 
@@ -1309,8 +1301,8 @@ export function isWriteToolResult(e: ToolResultEvent): e is WriteToolResultEvent
 export function isGrepToolResult(e: ToolResultEvent): e is GrepToolResultEvent {
 	return e.toolName === "grep";
 }
-export function isGlobToolResult(e: ToolResultEvent): e is GlobToolResultEvent {
-	return e.toolName === "Glob";
+export function isFindToolResult(e: ToolResultEvent): e is FindToolResultEvent {
+	return e.toolName === "find";
 }
 export function isLsToolResult(e: ToolResultEvent): e is LsToolResultEvent {
 	return e.toolName === "ls";
@@ -1342,7 +1334,7 @@ export function isToolCallEventType(toolName: "read", event: ToolCallEvent): eve
 export function isToolCallEventType(toolName: "edit", event: ToolCallEvent): event is EditToolCallEvent;
 export function isToolCallEventType(toolName: "write", event: ToolCallEvent): event is WriteToolCallEvent;
 export function isToolCallEventType(toolName: "grep", event: ToolCallEvent): event is GrepToolCallEvent;
-export function isToolCallEventType(toolName: "Glob", event: ToolCallEvent): event is GlobToolCallEvent;
+export function isToolCallEventType(toolName: "find", event: ToolCallEvent): event is FindToolCallEvent;
 export function isToolCallEventType(toolName: "ls", event: ToolCallEvent): event is LsToolCallEvent;
 export function isToolCallEventType<TName extends string, TInput extends Record<string, unknown>>(
 	toolName: TName,
@@ -1356,6 +1348,7 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
 export type ExtensionEvent =
 	| ProjectTrustEvent
 	| ResourcesDiscoverEvent
+	| McpServersChangeEvent
 	| SessionEvent
 	| ContextEvent
 	| ContextWithSystemEvent
@@ -1363,6 +1356,7 @@ export type ExtensionEvent =
 	| BeforeProviderRequestEvent
 	| BeforeProviderHeadersEvent
 	| AfterProviderResponseEvent
+	| ProviderStreamEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
@@ -1375,13 +1369,11 @@ export type ExtensionEvent =
 	| MessageStartEvent
 	| MessageUpdateEvent
 	| MessageEndEvent
-	| CustomMessageEvent
 	| ToolExecutionStartEvent
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
 	| ThinkingLevelSelectEvent
-	| ToolsChangedEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
@@ -1426,9 +1418,15 @@ export type UserBashEventResult =
 			result: BashResult;
 	  };
 
+/**
+ * Changes a `tool_result` handler makes. Omitted fields stay as they are, except that replacing
+ * `content` without returning `structuredContent` drops the structured content, because it may no
+ * longer match. Return it along with `content` to keep it.
+ */
 export interface ToolResultEventResult {
-	content?: (TextContent | ImageContent | ToolReferenceContent)[];
+	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	usage?: Usage;
 }
@@ -1439,7 +1437,7 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details" | "modelVisible">;
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
 }
@@ -1532,20 +1530,9 @@ export interface ResolvedCommand extends RegisteredCommand {
 export type ExtensionHandler<E, R = undefined> = (event: E, ctx: ExtensionContext) => Promise<R | void> | R | void;
 
 /**
- * Transform applied only when a child agent is about to inherit its parent's
- * system prompt. The transform must be deterministic and must not mutate
- * session state; returning the input unchanged preserves the normal cache
- * affinity contract.
- */
-export type ForkSystemPromptTransform = (systemPrompt: string) => string;
-
-/**
  * ExtensionAPI passed to extension factory functions.
  */
 export interface ExtensionAPI {
-	/** Working directory this extension instance was loaded for. */
-	cwd: string;
-
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
@@ -1572,6 +1559,7 @@ export interface ExtensionAPI {
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): () => void;
 	on(event: "session_compact_failed", handler: ExtensionHandler<SessionCompactFailedEvent>): () => void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): () => void;
+	on(event: "mcp_servers_change", handler: ExtensionHandler<McpServersChangeEvent>): () => void;
 	on(
 		event: "session_before_tree",
 		handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>,
@@ -1589,6 +1577,7 @@ export interface ExtensionAPI {
 	): () => void;
 	on(event: "before_provider_headers", handler: ExtensionHandler<BeforeProviderHeadersEvent>): () => void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): () => void;
+	on(event: "provider_stream_event", handler: ExtensionHandler<ProviderStreamEvent>): () => void;
 	on(
 		event: "before_agent_start",
 		handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>,
@@ -1607,13 +1596,11 @@ export interface ExtensionAPI {
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): () => void;
 	on(event: "message_update", handler: ExtensionHandler<MessageUpdateEvent>): () => void;
 	on(event: "message_end", handler: ExtensionHandler<MessageEndEvent, MessageEndEventResult>): () => void;
-	on(event: "custom_message", handler: ExtensionHandler<CustomMessageEvent>): () => void;
 	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): () => void;
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): () => void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): () => void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): () => void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): () => void;
-	on(event: "tools_changed", handler: ExtensionHandler<ToolsChangedEvent>): () => void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): () => void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): () => void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): () => void;
@@ -1660,31 +1647,8 @@ export interface ExtensionAPI {
 			  },
 	): void;
 
-	/** Register a setting shown in the interactive `/settings` selector. */
-	registerSetting(options: Omit<ExtensionSetting, "extensionPath">): void;
-
 	/** Get the value of a registered CLI flag. */
 	getFlag(name: string): boolean | string | undefined;
-
-	/**
-	 * Register a deterministic transform for inherited child-agent system
-	 * prompts. This runs before fork-mode prompt inheritance is frozen, so an
-	 * extension can remove parent-only policy without mutating the parent or
-	 * running a per-turn hook in the child.
-	 */
-	registerForkSystemPromptTransform(transform: ForkSystemPromptTransform): void;
-
-	/**
-	 * Read this extension's tuning slice from `settings.json` `extensionConfig{}`
-	 * (merged global ← project). `namespace` is the extension's key (e.g. its
-	 * directory/package name). Returns `undefined` when the namespace is absent.
-	 * The L3 layer of config: precedence L1 source default < L2 membership < L3
-	 * this < L4 env/flag override (apply the env fallback yourself in-extension).
-	 */
-	getExtensionConfig<T = Record<string, unknown>>(namespace: string): T | undefined;
-
-	/** Persist one key in an extension's global `extensionConfig` namespace. */
-	setExtensionConfigValue(namespace: string, key: string, value: unknown): void;
 
 	// =========================================================================
 	// Message Rendering
@@ -1695,198 +1659,6 @@ export interface ExtensionAPI {
 
 	/** Register a transformer for user and assistant Markdown before Pi renders it in the interactive transcript. */
 	registerMarkdownTransformer(transformer: MarkdownTransformer): void;
-	/**
-	 * Register a default renderer for `customType` that pi-core may fall back to
-	 * when no per-extension renderer was registered for that type. Used by
-	 * packages that own built-in custom-message kinds (e.g. transcript notices)
-	 * so the renderer lives outside core. If multiple extensions register a
-	 * default for the same `customType`, the first one wins.
-	 */
-	setDefaultMessageRenderer<T = unknown>(customType: string, renderer: MessageRenderer<T>): void;
-
-	// =========================================================================
-	// Lifecycle
-	// =========================================================================
-
-	/**
-	 * Register a handler invoked synchronously during `AgentSession.dispose()`,
-	 * before the extension runner is invalidated. Use for resource reaping
-	 * (background processes, timers, registries) owned by the extension.
-	 * Handlers run synchronously; async work is best moved to the
-	 * `session_shutdown` event which fires earlier and is awaited.
-	 * Handler errors are isolated per extension — one failure does not skip
-	 * the remaining handlers.
-	 */
-	onSessionDispose(handler: SessionDisposeHandler): void;
-
-	// =========================================================================
-	// Live Session Registry
-	// =========================================================================
-
-	/**
-	 * Register a running child `AgentSession` under `taskId`. Producers (e.g.
-	 * agent executors) call this immediately before driving the child prompt
-	 * loop; UI consumers read via `getLiveSession`.
-	 * Backed by a shared registry — all extensions see the same map.
-	 */
-	registerLiveSession(taskId: string, session: AgentSession): void;
-
-	/**
-	 * Deregister a live session. Producers call this once the child finishes.
-	 */
-	unregisterLiveSession(taskId: string): void;
-
-	/**
-	 * Return the live session registered under `taskId`, or `undefined` if no
-	 * session is currently registered.
-	 */
-	getLiveSession(taskId: string): AgentSession | undefined;
-
-	// =========================================================================
-	// Task Registry
-	// =========================================================================
-
-	/**
-	 * Register a `Task` adapter for a new task type so the unified task surface
-	 * (`TaskStop`, `TaskBackgroundList`) can dispatch to it. Mirrors the core
-	 * built-in registrations for agent runs and background bash jobs; lets an
-	 * extension own a long-running thing (e.g. a backgrounded MCP tool call) and
-	 * have it stoppable/listable through the standard tools. Backed by the one
-	 * shared registry — all extensions and core see the same adapter table, so
-	 * importing the core registry singleton directly (which would create a second
-	 * table under a duplicated module instance) is unnecessary and unsafe.
-	 */
-	registerTaskAdapter(task: Task): void;
-
-	/**
-	 * Find the registered `Task` adapter that owns `taskId`, or `undefined` when
-	 * no adapter recognizes it. Snapshots each adapter to resolve ownership.
-	 */
-	findTaskAdapter(taskId: string): Task | undefined;
-
-	// =========================================================================
-	// Agent Engine Registries (B2)
-	// =========================================================================
-
-	/**
-	 * Register additional agent definitions contributed by this extension.
-	 * Extensions calling this become a third source of agent definitions
-	 * alongside the built-in catalog and user/project on-disk agents. Core
-	 * exposes the registered set through the runner so consumer packages (e.g.
-	 * the future `pi-agents` engine) can merge it with the existing loader
-	 * sources without having to import the producer package.
-	 */
-	registerAgentDefinitions(definitions: AgentDefinition[]): void;
-
-	/**
-	 * Register additional agent chain definitions contributed by this extension.
-	 * Mirrors `registerAgentDefinitions` for chain configs.
-	 */
-	registerAgentChains(chains: AgentChainDefinition[]): void;
-
-	/**
-	 * Register a named context mode policy that consumer packages may look up
-	 * by `name`. The built-in `default` / `fork` / `slim` / `none` modes are
-	 * resolved by core directly; extensions register additional modes here.
-	 * Last registration wins when two extensions share a name.
-	 */
-	registerContextMode(name: string, policy: ExtensionContextModePolicy): void;
-
-	// =========================================================================
-	// Run Registry (B3)
-	// =========================================================================
-
-	/**
-	 * Register the agent run registry implementation contributed by this
-	 * extension. Intended for the package that owns run lifecycle (e.g. the
-	 * future `pi-agents`) to publish its run store so consumer packages (e.g.
-	 * `pi-agent-ui` selector overlays) can read it through core without an
-	 * import edge. The first registration wins; later registrations are
-	 * ignored so accidental double-loads do not silently swap the registry.
-	 */
-	registerRunRegistry(registry: RunRegistry): void;
-
-	/**
-	 * Return the agent run registry, or `undefined` if no extension has
-	 * registered one. Vendor-neutral by design: the registry shape is opaque
-	 * to core, and consumers cast it to their package-owned interface.
-	 */
-	getRunRegistry(): RunRegistry | undefined;
-
-	// =========================================================================
-	// Telemetry (B4)
-	// =========================================================================
-
-	/**
-	 * Register the session's `AgentTelemetry` implementation. Intended for the
-	 * package that owns observability (e.g. `pi-observability`) so other
-	 * extensions (memory, goal enforcement, audit/eval) can fan their events
-	 * into a single telemetry sink without an import edge. First registration
-	 * wins so a second observability extension does not silently swap the
-	 * sink under live consumers.
-	 */
-	registerTelemetry(telemetry: AgentTelemetry): void;
-
-	/**
-	 * Return the registered telemetry implementation, or `undefined` if no
-	 * extension has published one. The shape is opaque to core; consumers
-	 * cast to their package-owned interface as needed.
-	 */
-	getTelemetry(): AgentTelemetry | undefined;
-
-	// =========================================================================
-	// TUI Slot Hooks (B5) — Main Pane / Overlay / Footer
-	// =========================================================================
-
-	/**
-	 * Register a content component for the main pane (`chatContainer`'s content
-	 * stack). Registration is inert until `showMainPane(id)` activates it.
-	 * The framework saves the prior children on show and restores them on hide.
-	 * Only one main pane may be shown at a time; activating another implicitly
-	 * hides the current one.
-	 *
-	 * Distinct from `ui.setFooter` / `ui.setHeader` (whole-region replacement):
-	 * `registerMainPane` contributes a child for `chatContainer`. Header, footer,
-	 * editor, and working indicator remain framework-owned.
-	 */
-	registerMainPane(id: string, factory: ExtensionMainPaneFactory): void;
-
-	/** Show the registered main pane with the given id. No-op when no UI. */
-	showMainPane(id: string, payload?: unknown): void;
-
-	/** Hide the main pane with the given id. No-op when no UI or not shown. */
-	hideMainPane(id: string): void;
-
-	/**
-	 * True when some extension has registered a main pane with this id via
-	 * `registerMainPane` (irrespective of whether it is currently shown).
-	 * Always `false` in non-UI modes. Use this to choose between routing into
-	 * a richer, optionally-loaded pane and a built-in fallback, instead of
-	 * calling `showMainPane` blind and having no signal it silently no-opped.
-	 */
-	hasMainPane(id: string): boolean;
-
-	/**
-	 * Register an overlay component. Distinct from the existing one-shot
-	 * `ui.custom()` in that the framework retains the factory and the
-	 * extension shows/hides imperatively by id. Overlays stack; the topmost
-	 * receives keyboard input; the built-in escape key pops the topmost.
-	 */
-	registerOverlay(id: string, factory: ExtensionOverlayFactory): void;
-
-	/** Show the registered overlay with the given id, stacked atop any others. */
-	showOverlay(id: string, payload?: unknown): void;
-
-	/** Hide the registered overlay with the given id from the stack. */
-	hideOverlay(id: string): void;
-
-	/**
-	 * Register a footer pill that contributes into the existing footer's nav
-	 * chain. Reactive: `spec.visible()` is evaluated on every footer render
-	 * pass. `ui.setFooter(factory)` keeps working for whole-footer
-	 * replacement; `registerFooter` only adds focusable children.
-	 */
-	registerFooter(id: string, spec: ExtensionFooterSpec): void;
 
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
@@ -1897,13 +1669,13 @@ export interface ExtensionAPI {
 
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; wakeOnIdle?: boolean },
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
-	 * While streaming, deliverAs is required; other busy windows default to "steer".
+	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 * Set expandPromptTemplates to dispatch extension commands and expand skill commands and prompt templates.
 	 */
 	sendUserMessage(
@@ -1930,31 +1702,19 @@ export interface ExtensionAPI {
 	/** Execute a shell command. */
 	exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
 
-	/** Get the list of currently active tool names. */
+	/** Get the names of the active tools, which are the tools declared to the model. */
 	getActiveTools(): string[];
 
-	/** Get all configured tools with parameter schema, prompt guidelines, and source metadata. */
+	/** Get all configured tools with parameter schema, prompt guidelines, exposure, and source metadata. */
 	getAllTools(): ToolInfo[];
 
-	/** Read-only tool registry view for extension-owned tool orchestration. */
-	tools: ToolRegistryView;
+	/** Get a copy of the effective settings (global and project settings merged, with overrides). */
+	getSettings(): Settings;
 
-	/** Register/remove actions on named extension hook points. */
-	hooks: ExtensionHooksAPI;
-
-	/** Shared harness services for extension-owned runtime behavior. */
-	harness: ExtensionHarnessAPI;
-
-	/** Create a typed session-state handle backed by custom session entries. */
-	state<T>(name: string, options: SessionStateOptions<T>): SessionState<T>;
-
-	/** Register an opaque runtime service for other extensions to discover. Prefer pi.harness.provide(). */
-	service<T>(id: string, service: T, options?: ExtensionServiceOptions): ExtensionServiceHandle<T>;
-
-	/** Read an opaque runtime service registered by another extension. Prefer pi.harness.use(). */
-	getService<T>(id: string): T | undefined;
-
-	/** Set the active tools by name. */
+	/**
+	 * Set the active tools by name. Unknown and `hidden` tools are ignored. Tools with `codemode` or
+	 * `deferred` exposure stay callable from codemode scripts whether active or not.
+	 */
 	setActiveTools(toolNames: string[]): void;
 
 	/** Get available slash commands in the current session. */
@@ -2053,6 +1813,46 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	// =========================================================================
+	// MCP Servers
+	// =========================================================================
+
+	/**
+	 * Register an MCP server for this session, with the same config as an `mcpServers` entry in
+	 * `mcp.json`. The server connects next to the configured servers: on `session_start` when
+	 * registered during extension load, right away when registered later. Registering a name again
+	 * replaces the extension's earlier registration.
+	 *
+	 * The registration is not saved; register again on every load. A server of the same name in
+	 * `mcp.json` takes precedence. Throws for invalid configs and for names another extension
+	 * registered. When no loaded extension handles MCP servers (for example because another MCP
+	 * extension replaced the built-in one), the registration is reported as an extension error.
+	 *
+	 * @example
+	 * pi.registerMcpServer("jira", { url: "https://mcp.example.com/jira" });
+	 */
+	registerMcpServer(name: string, config: McpServerConfig): void;
+
+	/** Remove an MCP server this extension registered and close its connection. */
+	unregisterMcpServer(name: string): void;
+
+	/** Every MCP server registered by extensions. For extensions that connect MCP servers. */
+	getMcpServers(): RegisteredMcpServer[];
+
+	/**
+	 * Register a virtual model: a selectable catalog entry that routes each request to a physical
+	 * model. The selection (`ctx.model`, `model_change` entries) names the virtual model; assistant
+	 * messages record the physical model and thinking level the router picked.
+	 *
+	 * `provider` may be any provider id, including one with physical models, and may list several
+	 * virtual models. Registering the same provider and id again replaces the virtual model. See
+	 * docs/virtual-models.md.
+	 */
+	registerVirtualModel<TState = unknown>(model: ExtensionVirtualModel<TState>): void;
+
+	/** Remove a virtual model registered with `registerVirtualModel()`. */
+	unregisterVirtualModel(provider: string, id: string): void;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
@@ -2060,6 +1860,12 @@ export interface ExtensionAPI {
 // ============================================================================
 // Provider Registration Types
 // ============================================================================
+
+/** Virtual model registered via pi.registerVirtualModel(). */
+export interface ExtensionVirtualModel<TState = unknown> extends Omit<VirtualModelDefinition<TState>, "route"> {
+	/** Like `VirtualModelDefinition.route`, with an extension context. */
+	route(request: ModelRouteRequest<TState>, ctx: ExtensionContext): ModelRoute<TState> | Promise<ModelRoute<TState>>;
+}
 
 /** Configuration for registering a provider via pi.registerProvider(). */
 export interface ProviderConfig {
@@ -2077,13 +1883,19 @@ export interface ProviderConfig {
 	 * (`getCurrentSystemPrompt(context.messages)`, `getCurrentTools(context.messages)`).
 	 * Implementations must invoke `options.onPayload` before sending the provider request and use any
 	 * returned replacement payload. They must invoke `options.onResponse` after receiving the response
-	 * and before consuming its body, matching built-in providers.
+	 * and before consuming its body, matching built-in providers. Implementations may invoke
+	 * `options.onProviderStreamEvent(data, model)` with parsed stream events before normalization.
+	 * Event data is adapter-owned and must be treated as read-only.
 	 */
 	streamSimple?: (
 		model: Model<Api>,
 		context: TranscriptContext,
 		options?: SimpleStreamOptions,
 	) => AssistantMessageEventStream;
+	/** Image-generation implementations keyed by image API. */
+	images?: Partial<Record<ImageApi, ProviderImages>>;
+	/** Classifier implementations keyed by classifier API. */
+	classifiers?: Partial<Record<ClassifierApi, ProviderClassifier>>;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
 	/** If true, adds Authorization: Bearer header with the resolved API key. */
@@ -2114,37 +1926,60 @@ export interface ProviderConfig {
 	};
 }
 
-/** Configuration for a model within a provider. */
-export interface ProviderModelConfig {
-	/** Model ID (e.g., "claude-sonnet-4-20250514"). */
+interface ProviderModelConfigBase {
+	/** Model ID. */
 	id: string;
-	/** Display name (e.g., "Claude 4 Sonnet"). */
+	/** Display name. */
 	name: string;
 	/** API type override for this model. */
-	api?: Api;
+	api?: string;
 	/** API endpoint URL override for this model. */
 	baseUrl?: string;
+	/** Supported input types. */
+	input: ("text" | "image")[];
+	/** Provider input limits and cache-safe image preprocessing metadata. */
+	inputLimits?: AnyModel["inputLimits"];
+	/** Per-million-token cost rates and optional request-wide input pricing tiers. */
+	cost: AnyModel["cost"];
+	/** Custom headers for this model. */
+	headers?: Record<string, string>;
+}
+
+/** Chat model configuration. Omitted `type` is normalized to `"chat"`. */
+export interface ProviderChatModelConfig extends ProviderModelConfigBase {
+	type?: "chat";
+	api?: Api;
 	/** Whether the model supports extended thinking. */
 	reasoning: boolean;
 	/** Maps pi thinking levels to provider/model-specific values; null marks a level unsupported. */
 	thinkingLevelMap?: Model<Api>["thinkingLevelMap"];
-	/** Supported input types. */
-	input: ("text" | "image")[];
-	/** Provider input limits and cache-safe image preprocessing metadata. */
-	inputLimits?: Model<Api>["inputLimits"];
-	/** Per-million-token cost rates and optional request-wide input pricing tiers. */
-	cost: Model<Api>["cost"];
 	/** Best-effort prompt cache lifetime in seconds per retention tier. Unset disables cache warming. */
 	promptCache?: Model<Api>["promptCache"];
 	/** Maximum context window size in tokens. */
 	contextWindow: number;
 	/** Maximum output tokens. */
 	maxTokens: number;
-	/** Custom headers for this model. */
-	headers?: Record<string, string>;
+	samplingParams?: Record<string, unknown>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
 }
+
+/** Image-generation model configuration. */
+export interface ProviderImageModelConfig extends ProviderModelConfigBase {
+	type: "image";
+	api?: ImageApi;
+	output: ("text" | "image")[];
+}
+
+/** Structured classifier model configuration. */
+export interface ProviderClassifierModelConfig extends ProviderModelConfigBase {
+	type: "classifier";
+	api?: ClassifierApi;
+	contextWindow: number;
+}
+
+/** Configuration for a model within a provider. */
+export type ProviderModelConfig = ProviderChatModelConfig | ProviderImageModelConfig | ProviderClassifierModelConfig;
 
 /** Extension factory function type. Supports both sync and async initialization. */
 export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
@@ -2152,11 +1987,31 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 export type InlineExtension =
 	| ExtensionFactory
 	| {
-			/** Display name shown as `<inline:name>` in the startup Extensions list. */
+			/**
+			 * Display name shown as `<inline:name>` in the startup Extensions list and errors. With
+			 * `builtin`, the extension is named `builtin:name` in errors and diagnostics.
+			 */
 			name: string;
 			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
+			/**
+			 * Leave this extension out when another extension registers a tool, command, or flag with a
+			 * name it registers during loading, instead of reporting a conflict. The CLI's built-in MCP,
+			 * codemode, and tool search extensions use it, so for example an MCP extension that registers
+			 * `/mcp` replaces the built-in MCP support. The factory still runs, so it should only register
+			 * tools, commands, flags, and event handlers.
+			 */
+			replaceable?: boolean;
+			/**
+			 * Supply the code of the `builtin:<name>` extension instead of loading as an inline extension.
+			 * `builtin:<name>` is an extension resource like a file: it loads by default, `pi config` lists
+			 * it, `-builtin:<name>` in the `extensions` setting and `--no-extensions` disable it, and
+			 * `-e builtin:<name>` loads it explicitly. It is hidden from the startup Extensions list and
+			 * loads after project trust is resolved, so it cannot handle `project_trust`. The CLI's built-in
+			 * extensions use it.
+			 */
+			builtin?: boolean;
 	  };
 
 // ============================================================================
@@ -2176,19 +2031,6 @@ export interface ExtensionFlag {
 	extensionPath: string;
 }
 
-/** A setting contributed to the interactive `/settings` selector by an extension. */
-export interface ExtensionSetting {
-	/** Unique setting id within the registering extension. */
-	id: string;
-	label: string;
-	description?: string;
-	currentValue: string;
-	values: string[];
-	/** Called when the user selects one of `values`. */
-	onChange: (value: string) => void;
-	extensionPath: string;
-}
-
 export interface ExtensionShortcut {
 	shortcut: KeyId;
 	description?: string;
@@ -2199,8 +2041,8 @@ export interface ExtensionShortcut {
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
-	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; wakeOnIdle?: boolean },
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
 export type SendUserMessageHandler = (
@@ -2214,148 +2056,25 @@ export type SetSessionNameHandler = (name: string) => void;
 
 export type GetSessionNameHandler = () => string | undefined;
 
-export type SetExtensionConfigValueHandler = (
-	namespace: string,
-	key: string,
-	value: unknown,
-) => Record<string, unknown>;
-
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
 export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+	exposure: ToolExposure;
+	namespace?: ToolNamespace;
+	annotations?: ToolAnnotations;
 	sourceInfo: SourceInfo;
 };
 
 export type GetAllToolsHandler = () => ToolInfo[];
 
-export type GetToolDefinitionsHandler = () => ToolDefinition[];
-
-export type GetCustomEntriesHandler = (customType: string) => CustomEntry[];
-
-export interface SessionStateOptions<T> {
-	defaultValue: T;
-	customType?: string;
-	merge?: (previous: T, next: T) => T;
-	parse?: (value: unknown) => T | undefined;
-}
-
-export interface SessionState<T> {
-	get(): T;
-	set(next: T): void;
-	update(update: (current: T) => T): T;
-}
-
-export type ExtensionServiceScope = "runtime" | "process";
-
-export interface ExtensionServiceOptions {
-	scope?: ExtensionServiceScope;
-	replace?: boolean;
-}
-
-export interface ExtensionServiceHandle<T> {
-	id: string;
-	current(): T;
-	replace(next: T): void;
-	dispose(): void;
-}
-
-export type ExtensionFilter<T = unknown> = (value: T, ...args: unknown[]) => T | Promise<T>;
-
-/** Payloads for core-owned filter hooks. String hook names remain supported for extension compatibility. */
-export interface ExtensionHookFilterMap {
-	"systemPrompt:build": string;
-	"model:resolve": ModelResolveFilterValue;
-	"message:end": AgentMessage;
-	"provider:beforeRequest": unknown;
-}
-
-export type ExtensionHookName = keyof ExtensionHookFilterMap;
-
-export interface ModelResolveFilterValue {
-	requestedModel: string;
-	model: Model<Api>;
-	thinkingLevel: ThinkingLevel;
-	metadata?: Record<string, unknown>;
-}
-
-export interface ExtensionHookHandle<Name extends string = string> {
-	name: Name;
-	action(id: string, action: ExtensionFactory, options?: { priority?: number }): () => void;
-	filter<T = Name extends ExtensionHookName ? ExtensionHookFilterMap[Name] : unknown>(
-		id: string,
-		filter: ExtensionFilter<T>,
-		options?: { priority?: number },
-	): () => void;
-	removeAction(id: string): void;
-	removeFilter(id: string): void;
-	unregister(): void;
-}
-
-export interface ExtensionHooksAPI {
-	register<Name extends string>(name: Name, options?: { description?: string }): ExtensionHookHandle<Name>;
-	get<Name extends string>(name: Name): ExtensionHookHandle<Name>;
-	unregister(name: string): void;
-	addAction(name: string, id: string, action: ExtensionFactory, options?: { priority?: number }): () => void;
-	removeAction(name: string, id: string): void;
-	addFilter<Name extends ExtensionHookName>(
-		name: Name,
-		id: string,
-		filter: ExtensionFilter<ExtensionHookFilterMap[Name]>,
-		options?: { priority?: number },
-	): () => void;
-	addFilter<T = unknown>(
-		name: string,
-		id: string,
-		filter: ExtensionFilter<T>,
-		options?: { priority?: number },
-	): () => void;
-	removeFilter(name: string, id: string): void;
-	applyFilters<Name extends ExtensionHookName>(
-		name: Name,
-		value: ExtensionHookFilterMap[Name],
-		...args: unknown[]
-	): Promise<ExtensionHookFilterMap[Name]>;
-	applyFilters<T = unknown>(name: string, value: T, ...args: unknown[]): Promise<T>;
-}
-
-export interface ExtensionHarnessAPI {
-	provide<T>(id: string, service: T, options?: ExtensionServiceOptions): ExtensionServiceHandle<T>;
-	use<T>(id: string): T | undefined;
-}
-
-export interface ToolRegistryView {
-	info(): ToolInfo[];
-	definitions(): ToolDefinition[];
-	active(): string[];
-	/**
-	 * Post-registration deferral seam (cache-critical). Marks already-registered
-	 * tools as `deferLoading:true` so they ride `tools[]` as `defer_loading` stubs
-	 * instead of full schemas. Apply once before the first request; idempotent
-	 * (an unchanged set is a no-op). `alwaysLoad` and natively-deferred tools are
-	 * ignored. Dropping a name restores its original `deferLoading`.
-	 */
-	setDeferredOverrides(names: string[]): void;
-	/**
-	 * Post-registration namespace seam (cache-critical). Annotates already-registered
-	 * tools with a `namespace` label (name -> namespace map) so provider serializers
-	 * can group related tools into a provider-native namespace. Pure serialization
-	 * metadata — does not change deferral, activation, or behavior. Apply once before
-	 * the first request; idempotent (an unchanged map is a no-op). An empty map
-	 * clears all namespaces.
-	 */
-	setToolNamespaces(map: Record<string, string>): void;
-}
+export type GetSettingsHandler = () => Settings;
 
 export type GetCommandsHandler = () => SlashCommandInfo[];
 
 export type SetActiveToolsHandler = (toolNames: string[]) => void;
 
-export type SetDeferredToolOverridesHandler = (names: string[]) => void;
-
-export type SetToolNamespacesHandler = (map: Record<string, string>) => void;
-
-export type RefreshToolsHandler = (options?: { activateNewTools?: boolean }) => void;
+export type RefreshToolsHandler = () => void;
 
 export type SetModelHandler = (model: Model<any>) => Promise<boolean>;
 
@@ -2371,23 +2090,18 @@ export type SetLabelHandler = (entryId: string, label: string | undefined) => vo
  */
 export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
-	/**
-	 * Per-extension tuning from `settings.json` `extensionConfig{}`, merged
-	 * global ← project. Keyed by extension namespace. Populated after extensions
-	 * load (resource-loader), mirroring how `flagValues` is filled post-load, so
-	 * extensions read it at handler/init time via `pi.getExtensionConfig(ns)`.
-	 */
-	extensionConfig: Record<string, unknown>;
 	/** Legacy provider-config registrations queued during extension loading, processed when runner binds. */
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
 	/** Native pi-ai provider registrations queued during extension loading, processed when runner binds. */
 	pendingNativeProviderRegistrations: Array<{ provider: Provider; extensionPath: string }>;
+	/** Virtual model registrations queued during extension loading, processed when runner binds. */
+	pendingVirtualModelRegistrations: Array<{ definition: VirtualModelDefinition; extensionPath: string }>;
+	/** Create an extension context. Throws before the runner binds. */
+	createContext: () => ExtensionContext;
 	/** Throws when this extension instance is stale after runtime replacement. */
 	assertActive: () => void;
 	/** Marks this extension instance as stale after runtime replacement or reload. */
 	invalidate: (message?: string) => void;
-	/** When true, registerTool() refreshes the registry without activating newly registered tools. */
-	suppressNewToolActivation: boolean;
 	/** Retain an event-bus subscription until this runtime is invalidated. */
 	trackEventBusSubscription: (unsubscribe: () => void) => () => void;
 	/**
@@ -2399,47 +2113,10 @@ export interface ExtensionRuntimeState {
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	registerNativeProvider: (provider: Provider, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
-	/**
-	 * Set the shared agent run registry. First call wins; later calls are
-	 * silently ignored so accidental double-loads do not swap the registry
-	 * underneath consumers.
-	 */
-	setRunRegistry: (registry: RunRegistry) => void;
-	/** Read the shared agent run registry, or undefined if unset. */
-	getRunRegistry: () => RunRegistry | undefined;
-	/**
-	 * Set the shared telemetry sink. First call wins; later calls are
-	 * silently ignored so accidental double-loads do not swap the sink under
-	 * live consumers.
-	 */
-	setTelemetry: (telemetry: AgentTelemetry) => void;
-	/** Read the shared telemetry sink, or undefined if unset. */
-	getTelemetry: () => AgentTelemetry | undefined;
-	/**
-	 * Imperative show/hide handlers for B5 main panes and overlays. Default to
-	 * no-op stubs so RPC/print modes silently swallow show/hide requests; the
-	 * interactive mode binds real implementations via
-	 * `ExtensionRunner.bindSlotUI()`.
-	 *
-	 * The handler is responsible for looking up the registered factory through
-	 * the runner's getters (`getRegisteredMainPane` / `getRegisteredOverlay`)
-	 * and mounting it. Calls for unknown ids are no-ops.
-	 */
-	showMainPaneFn: (id: string, payload: unknown) => void;
-	hideMainPaneFn: (id: string) => void;
-	showOverlayFn: (id: string, payload: unknown) => void;
-	hideOverlayFn: (id: string) => void;
-	/**
-	 * Existence check for a registered main pane, independent of show/hide.
-	 * Defaults to a stub returning `false` in non-UI modes; interactive mode
-	 * binds the real lookup via `ExtensionRunner.bindSlotUI()`. Lets a caller
-	 * (e.g. the footer agents pane) decide whether to route into a richer
-	 * extension-registered pane (like `pi-agent-ui`'s "zoom" transcript view)
-	 * before attempting `showMainPaneFn`, instead of guessing from a silent
-	 * no-op.
-	 */
-	hasMainPaneFn: (id: string) => boolean;
-	services: Map<string, unknown>;
+	/** Servers registered with `pi.registerMcpServer()`. */
+	mcpServers: McpServerRegistry;
+	registerVirtualModel: (definition: VirtualModelDefinition, extensionPath?: string) => void;
+	unregisterVirtualModel: (provider: string, id: string) => void;
 }
 
 /**
@@ -2455,18 +2132,13 @@ export interface ExtensionActions {
 	setLabel: SetLabelHandler;
 	getActiveTools: GetActiveToolsHandler;
 	getAllTools: GetAllToolsHandler;
-	getToolDefinitions: GetToolDefinitionsHandler;
-	getCustomEntries: GetCustomEntriesHandler;
+	getSettings: GetSettingsHandler;
 	setActiveTools: SetActiveToolsHandler;
-	setDeferredOverrides: SetDeferredToolOverridesHandler;
-	setToolNamespaces: SetToolNamespacesHandler;
 	refreshTools: RefreshToolsHandler;
 	getCommands: GetCommandsHandler;
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
-	/** Persist one key in an extension's global `extensionConfig` namespace and return the merged namespace. */
-	setExtensionConfigValue: SetExtensionConfigValueHandler;
 }
 
 /**
@@ -2479,18 +2151,22 @@ export interface ExtensionContextActions {
 	isIdle: () => boolean;
 	isProjectTrusted: () => boolean;
 	getSignal: () => AbortSignal | undefined;
-	abort: (reason?: unknown) => void;
-	requestStopAfterTurn: (reason?: string) => void;
+	abort: () => void;
 	hasPendingMessages: () => boolean;
 	shutdown: () => void;
-	reload: () => Promise<void>;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
-	getEffectiveSystemPrompt: () => Promise<string>;
-	forkAgent: (opts: ForkAgentOptions) => Promise<ForkAgentResult>;
-	transcriptAppend: (entry: TranscriptEntry) => void;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
+	/** Backs `ExtensionToolContext.executeTool()`. Without it, nested calls fail. */
+	executeTool?: (
+		callerId: string,
+		name: string,
+		args: unknown,
+		options: ExecuteToolOptions,
+	) => Promise<AgentToolCallOutcome>;
+	/** Backs `ExtensionToolContext.tools`. */
+	getCallableTools?: () => readonly AgentTool[];
 }
 
 /**
@@ -2530,149 +2206,24 @@ export interface Extension {
 	path: string;
 	resolvedPath: string;
 	hidden?: boolean;
+	/** See {@link InlineExtension}. */
+	replaceable?: boolean;
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
-	/** Default renderers consulted when no per-extension renderer matched. */
-	defaultMessageRenderers: Map<string, MessageRenderer>;
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
-	/** Settings contributed to the interactive `/settings` selector. */
-	registeredSettings: Map<string, ExtensionSetting>;
-	/** Deterministic transforms applied to fork-inherited system prompts. */
-	forkSystemPromptTransforms?: ForkSystemPromptTransform[];
 	shortcuts: Map<KeyId, ExtensionShortcut>;
-	/** Handlers fired synchronously from `AgentSession.dispose()`. */
-	disposeHandlers: SessionDisposeHandler[];
-	/** Agent definitions registered through `ctx.registerAgentDefinitions`. */
-	registeredAgentDefinitions: AgentDefinition[];
-	/** Agent chains registered through `ctx.registerAgentChains`. */
-	registeredAgentChains: AgentChainDefinition[];
-	/** Context modes registered through `ctx.registerContextMode`. */
-	registeredContextModes: Map<string, ExtensionContextModePolicy>;
-	/** Main panes registered through `pi.registerMainPane`. Keyed by id. */
-	registeredMainPanes: Map<string, ExtensionMainPaneFactory>;
-	/** Overlays registered through `pi.registerOverlay`. Keyed by id. */
-	registeredOverlays: Map<string, ExtensionOverlayFactory>;
-	/** Footer pills registered through `pi.registerFooter`. Keyed by id. */
-	registeredFooters: Map<string, ExtensionFooterSpec>;
-}
-
-/**
- * Synchronous handler registered through `ctx.onSessionDispose`. Fires during
- * `AgentSession.dispose()` immediately before the extension runner is
- * invalidated. Handler errors are caught per-handler and surfaced via the
- * extension error stream.
- */
-export type SessionDisposeHandler = () => void;
-
-/**
- * Vendor-neutral context mode policy passed to `ctx.registerContextMode`.
- * Mirrors the built-in `ResolvedContextPolicy` minus the `mode` discriminant
- * — the registry keys the policy by name, so the mode does not need to be
- * repeated in the value.
- */
-export interface ExtensionContextModePolicy {
-	includeTranscript: boolean;
-	includeProjectContext: boolean;
-	includeSkills: boolean;
-	includeAppendSystemPrompt: boolean;
-}
-
-/**
- * Opaque agent run registry handle exchanged through core. Producers (e.g.
- * the future `pi-agents` engine) implement the interface; consumers (e.g.
- * `pi-agent-ui` overlays) read through it. The shape is intentionally
- * minimal so core stays vendor-neutral — packages may widen the registry
- * with their own typed accessors and cast when reading.
- */
-export interface RunRegistry {
-	/** Snapshot of currently-tracked runs. Shape is opaque to core. */
-	listRuns(): unknown[];
-	/** Lookup a run by id. Shape is opaque to core. */
-	getRun(id: string): unknown | undefined;
-	/** Optional change-notification subscription used by UI consumers. */
-	subscribe?(listener: () => void): () => void;
-}
-
-/**
- * Generic telemetry event exchanged through `AgentTelemetry.record`. The
- * `type` field categorises the event (e.g. `provider.before`, `tool.after`,
- * `compaction.before`); the rest of the payload is opaque to core and owned
- * by the telemetry package. Concrete event taxonomies live in the package
- * that ships `AgentTelemetry` (e.g. `pi-observability`).
- */
-export interface TelemetryEvent {
-	/** Event category. Producers and consumers agree on the taxonomy. */
-	type: string;
-	/** Wall-clock timestamp in ms. Optional; recorders may set their own. */
-	timestamp?: number;
-	/** Free-form payload. Opaque to core. */
-	[key: string]: unknown;
-}
-
-/**
- * Opaque telemetry sink registered through `ctx.registerTelemetry`. Producers
- * (e.g. `pi-observability`) implement the interface; consumers (memory, goal
- * enforcement, audit/eval extensions) fan events into the same sink via
- * `ctx.getTelemetry()`. Core treats the impl as opaque — the concrete shape
- * (e.g. OTEL exporter wiring, SigNoz/Opik routing) lives in the producer
- * package.
- */
-export interface AgentTelemetry {
-	/** Record a telemetry event. Producers shape the event taxonomy. */
-	record(event: TelemetryEvent): void;
-	/**
-	 * Optional graceful flush. Core does not await this; consumers may call
-	 * it before known boundaries (e.g. session dispose) if their
-	 * implementation buffers events.
-	 */
-	flush?(): Promise<void> | void;
-}
-
-export type ExtensionLoadMode = "eager" | "deferred";
-
-export interface ExtensionLoadRequest {
-	path: string;
-	load?: ExtensionLoadMode;
-	/**
-	 * True when the extension was found by scanning an extensions directory
-	 * (`.pi/extensions/`, the agent dir, or a configured directory) rather than
-	 * being named by the user via `-e`, settings, or a package manifest.
-	 *
-	 * Discovered extensions are conveniences, so a load failure degrades to a
-	 * warning instead of aborting startup. Explicitly requested extensions keep
-	 * failing hard. See docs/worktree-bootstrap.md.
-	 */
-	discovered?: boolean;
-}
-
-/** A single extension that failed to load. */
-export interface ExtensionLoadError {
-	path: string;
-	error: string;
-	/**
-	 * True when the failing extension was auto-discovered. Callers treat these as
-	 * non-fatal warnings unless strict extension loading is enabled.
-	 */
-	discovered?: boolean;
-}
-
-export interface DeferredExtension {
-	path: string;
-	sourceInfo?: SourceInfo;
 }
 
 /** Result of loading extensions. */
 export interface LoadExtensionsResult {
 	extensions: Extension[];
-	deferredExtensions: DeferredExtension[];
-	errors: ExtensionLoadError[];
-	/** Shared event bus used by eager and deferred extensions. */
-	eventBus: EventBus;
+	errors: Array<{ path: string; error: string }>;
+	warnings?: Array<{ path: string; warning: string }>;
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 }

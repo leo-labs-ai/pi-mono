@@ -123,27 +123,6 @@ describe("runPrintMode", () => {
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
 
-	it("forwards options.source to session.prompt for both initialMessage and follow-up messages", async () => {
-		// Regression: replaces the legacy `PI_MEMORY_SUBAGENT=1` env contract.
-		// A parent pi spawning `pi --print --source child-agent <prompt>` must
-		// forward that source through to `session.prompt({ source })`, so the
-		// child's `before_agent_start` / `input` handlers see
-		// `event.source === "child-agent"` and skip memory recall/inject.
-		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
-		const { session } = runtimeHost;
-
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
-			initialMessage: "first",
-			messages: ["second"],
-			source: "child-agent",
-		});
-
-		expect(exitCode).toBe(0);
-		expect(session.prompt).toHaveBeenNthCalledWith(1, "first", { images: undefined, source: "child-agent" });
-		expect(session.prompt).toHaveBeenNthCalledWith(2, "second", { source: "child-agent" });
-	});
-
 	it("emits session_shutdown and returns non-zero on assistant error", async () => {
 		const runtimeHost = createRuntimeHost(
 			createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }),

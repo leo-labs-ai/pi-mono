@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { createBashToolDefinition } from "../src/core/tools/bash.ts";
+import { bashToolSystemPromptContribution, createBashToolDefinition } from "../src/core/tools/bash.ts";
 import { createEditToolDefinition, editToolSystemPromptContribution } from "../src/core/tools/edit.ts";
+import { createFindToolDefinition, findToolSystemPromptContribution } from "../src/core/tools/find.ts";
 import { createGrepToolDefinition, grepToolSystemPromptContribution } from "../src/core/tools/grep.ts";
 import { createLsToolDefinition, lsToolSystemPromptContribution } from "../src/core/tools/ls.ts";
 import {
@@ -12,10 +13,12 @@ import { createWriteToolDefinition, writeToolSystemPromptContribution } from "..
 
 const cases = [
 	["read", readToolSystemPromptContribution, createReadToolDefinition],
+	["bash", bashToolSystemPromptContribution, createBashToolDefinition],
 	["powershell", powershellToolSystemPromptContribution, createPowerShellToolDefinition],
 	["edit", editToolSystemPromptContribution, createEditToolDefinition],
 	["write", writeToolSystemPromptContribution, createWriteToolDefinition],
 	["grep", grepToolSystemPromptContribution, createGrepToolDefinition],
+	["find", findToolSystemPromptContribution, createFindToolDefinition],
 	["ls", lsToolSystemPromptContribution, createLsToolDefinition],
 ] as const;
 
@@ -30,31 +33,11 @@ describe("built-in tool system prompt contributions", () => {
 		},
 	);
 
-	test("keeps the fork bash definition's background-job guidance", () => {
-		const definition = createBashToolDefinition("/workspace");
-
-		expect(definition.promptSnippet).toContain("run_in_background:true");
-		expect(definition.promptGuidelines).toEqual(
-			expect.arrayContaining([
-				"Always stop background jobs you started but no longer need with bash_kill(bgId).",
-				"Inspect PI_* environment variables for current model and session details.",
-			]),
-		);
-	});
-
-	test("keeps bash session-environment guidance conditional without dropping fork guidance", () => {
-		const definition = createBashToolDefinition("/workspace", { exposeSessionEnvironment: false });
-
-		expect(definition.promptGuidelines).toEqual(
-			expect.arrayContaining(["Always stop background jobs you started but no longer need with bash_kill(bgId)."]),
-		);
-		expect(definition.promptGuidelines).not.toContain(
-			"Inspect PI_* environment variables for current model and session details.",
-		);
-	});
-
-	test("keeps powershell session-environment guidance conditional", () => {
-		const definition = createPowerShellToolDefinition("/workspace", { exposeSessionEnvironment: false });
+	test.each([
+		["bash", createBashToolDefinition],
+		["powershell", createPowerShellToolDefinition],
+	] as const)("keeps %s session-environment guidance conditional", (_name, createDefinition) => {
+		const definition = createDefinition("/workspace", { exposeSessionEnvironment: false });
 
 		expect(definition.promptGuidelines).toBeUndefined();
 	});

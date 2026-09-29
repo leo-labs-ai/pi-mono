@@ -116,8 +116,7 @@ export function resolveTranscript(
 	context: TranscriptContext,
 	supportsMidConvoSystemMessages: boolean | undefined,
 ): TranscriptContext {
-	const normalized = "systemPrompt" in context || "tools" in context ? normalizeContext(context) : context;
-	return supportsMidConvoSystemMessages ? normalized : collapseSystemMessages(normalized);
+	return supportsMidConvoSystemMessages ? context : collapseSystemMessages(context);
 }
 
 /** Strip executable and display-only fields from a tool before transcript comparison or persistence. */
@@ -126,14 +125,6 @@ export function toToolDeclaration(tool: Tool): Tool {
 		name: tool.name,
 		description: tool.description,
 		parameters: JSON.parse(JSON.stringify(tool.parameters)) as Tool["parameters"],
-		...(tool.deferLoading === undefined ? {} : { deferLoading: tool.deferLoading }),
-		...(tool.alwaysLoad === undefined ? {} : { alwaysLoad: tool.alwaysLoad }),
-		...(tool.searchHint === undefined ? {} : { searchHint: tool.searchHint }),
-		...(tool.namespace === undefined ? {} : { namespace: tool.namespace }),
-		...(tool.providers === undefined ? {} : { providers: [...tool.providers] }),
-		...(tool.anthropicServerTool === undefined
-			? {}
-			: { anthropicServerTool: JSON.parse(JSON.stringify(tool.anthropicServerTool)) as Record<string, unknown> }),
 		...(tool.constrainedSampling === undefined ? {} : { constrainedSampling: tool.constrainedSampling }),
 	};
 }

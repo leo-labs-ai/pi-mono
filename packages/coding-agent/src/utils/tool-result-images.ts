@@ -1,7 +1,7 @@
-import type { ImageContent, ModelImageResizeOptions, TextContent, ToolReferenceContent } from "@lue-labs/pi-ai";
+import type { ImageContent, ModelImageResizeOptions, TextContent } from "@lue-labs/pi-ai";
 import { processImage } from "./image-process.ts";
 
-export type ToolResultContent = TextContent | ImageContent | ToolReferenceContent;
+export type ToolResultContent = TextContent | ImageContent;
 
 export interface NormalizeToolResultImagesOptions {
 	/** Whether oversized images are resized to inline provider limits. Default: true */

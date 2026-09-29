@@ -113,109 +113,6 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(getEntryTypes(harness).filter((type) => type === "message").length).toBeGreaterThan(0);
 	});
 
-	it("defers bash results recorded during compaction", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
-		await harness.session.prompt("start");
-
-		harness.session.subscribe((event) => {
-			if (event.type !== "compaction_start") return;
-			expect(harness.session.isStreaming).toBe(false);
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		});
-		await harness.session.compact().catch(() => undefined);
-
-		expect(harness.session.hasPendingBashMessages).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
-
-		await harness.session.prompt("next turn");
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(true);
-	});
-
-	it("flushes bash results deferred during manual compaction", async () => {
-		const harness = await createHarness({
-			settings: { compaction: { keepRecentTokens: 1 } },
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "summary from extension",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-						},
-					}));
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
-		await harness.session.prompt("one");
-		await harness.session.prompt("two");
-
-		harness.session.subscribe((event) => {
-			if (event.type !== "compaction_start") return;
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		});
-		await harness.session.compact();
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		const persisted = harness.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "message" && entry.message.role === "bashExecution");
-		expect(persisted).toBe(true);
-	});
-
-	it("persists bash results deferred during tree navigation on the originating branch", async () => {
-		let recordBash: (() => void) | undefined;
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_tree", async () => {
-						recordBash?.();
-						return undefined;
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		recordBash = () =>
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
-		await harness.session.prompt("one");
-		await harness.session.prompt("two");
-		const firstUserEntry = harness.sessionManager
-			.getEntries()
-			.find((entry) => entry.type === "message" && entry.message.role === "user");
-		if (!firstUserEntry) throw new Error("expected a user entry to navigate to");
-
-		await harness.session.navigateTree(firstUserEntry.id);
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		const persisted = harness.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "message" && entry.message.role === "bashExecution");
-		expect(persisted).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
-	});
-
 	it("executes bash commands and records the result", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -332,16 +229,9 @@ describe("AgentSession bash and persistence characterization", () => {
 			"message",
 			"message",
 			"message",
-			"custom",
 			"message",
 			"message",
-			"custom",
 		]);
-		expect(
-			entries
-				.filter((entry) => entry.type === "custom")
-				.map((entry) => (entry.type === "custom" ? entry.customType : undefined)),
-		).toEqual(["cache_health", "cache_health"]);
 		expect(harness.session.messages.map((message) => message.role)).toEqual([
 			"custom",
 			"system",
@@ -391,16 +281,12 @@ describe("AgentSession bash and persistence characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
-		const entries = harness.sessionManager.getEntries();
-		const lastEntry = entries[entries.length - 1];
-		expect(lastEntry?.type).toBe("custom");
-		if (lastEntry?.type === "custom") expect(lastEntry.customType).toBe("cache_health");
-		const lastMessage = [...entries].reverse().find((entry) => entry.type === "message");
-		expect(lastMessage?.type).toBe("message");
-		if (lastMessage?.type === "message") {
-			expect(lastMessage.message.role).toBe("assistant");
-			if (lastMessage.message.role === "assistant") {
-				expect(lastMessage.message.stopReason).toBe("aborted");
+		const lastEntry = harness.sessionManager.getEntries()[harness.sessionManager.getEntries().length - 1];
+		expect(lastEntry?.type).toBe("message");
+		if (lastEntry?.type === "message") {
+			expect(lastEntry.message.role).toBe("assistant");
+			if (lastEntry.message.role === "assistant") {
+				expect(lastEntry.message.stopReason).toBe("aborted");
 			}
 		}
 	});

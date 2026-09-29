@@ -5,6 +5,7 @@ import type {
 	DeferredCancelOptions,
 	DeferredFetchOptions,
 	DeferredHandle,
+	ImageContent,
 	Message,
 	Model,
 	SimpleStreamOptions,
@@ -162,7 +163,7 @@ function randomId(prefix: string): string {
 	return `${prefix}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 }
 
-function contentToText(content: string | ToolResultMessage["content"]): string {
+function contentToText(content: string | Array<TextContent | ImageContent>): string {
 	if (typeof content === "string") {
 		return content;
 	}
@@ -171,15 +172,12 @@ function contentToText(content: string | ToolResultMessage["content"]): string {
 			if (block.type === "text") {
 				return block.text;
 			}
-			if (block.type === "tool_reference") {
-				return `tool_reference:${block.name}`;
-			}
 			return `[image:${block.mimeType}:${block.data.length}]`;
 		})
 		.join("\n");
 }
 
-function assistantContentToText(content: AssistantMessage["content"]): string {
+function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
 	return content
 		.map((block) => {
 			if (block.type === "text") {
@@ -187,9 +185,6 @@ function assistantContentToText(content: AssistantMessage["content"]): string {
 			}
 			if (block.type === "thinking") {
 				return block.thinking;
-			}
-			if (block.type === "tool_reference") {
-				return `tool_reference:${block.name}`;
 			}
 			return `${block.name}:${JSON.stringify(block.arguments)}`;
 		})
@@ -407,11 +402,6 @@ async function streamWithDeltas(
 				stream.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 			}
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
-			continue;
-		}
-
-		if (block.type === "tool_reference") {
-			partial.content = [...partial.content, block];
 			continue;
 		}
 

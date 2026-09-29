@@ -14,7 +14,6 @@ import {
 	visibleWidth,
 } from "@lue-labs/pi-tui";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
-import { listActiveSessionPaths, listCrashedSessionPaths } from "../../../core/session-liveness.ts";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
@@ -293,19 +292,11 @@ class SessionList implements Component, Focusable {
 	private searchInput: Input;
 	private showCwd = false;
 	private sortMode: SortMode = "threaded";
-	private nameFilter: NameFilter = "named";
+	private nameFilter: NameFilter = "all";
 	private keybindings: KeybindingsManager;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
 	private currentSessionCanonicalPath?: string;
-	/** Resolver for which session paths are open in another live pi process. */
-	private getActiveSessionPaths: (paths: string[]) => Set<string>;
-	/** Canonicalized session paths currently open in another live pi process. */
-	private activeSessionPaths = new Set<string>();
-	/** Resolver for which session paths crashed (dirty shutdown, never reopened). */
-	private getCrashedSessionPaths: (paths: string[]) => Set<string>;
-	/** Canonicalized session paths with a crash tombstone. */
-	private crashedSessionPaths = new Set<string>();
 	public onSelect?: (sessionPath: string) => void;
 	public onCancel?: () => void;
 	public onExit: () => void = () => {};
@@ -336,8 +327,6 @@ class SessionList implements Component, Focusable {
 		nameFilter: NameFilter,
 		keybindings: KeybindingsManager,
 		currentSessionFilePath?: string,
-		getActiveSessionPaths: (paths: string[]) => Set<string> = listActiveSessionPaths,
-		getCrashedSessionPaths: (paths: string[]) => Set<string> = listCrashedSessionPaths,
 	) {
 		this.allSessions = sessions;
 		this.filteredSessions = [];
@@ -347,9 +336,6 @@ class SessionList implements Component, Focusable {
 		this.nameFilter = nameFilter;
 		this.keybindings = keybindings;
 		this.currentSessionCanonicalPath = canonicalizePath(currentSessionFilePath);
-		this.getActiveSessionPaths = getActiveSessionPaths;
-		this.getCrashedSessionPaths = getCrashedSessionPaths;
-		this.refreshActiveSessions();
 		this.filterSessions("");
 
 		// Handle Enter in search input - select current item
@@ -377,7 +363,6 @@ class SessionList implements Component, Focusable {
 		const selectedPath = this.selectionTouched ? this.getSelectedSessionPath() : undefined;
 		this.allSessions = sessions;
 		this.showCwd = showCwd;
-		this.refreshActiveSessions();
 		this.filterSessions(this.searchInput.getValue());
 		if (!this.selectionTouched) {
 			this.selectedIndex = 0;
@@ -385,30 +370,6 @@ class SessionList implements Component, Focusable {
 			const selectedIndex = this.filteredSessions.findIndex((node) => node.session.path === selectedPath);
 			if (selectedIndex >= 0) this.selectedIndex = selectedIndex;
 		}
-	}
-
-	/** Recompute which listed sessions are open in another live pi process or crashed. */
-	private refreshActiveSessions(): void {
-		const paths = this.allSessions.map((s) => s.path);
-		try {
-			// Active first: it entombs stale markers, which crashed detection reads.
-			this.activeSessionPaths = this.getActiveSessionPaths(paths);
-		} catch {
-			this.activeSessionPaths = new Set();
-		}
-		try {
-			this.crashedSessionPaths = this.getCrashedSessionPaths(paths);
-		} catch {
-			this.crashedSessionPaths = new Set();
-		}
-	}
-
-	private isActiveSessionPath(path: string): boolean {
-		return this.activeSessionPaths.has(canonicalizePath(path) ?? path);
-	}
-
-	private isCrashedSessionPath(path: string): boolean {
-		return this.crashedSessionPaths.has(canonicalizePath(path) ?? path);
 	}
 
 	private filterSessions(query: string): void {
@@ -499,11 +460,6 @@ class SessionList implements Component, Focusable {
 			const isSelected = i === this.selectedIndex;
 			const isConfirmingDelete = session.path === this.confirmingDeletePath;
 			const isCurrent = this.isCurrentSessionPath(session.path);
-			// A session open in another live pi process. The current session is never
-			// flagged as foreign-active even though it has its own liveness marker.
-			const isActiveElsewhere = !isCurrent && this.isActiveSessionPath(session.path);
-			// A session whose owning pi process died without a graceful shutdown.
-			const isCrashed = !isCurrent && !isActiveElsewhere && this.isCrashedSessionPath(session.path);
 
 			// Build tree prefix
 			const prefix = this.buildTreePrefix(node);
@@ -530,34 +486,26 @@ class SessionList implements Component, Focusable {
 			// Calculate available width for message
 			const prefixWidth = visibleWidth(prefix);
 			const rightWidth = visibleWidth(rightPart) + 2; // +2 for spacing
-			const badgeWidth = isActiveElsewhere || isCrashed ? 2 : 0; // "● " live / "✗ " crashed badge
-			const availableForMsg = width - 2 - prefixWidth - rightWidth - badgeWidth; // -2 for cursor
+			const availableForMsg = width - 2 - prefixWidth - rightWidth; // -2 for cursor
 
 			const truncatedMsg = truncateToWidth(normalizedMessage, Math.max(10, availableForMsg), "…");
 
 			// Style message
-			let messageColor: "error" | "warning" | "accent" | "success" | null = null;
+			let messageColor: "error" | "warning" | "accent" | null = null;
 			if (isConfirmingDelete) {
 				messageColor = "error";
 			} else if (isCurrent) {
 				messageColor = "accent";
-			} else if (isActiveElsewhere) {
-				messageColor = "success";
-			} else if (isCrashed) {
-				messageColor = "error";
 			} else if (hasName) {
 				messageColor = "warning";
 			}
-			// Live badge for sessions open in another pi process; crash badge for
-			// sessions whose process died without a graceful shutdown.
-			const badge = isActiveElsewhere ? theme.fg("success", "● ") : isCrashed ? theme.fg("error", "✗ ") : "";
 			let styledMsg = messageColor ? theme.fg(messageColor, truncatedMsg) : truncatedMsg;
 			if (isSelected) {
 				styledMsg = theme.bold(styledMsg);
 			}
 
 			// Build line
-			const leftPart = cursor + theme.fg("dim", prefix) + badge + styledMsg;
+			const leftPart = cursor + theme.fg("dim", prefix) + styledMsg;
 			const leftWidth = visibleWidth(leftPart);
 			const spacing = Math.max(1, width - leftWidth - visibleWidth(rightPart));
 			const styledRight = theme.fg(isConfirmingDelete ? "error" : "dim", rightPart);
@@ -764,7 +712,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private keybindings: KeybindingsManager;
 	private scope: SessionScope = "current";
 	private sortMode: SortMode = "threaded";
-	private nameFilter: NameFilter = "named";
+	private nameFilter: NameFilter = "all";
 	private currentSessions: SessionInfo[] | null = null;
 	private allSessions: SessionInfo[] | null = null;
 	private currentSessionsLoader: SessionsLoader;

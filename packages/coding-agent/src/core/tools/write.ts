@@ -5,7 +5,7 @@ import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { createWriteRenderers } from "./renderers/write.ts";
+import { writeRenderers } from "./renderers/write.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
@@ -15,12 +15,7 @@ const writeSchema = Type.Object({
 
 export const writeToolSystemPromptContribution = {
 	snippet: "Create or overwrite files",
-	guidelines: [
-		"Use write only for new files or complete rewrites.",
-		"Prefer the Edit tool for modifying existing files — it only sends the diff.",
-		"NEVER create documentation files (*.md) or README files unless explicitly requested by the User.",
-		"After write succeeds, do not re-read the file to confirm it was written — write returns an error on failure.",
-	],
+	guidelines: ["Use write only for new files or complete rewrites."],
 } as const;
 
 export type WriteToolInput = Static<typeof writeSchema>;
@@ -42,8 +37,6 @@ const defaultWriteOperations: WriteOperations = {
 };
 
 export interface WriteToolOptions {
-	toolName?: "write" | "Write";
-	label?: string;
 	/** Custom operations for file writing. Default: local filesystem */
 	operations?: WriteOperations;
 }
@@ -53,16 +46,13 @@ export function createWriteToolDefinition(
 	options?: WriteToolOptions,
 ): ToolDefinition<typeof writeSchema, undefined> {
 	const ops = options?.operations ?? defaultWriteOperations;
-	const toolName = options?.toolName ?? "write";
-	const label = options?.label ?? "Write";
 	return {
-		name: toolName,
-		label,
+		name: "write",
+		label: "write",
 		description:
 			"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
 		promptSnippet: writeToolSystemPromptContribution.snippet,
 		promptGuidelines: [...writeToolSystemPromptContribution.guidelines],
-		executionMode: "sequential",
 		parameters: writeSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
@@ -98,7 +88,7 @@ export function createWriteToolDefinition(
 				};
 			});
 		},
-		...createWriteRenderers(label),
+		...writeRenderers,
 	};
 }
 

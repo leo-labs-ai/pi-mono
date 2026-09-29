@@ -153,62 +153,6 @@ function applySchemaObjectCoercion(value: Record<string, unknown>, schema: JsonS
 	}
 }
 
-/**
- * LLM-side quirk fix: some providers (and naive wrappers) stringify nested
- * JSON arrays/objects when a parameter is declared as `array` or `object`,
- * passing e.g. `tasks: "[{...}]"` instead of `tasks: [{...}]`.
- *
- * Walk the schema and, where the schema declares `array` or `object` but the
- * value is a string that parses to the expected shape, parse it once. This is
- * deliberately conservative: only well-formed JSON whose top-level kind matches
- * the schema is accepted. Everything else falls through to normal validation
- * so the existing error message still fires.
- */
-function parseJsonStringForStructuredSchema(value: unknown, schema: JsonSchemaObject): unknown {
-	if (typeof value !== "string") return value;
-	const trimmed = value.trim();
-	if (!trimmed) return value;
-	const types = getSchemaTypes(schema);
-	const wantsArray = types.includes("array") || trimmed.startsWith("[");
-	const wantsObject = types.includes("object") || trimmed.startsWith("{");
-	if (!wantsArray && !wantsObject) return value;
-	const looksLikeJson =
-		(trimmed.startsWith("[") && trimmed.endsWith("]")) || (trimmed.startsWith("{") && trimmed.endsWith("}"));
-	if (!looksLikeJson) return value;
-	try {
-		const parsed: unknown = JSON.parse(trimmed);
-		if (Array.isArray(parsed) && types.includes("array")) return parsed;
-		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && types.includes("object"))
-			return parsed;
-		// Schema doesn't declare a type but value parses cleanly — accept and let downstream validate.
-		if (types.length === 0) return parsed;
-		return value;
-	} catch {
-		return value;
-	}
-}
-
-function preParseStringifiedJson(value: unknown, schema: JsonSchemaObject): unknown {
-	let next = parseJsonStringForStructuredSchema(value, schema);
-	if (typeof next === "object" && next !== null && !Array.isArray(next) && schema.properties) {
-		const record = next as Record<string, unknown>;
-		for (const [key, propSchema] of Object.entries(schema.properties)) {
-			if (key in record) {
-				record[key] = preParseStringifiedJson(record[key], propSchema);
-			}
-		}
-	}
-	const { items } = schema;
-	if (Array.isArray(next) && items && !Array.isArray(items)) {
-		for (let i = 0; i < next.length; i++) {
-			next[i] = preParseStringifiedJson(next[i], items);
-		}
-	}
-	for (const nested of schema.anyOf ?? []) next = preParseStringifiedJson(next, nested);
-	for (const nested of schema.oneOf ?? []) next = preParseStringifiedJson(next, nested);
-	return next;
-}
-
 function applySchemaArrayCoercion(value: unknown[], schema: JsonSchemaObject): void {
 	if (Array.isArray(schema.items)) {
 		for (let index = 0; index < value.length; index++) {
@@ -371,8 +315,7 @@ export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
  * @throws Error with formatted message if validation fails
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
-	let args = structuredClone(toolCall.arguments);
-	args = preParseStringifiedJson(args, tool.parameters as JsonSchemaObject) as typeof args;
+	const args = structuredClone(toolCall.arguments);
 	normalizeOptionalNulls(args, tool.parameters as JsonSchemaObject);
 	Value.Convert(tool.parameters, args);
 

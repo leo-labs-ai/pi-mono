@@ -59,15 +59,12 @@ describe("extension active tools next-turn refresh", () => {
 				},
 			]);
 
-			expect(harness.session.getActiveToolNames()).toEqual(["switch_tools", "Bash", "Glob"]);
+			expect(harness.session.getActiveToolNames()).toEqual(["switch_tools"]);
 
 			await harness.session.prompt("start");
 
-			expect(harness.session.getActiveToolNames()).toEqual(["after_switch", "Bash", "Glob"]);
-			expect(providerToolNames).toEqual([
-				["Bash", "Glob", "switch_tools"],
-				["Bash", "Glob", "after_switch"],
-			]);
+			expect(harness.session.getActiveToolNames()).toEqual(["after_switch"]);
+			expect(providerToolNames).toEqual([["switch_tools"], ["after_switch"]]);
 		} finally {
 			harness.cleanup();
 		}
@@ -139,10 +136,7 @@ describe("extension active tools next-turn refresh", () => {
 
 			await harness.session.prompt("start");
 
-			expect(providerToolNames).toEqual([
-				["Bash", "Glob", "switch_tools"],
-				["Bash", "Glob", "after_switch"],
-			]);
+			expect(providerToolNames).toEqual([["switch_tools"], ["after_switch"]]);
 			expect(providerSystemPrompts).toHaveLength(2);
 			expect(providerSystemPrompts[0]).toContain("keep this run override");
 			expect(providerSystemPrompts[1]).toContain("keep this run override");

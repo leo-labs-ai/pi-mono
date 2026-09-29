@@ -75,15 +75,9 @@ describe("AgentSession compaction model overrides", () => {
 								fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long" }),
 								fauxAssistantMessage("recovered"),
 							]
-						: [
-								fauxAssistantMessage(path === "post-run" ? "z".repeat(8000) : "done"),
-								...(path === "post-run" ? [fauxAssistantMessage("continued after deferred compaction")] : []),
-							],
+						: [fauxAssistantMessage(path === "post-run" ? "z".repeat(8000) : "done")],
 				);
 				await harness.session.prompt("continue");
-				// This fork defers threshold compaction after a completed run until
-				// the next prompt, preserving the finished assistant response.
-				if (path === "post-run") await harness.session.prompt("continue again");
 			}
 
 			expect(preparations).toHaveLength(1);
@@ -91,7 +85,6 @@ describe("AgentSession compaction model overrides", () => {
 				enabled: path !== "manual",
 				reserveTokens: 2000,
 				keepRecentTokens: 150,
-				residentPrune: true,
 			});
 			expect(preparations[0]?.reason).toBe(
 				path === "manual" ? "manual" : path === "overflow" ? "overflow" : "threshold",

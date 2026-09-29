@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { completeSimple } from "../src/compat.ts";
-import { pickModel } from "./helpers/models.ts";
+import { completeSimple, getModel } from "../src/compat.ts";
 
 function createLongSystemPrompt(): string {
 	const nonce = `${Date.now()}-${Math.random()}`;
@@ -14,12 +13,9 @@ function createLongSystemPrompt(): string {
 describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter cache_write repro E2E", () => {
 	it(
 		"regression: preserves cache_write_tokens on openai-completions stream path",
-		{
-			retry: 2,
-			timeout: 90000,
-		},
+		{ retry: 2, timeout: 90000 },
 		async () => {
-			const model = pickModel("openrouter", (m) => m.id === "google/gemini-2.5-flash");
+			const model = getModel("openrouter", "google/gemini-2.5-flash");
 			const context = {
 				systemPrompt: createLongSystemPrompt(),
 				messages: [

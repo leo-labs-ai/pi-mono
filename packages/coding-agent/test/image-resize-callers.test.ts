@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@lue-labs/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/utils/image-resize.js", () => ({
@@ -10,7 +10,7 @@ vi.mock("../src/utils/image-resize.js", () => ({
 }));
 
 import { processFileArguments } from "../src/cli/file-processor.ts";
-import type { ExtensionContext } from "../src/core/extensions/types.ts";
+import type { ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { resizeImage } from "../src/utils/image-resize.ts";
 
@@ -70,7 +70,7 @@ describe("image resize callers", () => {
 			contextWindow: 1000,
 			maxTokens: 100,
 		};
-		const ctx = { cwd: testDir, model } as unknown as ExtensionContext;
+		const ctx = { cwd: testDir, model } as unknown as ExtensionToolContext;
 
 		await createReadToolDefinition(testDir).execute(
 			"test-read-model-profile",

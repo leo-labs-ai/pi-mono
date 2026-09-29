@@ -1,14 +1,6 @@
-import type {
-	ImageContent,
-	SystemMessage,
-	TextContent,
-	ThinkingContent,
-	ToolCall,
-	ToolReferenceContent,
-} from "../types.ts";
+import type { ImageContent, SystemMessage, TextContent, ThinkingContent, ToolCall } from "../types.ts";
 
-// Fork: content unions include provider-native tool references.
-type Content = TextContent | ImageContent | ThinkingContent | ToolCall | ToolReferenceContent;
+type Content = TextContent | ImageContent | ThinkingContent | ToolCall;
 
 /** Extract and join text from message content. */
 export function contentText(content: string | readonly Content[], separator = "\n"): string {

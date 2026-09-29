@@ -161,15 +161,7 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 			return entry.message;
 
 		case "custom_message":
-			if (entry.modelVisible === false) return undefined;
-			return createCustomMessage(
-				entry.customType,
-				entry.content,
-				entry.display,
-				entry.details,
-				entry.timestamp,
-				entry.modelVisible,
-			);
+			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
 
 		case "branch_summary":
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -284,21 +276,13 @@ Use this EXACT format:
 ### Blocked
 - [Issues preventing progress, if any]
 
-## Errors & Failed Approaches
-- **[What was tried]**: [Why it failed, and the correction]
-- [If this branch was abandoned, why -- so the approach is not blindly retried]
-- [Or "(none)" if nothing failed]
-
 ## Key Decisions
 - **[Decision]**: [Brief rationale]
 
 ## Next Steps
 1. [What should happen next to continue this work]
-[ONLY steps the user actually asked for or explicitly approved. If the next step is unknown, say so rather than inventing one.]
 
-Record only what actually happened in this branch. If a section has no real content, write "(none)" rather than inventing plausible content. Preserve the user's instructions and corrections in their own words.
-
-Keep each section concise. Preserve exact file paths, function names, error messages, and key code identifiers verbatim.`;
+Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
 /**
  * Generate a summary of abandoned branch entries.

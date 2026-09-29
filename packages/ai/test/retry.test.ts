@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "../src/providers/faux.ts";
+import { fauxAssistantMessage } from "../src/providers/faux.ts";
 import { isRetryableAssistantError, type RetryPolicy, retryAssistantCall, retryDelayMs } from "../src/utils/retry.ts";
 
 const openAIExplicitRetryMessage =
@@ -9,9 +9,6 @@ const bedrockExplicitRetryMessage =
 const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total request limit reached (288/48)";
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
-const codexConcurrencyThrottleMessage =
-	'{"error":"Too many concurrent requests","detail":{"code":"throttled","error_code":"throttled","message":"Too many concurrent requests","type":"throttled","source":"concurrency_limit"}}';
-const codexTruncatedSseMessage = "Connection error: Invalid Codex SSE JSON: JSON Parse error: Unterminated string";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
@@ -45,15 +42,13 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
-	it("treats concurrency throttles and truncated Codex streams as transient", () => {
+	it("matches upstream request buffer exhaustion wording", () => {
 		expect(
 			isRetryableAssistantError(
-				fauxAssistantMessage("", { stopReason: "error", errorMessage: codexConcurrencyThrottleMessage }),
-			),
-		).toBe(true);
-		expect(
-			isRetryableAssistantError(
-				fauxAssistantMessage("", { stopReason: "error", errorMessage: codexTruncatedSseMessage }),
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Error: exceeded request buffer limit while retrying upstream",
+				}),
 			),
 		).toBe(true);
 	});
@@ -90,6 +85,19 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("keeps the ChatGPT subscription usage limit non-retryable", () => {
+		const errorMessage =
+			'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}';
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it.each([
+		"subscription_sharing_usage_unavailable: Usage cannot be checked.",
+		"subscription_sharing_user_unavailable: User cannot be loaded.",
+	])("retries temporary ChatGPT subscription errors: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),
@@ -106,37 +114,6 @@ describe("provider retry classification", () => {
 			),
 		).toBe(true);
 		expect(isRetryableAssistantError(fauxAssistantMessage("not an error"))).toBe(false);
-	});
-
-	it("keeps stream drops retryable after partial text, thinking, or tool-call output", () => {
-		const error = { stopReason: "error" as const, errorMessage: "Anthropic stream ended before message_stop" };
-
-		expect(isRetryableAssistantError(fauxAssistantMessage("partial text", error))).toBe(true);
-		expect(isRetryableAssistantError(fauxAssistantMessage(fauxThinking("partial reasoning"), error))).toBe(true);
-		expect(
-			isRetryableAssistantError(
-				fauxAssistantMessage(
-					[fauxThinking("partial reasoning"), fauxToolCall("write", { path: "result.txt" })],
-					error,
-				),
-			),
-		).toBe(true);
-		expect(
-			isRetryableAssistantError(
-				fauxAssistantMessage("partial text", { stopReason: "error", errorMessage: "429 quota exceeded" }),
-			),
-		).toBe(false);
-	});
-
-	it("matches upstream request buffer exhaustion wording", () => {
-		expect(
-			isRetryableAssistantError(
-				fauxAssistantMessage("", {
-					stopReason: "error",
-					errorMessage: "Error: exceeded request buffer limit while retrying upstream",
-				}),
-			),
-		).toBe(true);
 	});
 });
 

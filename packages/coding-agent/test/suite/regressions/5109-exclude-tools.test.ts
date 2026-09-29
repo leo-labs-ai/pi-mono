@@ -39,12 +39,6 @@ describe("regression #5109: exclude tools", () => {
 
 	it("filters built-in and extension tools from available and active tools", async () => {
 		const harness = await createHarness({
-			// Set the active tools explicitly: this fork diverges from upstream's
-			// default-active set (it defaults to a minimal `Bash`-only built-in set),
-			// so pinning the active names keeps the #5109 exclude assertions
-			// deterministic across the divergence while still proving exclusion
-			// applies to active tools.
-			initialActiveToolNames: ["read", "bash", "edit", "write", "ask_question", "dynamic_tool"],
 			excludedToolNames: ["read", "ask_question"],
 			extensionFactories,
 		});

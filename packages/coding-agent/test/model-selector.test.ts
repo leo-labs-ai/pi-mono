@@ -49,10 +49,6 @@ describe("model selector", () => {
 				.find((line) => line.includes(`${id} [`))
 				?.trimEnd();
 
-		// The fork's catalog also carries the bundled models and the `auto` aliases, so both harness
-		// models only share a visible page once the search narrows the list to them.
-		selector.handleInput("-model");
-
 		expect(getModelRow("current-model")).toBe(`→ ✓ current-model [${currentModel.provider}]`);
 		selector.handleInput("\x1b[B");
 		expect(getModelRow("current-model")).toBe(`  ✓ current-model [${currentModel.provider}]`);
@@ -72,7 +68,6 @@ describe("model selector", () => {
 			[],
 			() => {},
 			() => {},
-			undefined,
 			undefined,
 			saveDefault,
 		);

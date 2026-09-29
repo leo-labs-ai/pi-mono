@@ -7,11 +7,10 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
-import { streamSimple } from "@lue-labs/pi-ai/compat";
+import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createEventBus } from "../src/core/event-bus.ts";
 import {
 	createExtensionRuntime,
 	type Extension,
@@ -23,8 +22,6 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 import { createCodingTools } from "../src/index.ts";
-import { pickModel } from "./helpers/models.ts";
-import { fixtureSessionDir } from "./helpers/session-storage.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
 const API_KEY = process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
@@ -82,23 +79,14 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			handlers,
 			tools: new Map(),
 			messageRenderers: new Map(),
-			defaultMessageRenderers: new Map(),
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
-			disposeHandlers: [],
-			registeredAgentDefinitions: [],
-			registeredAgentChains: [],
-			registeredContextModes: new Map(),
-			registeredMainPanes: new Map(),
-			registeredOverlays: new Map(),
-			registeredFooters: new Map(),
-			registeredSettings: new Map(),
 		};
 	}
 
 	async function createSession(extensions: Extension[]) {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
 			streamFn: streamSimple,
@@ -109,17 +97,16 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			},
 		});
 
-		const sessionManager = SessionManager.create(tempDir, fixtureSessionDir(tempDir));
+		const sessionManager = SessionManager.create(tempDir);
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = await createModelRegistry(authStorage);
 
 		const runtime = createExtensionRuntime();
-		const eventBus = createEventBus();
 		const resourceLoader = {
 			...createTestResourceLoader(),
-			getExtensions: () => ({ extensions, errors: [], runtime, deferredExtensions: [], eventBus }),
+			getExtensions: () => ({ extensions, errors: [], runtime }),
 		};
 
 		session = new AgentSession({
@@ -127,7 +114,6 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader,
 		});
@@ -269,18 +255,9 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			]),
 			tools: new Map(),
 			messageRenderers: new Map(),
-			defaultMessageRenderers: new Map(),
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
-			disposeHandlers: [],
-			registeredAgentDefinitions: [],
-			registeredAgentChains: [],
-			registeredContextModes: new Map(),
-			registeredMainPanes: new Map(),
-			registeredOverlays: new Map(),
-			registeredFooters: new Map(),
-			registeredSettings: new Map(),
 		};
 
 		await createSession([throwingExtension]);
@@ -327,18 +304,9 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			]),
 			tools: new Map(),
 			messageRenderers: new Map(),
-			defaultMessageRenderers: new Map(),
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
-			disposeHandlers: [],
-			registeredAgentDefinitions: [],
-			registeredAgentChains: [],
-			registeredContextModes: new Map(),
-			registeredMainPanes: new Map(),
-			registeredOverlays: new Map(),
-			registeredFooters: new Map(),
-			registeredSettings: new Map(),
 		};
 
 		const extension2: Extension = {
@@ -367,18 +335,9 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 			]),
 			tools: new Map(),
 			messageRenderers: new Map(),
-			defaultMessageRenderers: new Map(),
 			commands: new Map(),
 			flags: new Map(),
 			shortcuts: new Map(),
-			disposeHandlers: [],
-			registeredAgentDefinitions: [],
-			registeredAgentChains: [],
-			registeredContextModes: new Map(),
-			registeredMainPanes: new Map(),
-			registeredOverlays: new Map(),
-			registeredFooters: new Map(),
-			registeredSettings: new Map(),
 		};
 
 		await createSession([extension1, extension2]);

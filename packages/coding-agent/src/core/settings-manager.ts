@@ -1,6 +1,11 @@
 import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
 import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@lue-labs/pi-ai";
-import type { TuiMode as RendererTuiMode, ScrollViewScrollbar, TerminalCapabilities } from "@lue-labs/pi-tui";
+import type {
+	TuiMode as RendererTuiMode,
+	ScrollViewScrollbar,
+	TerminalCapabilities,
+	WheelScrollLines,
+} from "@lue-labs/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
@@ -8,15 +13,12 @@ import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { normalizePath, resolvePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
-import type { ExtensionLoadMode } from "./extensions/types.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionModelOverride {
 	reserveTokens?: number;
 	keepRecentTokens?: number;
 }
-
-type CompactionModel = Pick<Model<string>, "provider" | "id"> & Partial<Pick<Model<string>, "contextWindow">>;
 
 const DEFAULT_COMPACTION_TOKEN_SETTINGS: Required<CompactionModelOverride> = {
 	reserveTokens: 16384,
@@ -26,10 +28,8 @@ const DEFAULT_COMPACTION_TOKEN_SETTINGS: Required<CompactionModelOverride> = {
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
 	reserveTokens?: number; // default: 16384
-	triggerTokens?: number; // absolute context-token threshold; when set and contextWindow is known, derives reserveTokens as (contextWindow - triggerTokens)
 	keepRecentTokens?: number; // default: 20000
 	modelOverrides?: Record<string, CompactionModelOverride>; // exact "provider/modelId" keys
-	residentPrune?: boolean; // default: true - stub summarized payloads in resident memory after successful compaction
 }
 
 export interface BranchSummarySettings {
@@ -59,8 +59,6 @@ export interface TerminalSettings {
 	imageWidthCells?: number; // default: 60 (preferred inline image width in terminal cells)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	showTerminalProgress?: boolean; // default: false (OSC 9;4 terminal progress indicators)
-	toolOutput?: "compact" | "expanded"; // default: compact
-	motion?: "full" | "reduced"; // default: full
 	hyperlinks?: boolean | "auto";
 	images?: "kitty" | "iterm2" | "auto" | false;
 	trueColor?: boolean | "auto";
@@ -80,45 +78,6 @@ export interface ThinkingBudgetsSettings {
 
 export type MermaidRenderingMode = "off" | "final" | "streaming";
 
-export type SubagentThinkingSetting =
-	| "inherit"
-	| "off"
-	| "minimal"
-	| "low"
-	| "medium"
-	| "high"
-	| "xhigh"
-	| "max"
-	| "ultra";
-
-export interface SubagentDefaultSettings {
-	model?: string;
-	thinking?: SubagentThinkingSetting;
-}
-
-export interface SubagentSettings {
-	defaults?: SubagentDefaultSettings;
-	providers?: Record<string, SubagentDefaultSettings>;
-	maxDelegationDepth?: number;
-}
-
-export interface CacheHeartbeatWorkingHoursSettings {
-	start?: string;
-	end?: string;
-	days?: number[];
-}
-
-export interface CacheHeartbeatSettings {
-	enabled?: boolean;
-	intervalMs?: number;
-	providers?: string[];
-	basePrompt?: boolean;
-	sessionPrompt?: boolean;
-	workingHours?: CacheHeartbeatWorkingHoursSettings;
-	maxTokens?: number;
-	rateLimitCooldownMs?: number;
-}
-
 /** Cache-warming profile. "idle" also warms between agent runs. */
 export const CACHE_WARMING_MODES = ["off", "streaming", "idle"] as const;
 export type CacheWarmingMode = (typeof CACHE_WARMING_MODES)[number];
@@ -130,6 +89,22 @@ export interface MarkdownSettings {
 
 export interface WarningSettings {
 	anthropicExtraUsage?: boolean; // default: true
+}
+
+/**
+ * How the codemode tool presents tools while it is active.
+ * - `on`: declared tools that scripts can call get their codemode declaration appended to their
+ *   description; the codemode description lists only the tools without `direct` exposure.
+ * - `only`: the codemode description lists every tool scripts can call, and active `direct` tools are
+ *   not declared to the model.
+ */
+export type CodemodeMode = "on" | "only";
+
+export interface CodemodeSettings {
+	/** Default: `on`. */
+	mode?: CodemodeMode;
+	/** Estimated tokens (characters / 4) the codemode description may spend on tool declarations. Default: 3000. */
+	inlineBudget?: number;
 }
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
@@ -151,19 +126,6 @@ export type PackageSource =
 			skills?: string[];
 			prompts?: string[];
 			themes?: string[];
-			/** Default load mode for the package's extension entries. */
-			load?: ExtensionLoadMode;
-			/**
-			 * Conditional load gate. When set, the package (and all resources it
-			 * provides) is only loaded if the active default model matches one of
-			 * the listed patterns. Patterns use the same glob form as enabledModels
-			 * (e.g. openai-codex/*, *sonnet*).
-			 *
-			 * Evaluated against defaultProvider/defaultModel from settings at
-			 * package-resolve time. Mid-session model switches do NOT re-evaluate;
-			 * change settings and reload to switch which packages are active.
-			 */
-			enabledWhen?: { models?: string[] };
 	  };
 
 export interface Settings {
@@ -179,8 +141,6 @@ export interface Settings {
 	compaction?: CompactionSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
-	subagents?: SubagentSettings; // Default model/thinking for native child agents (precedence: explicit task option > agent frontmatter > providers[parent.provider] > defaults > parent inheritance)
-	cacheHeartbeat?: CacheHeartbeatSettings;
 	hideThinkingBlock?: boolean;
 	showCacheMissNotices?: boolean; // default: false - show cache cost and provider recovery notices
 	externalEditor?: string; // Command for Ctrl+G external editor; takes precedence over VISUAL/EDITOR
@@ -188,13 +148,12 @@ export interface Settings {
 	quietStartup?: boolean;
 	defaultProjectTrust?: DefaultProjectTrust; // default: "ask"; global setting only
 	shellCommandPrefix?: string; // Prefix prepended to every bash command (e.g., "shopt -s expand_aliases" for alias support)
-	bashTimeoutSeconds?: number; // Default foreground timeout (seconds) for bash tool calls that omit `timeout`; 0 disables it. Overridden by PI_BASH_TIMEOUT_SECONDS and by an explicit per-call timeout
 	npmCommand?: string[]; // Command used for npm package lookup/install operations, argv-style (e.g., ["mise", "exec", "node@20", "--", "npm"])
-	sourceUpdateCommand?: string[]; // Command used to self-update source checkout installs, argv-style
 	collapseChangelog?: boolean; // Show condensed changelog after update (use /changelog for full)
 	enableInstallTelemetry?: boolean; // default: true - anonymous version/update ping after changelog-detected updates
 	enableAnalytics?: boolean; // default: false - opt-in analytics data sharing
 	trackingId?: string; // analytics tracking identifier, generated when analytics is enabled
+	deviceId?: string; // stable UUID of this installation, created when a login first needs it; global setting only
 	packages?: PackageSource[]; // Array of npm/git package sources (string or object with filtering)
 	extensions?: string[]; // Array of local extension file paths or directories
 	skills?: string[]; // Array of local skill file paths or directories
@@ -204,7 +163,7 @@ export interface Settings {
 	terminal?: TerminalSettings;
 	images?: ImageSettings;
 	enabledModels?: string[]; // Model patterns for cycling (same format as --models CLI flag)
-	defaultTools?: string[]; // Initial built-in tool selection
+	defaultTools?: string[]; // Initial tool selection; `+name`/`-name` entries add to or remove from the inherited selection
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
@@ -214,23 +173,17 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
+	codemode?: CodemodeSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpProxy?: string; // Proxy URL applied as HTTP_PROXY and HTTPS_PROXY for Pi-managed HTTP clients
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	cacheWarming?: CacheWarmingMode; // default: "streaming"; global only because each refresh costs money
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
-	/**
-	 * Per-extension tuning, keyed by extension namespace. Unknown keys survive
-	 * JSON.parse and deep-merge (global ← project) like any nested setting, so
-	 * an extension reads its slice via the `getExtensionConfig` accessor on
-	 * `ExtensionAPI`. Generic and vendor-neutral — values are whatever shape the
-	 * owning extension expects.
-	 */
-	extensionConfig?: Record<string, Record<string, unknown>>;
 	tuiMode?: TuiMode; // default: "regular"
 	fullscreenExitOutput?: FullscreenExitOutput; // default: "transcript"; no effect in regular TUI mode
 	fullscreenScrollbar?: ScrollViewScrollbar; // default: "auto"; no effect in regular TUI mode
 	fullscreenCopyOnSelect?: boolean; // default: true; no effect in regular TUI mode
+	fullscreenWheelScrollLines?: WheelScrollLines; // default: "auto"; lines per wheel event, 1-100
 }
 
 function isMergeableObject(value: unknown): value is Record<string, unknown> {
@@ -256,9 +209,46 @@ function deepMergeObjects(base: Record<string, unknown>, overrides: Record<strin
 	return result;
 }
 
+/** Tools enabled at startup when `defaultTools` does not change them. */
+export const DEFAULT_TOOL_NAMES: readonly string[] = ["read", "bash", "edit", "write"];
+
+function isToolModifier(entry: unknown): boolean {
+	return typeof entry === "string" && (entry.startsWith("+") || entry.startsWith("-"));
+}
+
+/**
+ * Merge `defaultTools` of two settings layers. A list with plain tool names replaces the inherited
+ * one; a list of only `+name`/`-name` entries is appended, so it modifies the inherited selection.
+ */
+function mergeDefaultTools(base: string[] | undefined, overrides: string[] | undefined): string[] | undefined {
+	if (overrides === undefined) return base;
+	// Settings files are not validated; a malformed value replaces instead of throwing here.
+	if (!Array.isArray(base) || !Array.isArray(overrides) || !overrides.every(isToolModifier)) return overrides;
+	return [...base, ...overrides];
+}
+
+/**
+ * Resolve a merged `defaultTools` list: plain names replace `DEFAULT_TOOL_NAMES`, then `+name` adds
+ * and `-name` removes a tool, in list order.
+ */
+function resolveDefaultTools(entries: string[]): string[] {
+	const plain = entries.filter((entry) => !isToolModifier(entry));
+	const tools = plain.length > 0 || entries.length === 0 ? plain : [...DEFAULT_TOOL_NAMES];
+	for (const entry of entries) {
+		if (!isToolModifier(entry)) continue;
+		const name = entry.slice(1);
+		const index = tools.indexOf(name);
+		if (entry.startsWith("+") && index === -1 && name) tools.push(name);
+		else if (entry.startsWith("-") && index !== -1) tools.splice(index, 1);
+	}
+	return tools;
+}
+
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
 function deepMergeSettings(base: Settings, overrides: Settings): Settings {
-	return deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const merged = deepMergeObjects(base as Record<string, unknown>, overrides as Record<string, unknown>) as Settings;
+	const defaultTools = mergeDefaultTools(base.defaultTools, overrides.defaultTools);
+	return defaultTools === undefined ? merged : { ...merged, defaultTools };
 }
 
 function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
@@ -570,40 +560,17 @@ export class SettingsManager {
 		return settings as Settings;
 	}
 
+	/** A copy of the effective settings: global and project settings merged, with overrides. */
+	getSettings(): Settings {
+		return structuredClone(this.settings);
+	}
+
 	getGlobalSettings(): Settings {
 		return structuredClone(this.globalSettings);
 	}
 
 	getProjectSettings(): Settings {
 		return structuredClone(this.projectSettings);
-	}
-
-	/**
-	 * All `extensionConfig` namespaces from the merged settings (global ←
-	 * project). Returns a cloned plain object keyed by extension namespace; the
-	 * extension runtime carries this so `ExtensionAPI.getExtensionConfig(ns)` can
-	 * index into it. Empty object when no extensionConfig is set.
-	 */
-	getExtensionConfig(): Record<string, unknown> {
-		return structuredClone(this.settings.extensionConfig ?? {});
-	}
-
-	/** Persist one key in an extension's global tuning namespace. */
-	setExtensionConfigValue(namespace: string, key: string, value: unknown): Record<string, unknown> {
-		const extensionConfig = this.globalSettings.extensionConfig ?? {};
-		const current = extensionConfig[namespace];
-		const namespaceConfig = typeof current === "object" && current !== null && !Array.isArray(current) ? current : {};
-		const nextNamespaceConfig = {
-			...namespaceConfig,
-			[key]: structuredClone(value),
-		};
-		this.globalSettings.extensionConfig = {
-			...extensionConfig,
-			[namespace]: nextNamespaceConfig,
-		};
-		this.markModified("extensionConfig", namespace);
-		this.save();
-		return structuredClone(this.settings.extensionConfig?.[namespace] ?? {});
 	}
 
 	isProjectTrusted(): boolean {
@@ -899,15 +866,6 @@ export class SettingsManager {
 		return this.settings.defaultThinkingLevel;
 	}
 
-	/**
-	 * Returns subagent default model/thinking config. Used by the agent tool to
-	 * resolve the model and thinking level for a child session when the caller
-	 * didn't supply explicit overrides and the agent definition has no own pick.
-	 */
-	getSubagentSettings(): SubagentSettings {
-		return structuredClone(this.settings.subagents ?? {});
-	}
-
 	setDefaultThinkingLevel(level: ThinkingLevel): void {
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
@@ -964,7 +922,10 @@ export class SettingsManager {
 		this.save();
 	}
 
-	private getCompactionTokenSetting(field: keyof CompactionModelOverride, model?: CompactionModel): number {
+	private getCompactionTokenSetting(
+		field: keyof CompactionModelOverride,
+		model?: Pick<Model<string>, "provider" | "id">,
+	): number {
 		const compaction = this.settings.compaction;
 		const ordinary = compaction?.[field];
 		if (ordinary !== undefined && (typeof ordinary !== "number" || !Number.isSafeInteger(ordinary) || ordinary < 0)) {
@@ -989,47 +950,24 @@ export class SettingsManager {
 		return override ?? ordinary ?? DEFAULT_COMPACTION_TOKEN_SETTINGS[field];
 	}
 
-	getCompactionReserveTokens(modelOrContextWindow?: CompactionModel | number): number {
-		const model = typeof modelOrContextWindow === "number" ? undefined : modelOrContextWindow;
-		const contextWindow =
-			typeof modelOrContextWindow === "number" ? modelOrContextWindow : modelOrContextWindow?.contextWindow;
-		const triggerTokens = this.settings.compaction?.triggerTokens;
-		if (
-			typeof triggerTokens === "number" &&
-			Number.isFinite(triggerTokens) &&
-			triggerTokens > 0 &&
-			typeof contextWindow === "number" &&
-			Number.isFinite(contextWindow) &&
-			contextWindow > triggerTokens
-		) {
-			return Math.max(0, Math.floor(contextWindow - triggerTokens));
-		}
+	getCompactionReserveTokens(model?: Pick<Model<string>, "provider" | "id">): number {
 		return this.getCompactionTokenSetting("reserveTokens", model);
 	}
 
-	getCompactionKeepRecentTokens(model?: CompactionModel): number {
+	getCompactionKeepRecentTokens(model?: Pick<Model<string>, "provider" | "id">): number {
 		return this.getCompactionTokenSetting("keepRecentTokens", model);
 	}
 
-	getCompactionResidentPruneEnabled(): boolean {
-		if (process.env.PI_RESIDENT_SESSION_PRUNE === "1") return true;
-		if (process.env.PI_RESIDENT_SESSION_PRUNE === "0") return false;
-		return this.settings.compaction?.residentPrune ?? true;
-	}
-
 	/** Resolve each token setting through model override, ordinary setting, then built-in default. */
-	getCompactionSettings(modelOrContextWindow?: CompactionModel | number): {
+	getCompactionSettings(model?: Pick<Model<string>, "provider" | "id">): {
 		enabled: boolean;
 		reserveTokens: number;
 		keepRecentTokens: number;
-		residentPrune: boolean;
 	} {
-		const model = typeof modelOrContextWindow === "number" ? undefined : modelOrContextWindow;
 		return {
 			enabled: this.getCompactionEnabled(),
-			reserveTokens: this.getCompactionReserveTokens(modelOrContextWindow),
+			reserveTokens: this.getCompactionReserveTokens(model),
 			keepRecentTokens: this.getCompactionKeepRecentTokens(model),
-			residentPrune: this.getCompactionResidentPruneEnabled(),
 		};
 	}
 
@@ -1096,33 +1034,6 @@ export class SettingsManager {
 			timeoutMs: this.settings.retry?.provider?.timeoutMs,
 			maxRetries: this.settings.retry?.provider?.maxRetries,
 			maxRetryDelayMs: this.settings.retry?.provider?.maxRetryDelayMs ?? 60000,
-		};
-	}
-
-	getCacheHeartbeatSettings(): {
-		enabled: boolean;
-		intervalMs: number;
-		providers: string[];
-		basePrompt: boolean;
-		sessionPrompt: boolean;
-		workingHours: Required<CacheHeartbeatWorkingHoursSettings>;
-		maxTokens: number;
-		rateLimitCooldownMs: number;
-	} {
-		const settings = this.settings.cacheHeartbeat;
-		return {
-			enabled: settings?.enabled ?? false,
-			intervalMs: settings?.intervalMs ?? 55 * 60 * 1000,
-			providers: settings?.providers ?? ["openai-codex/", "claude-bridge/"],
-			basePrompt: settings?.basePrompt ?? true,
-			sessionPrompt: settings?.sessionPrompt ?? true,
-			workingHours: {
-				start: settings?.workingHours?.start ?? "08:00",
-				end: settings?.workingHours?.end ?? "18:00",
-				days: settings?.workingHours?.days ?? [1, 2, 3, 4, 5],
-			},
-			maxTokens: settings?.maxTokens ?? 1,
-			rateLimitCooldownMs: settings?.rateLimitCooldownMs ?? 5 * 60 * 1000,
 		};
 	}
 
@@ -1204,25 +1115,6 @@ export class SettingsManager {
 		this.save();
 	}
 
-	/**
-	 * Default foreground timeout (seconds) for bash tool calls that omit `timeout`.
-	 * `0` disables the default; `undefined` leaves the built-in default in place.
-	 */
-	getBashTimeoutSeconds(): number | undefined {
-		const value = this.settings.bashTimeoutSeconds;
-		if (value === undefined) return undefined;
-		return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-	}
-
-	setBashTimeoutSeconds(seconds: number | undefined): void {
-		if (seconds !== undefined && (!Number.isFinite(seconds) || seconds < 0)) {
-			throw new Error(`Invalid bashTimeoutSeconds setting: ${String(seconds)}`);
-		}
-		this.globalSettings.bashTimeoutSeconds = seconds;
-		this.markModified("bashTimeoutSeconds");
-		this.save();
-	}
-
 	getNpmCommand(): string[] | undefined {
 		return this.settings.npmCommand ? [...this.settings.npmCommand] : undefined;
 	}
@@ -1270,6 +1162,20 @@ export class SettingsManager {
 			this.markModified("trackingId");
 		}
 		this.save();
+	}
+
+	/**
+	 * Stable ID of this installation, e.g. sent to OpenAI as its agent host ID.
+	 * Created on first use. Project settings are ignored so a committed project
+	 * settings file cannot give every clone the same ID.
+	 */
+	getOrCreateDeviceId(): string {
+		if (!this.globalSettings.deviceId) {
+			this.globalSettings.deviceId = randomUUID();
+			this.markModified("deviceId");
+			this.save();
+		}
+		return this.globalSettings.deviceId;
 	}
 
 	getPackages(): PackageSource[] {
@@ -1427,32 +1333,6 @@ export class SettingsManager {
 		return this.settings.terminal?.showTerminalProgress ?? false;
 	}
 
-	getToolOutput(): "compact" | "expanded" {
-		return this.settings.terminal?.toolOutput === "expanded" ? "expanded" : "compact";
-	}
-
-	setToolOutput(toolOutput: "compact" | "expanded"): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.toolOutput = toolOutput;
-		this.markModified("terminal", "toolOutput");
-		this.save();
-	}
-
-	getMotion(): "full" | "reduced" {
-		return this.settings.terminal?.motion === "reduced" ? "reduced" : "full";
-	}
-
-	setMotion(motion: "full" | "reduced"): void {
-		if (!this.globalSettings.terminal) {
-			this.globalSettings.terminal = {};
-		}
-		this.globalSettings.terminal.motion = motion;
-		this.markModified("terminal", "motion");
-		this.save();
-	}
-
 	setShowTerminalProgress(enabled: boolean): void {
 		if (!this.globalSettings.terminal) {
 			this.globalSettings.terminal = {};
@@ -1503,6 +1383,20 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getFullscreenWheelScrollLines(): WheelScrollLines {
+		const lines = this.settings.fullscreenWheelScrollLines;
+		return typeof lines === "number" && Number.isFinite(lines)
+			? Math.max(1, Math.min(100, Math.floor(lines)))
+			: "auto";
+	}
+
+	setFullscreenWheelScrollLines(lines: WheelScrollLines): void {
+		this.globalSettings.fullscreenWheelScrollLines =
+			lines === "auto" ? lines : Math.max(1, Math.min(100, Math.floor(lines)));
+		this.markModified("fullscreenWheelScrollLines");
+		this.save();
+	}
+
 	getImageAutoResize(): boolean {
 		return this.settings.images?.autoResize ?? true;
 	}
@@ -1533,9 +1427,11 @@ export class SettingsManager {
 		return this.settings.enabledModels;
 	}
 
+	/** The resolved `defaultTools` selection, or undefined when no settings layer sets it. */
 	getDefaultTools(): string[] | undefined {
 		const tools = this.settings.defaultTools;
-		return tools ? [...tools] : undefined;
+		if (tools === undefined) return undefined;
+		return resolveDefaultTools(Array.isArray(tools) ? tools.filter((tool) => typeof tool === "string") : []);
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {

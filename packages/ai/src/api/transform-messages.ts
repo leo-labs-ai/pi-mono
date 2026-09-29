@@ -6,18 +6,14 @@ import type {
 	Model,
 	TextContent,
 	ToolCall,
-	ToolReferenceContent,
 	ToolResultMessage,
 } from "../types.ts";
 
 const NON_VISION_USER_IMAGE_PLACEHOLDER = "(image omitted: model does not support images)";
 const NON_VISION_TOOL_IMAGE_PLACEHOLDER = "(tool image omitted: model does not support images)";
 
-function replaceImagesWithPlaceholder(
-	content: (TextContent | ImageContent | ToolReferenceContent)[],
-	placeholder: string,
-): (TextContent | ToolReferenceContent)[] {
-	const result: (TextContent | ToolReferenceContent)[] = [];
+function replaceImagesWithPlaceholder(content: (TextContent | ImageContent)[], placeholder: string): TextContent[] {
+	const result: TextContent[] = [];
 	let previousWasPlaceholder = false;
 
 	for (const block of content) {
@@ -29,13 +25,6 @@ function replaceImagesWithPlaceholder(
 			continue;
 		}
 
-		if (block.type === "tool_reference") {
-			result.push(block);
-			previousWasPlaceholder = false;
-			continue;
-		}
-
-		if (block.type !== "text") continue;
 		result.push(block);
 		previousWasPlaceholder = block.text === placeholder;
 	}
@@ -52,9 +41,7 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 		if (msg.role === "user" && Array.isArray(msg.content)) {
 			return {
 				...msg,
-				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_USER_IMAGE_PLACEHOLDER).filter(
-					(block): block is TextContent => block.type === "text",
-				),
+				content: replaceImagesWithPlaceholder(msg.content, NON_VISION_USER_IMAGE_PLACEHOLDER),
 			};
 		}
 
@@ -67,93 +54,6 @@ function downgradeUnsupportedImages<TApi extends Api>(messages: Message[], model
 
 		return msg;
 	});
-}
-
-function hasVisibleUserContent(message: Message): boolean {
-	if (message.role !== "user") return false;
-	if (typeof message.content === "string") return message.content.trim().length > 0;
-	return message.content.some((block) => block.type !== "text" || block.text.trim().length > 0);
-}
-
-/**
- * Restore `tool_use` -> `tool_result` adjacency in a recorded history.
- *
- * Anthropic requires every `tool_result` to lead the message immediately after
- * the assistant turn that opened the call. A message injected while a tool is
- * still running (extension steer, captain wake, monitor notification) is
- * persisted *between* the `toolCall` entry and its `toolResult`, so the rebuilt
- * history reads assistant -> user -> toolResult and the provider rejects the
- * whole request with `unexpected tool_use_id found in tool_result blocks`. The
- * malformed shape is already committed to the session file, so the rejection
- * repeats forever and the session is unrecoverable (pi-mono#479, mirror of
- * #406/#380).
- *
- * This seam repairs the transcript on the way out: results for the open batch
- * are pulled back next to their assistant turn and the displaced messages are
- * re-emitted after them, so no content is lost and only the ordering changes.
- * It also drops the two shapes the provider can never accept — a `tool_result`
- * whose `tool_use` is absent from the history entirely, and a duplicate result
- * for an already-settled call.
- *
- * Returns the input array unchanged when the history is already well formed, so
- * valid requests serialise byte-identically and the prompt cache is untouched.
- */
-export function restoreToolResultAdjacency(messages: Message[]): Message[] {
-	const result: Message[] = [];
-	const openedToolCallIds = new Set<string>();
-	const settledToolCallIds = new Set<string>();
-	let changed = false;
-
-	const pushToolResult = (msg: ToolResultMessage): void => {
-		// Orphan (no matching tool_use anywhere) or duplicate result: both are hard
-		// 400s, and neither carries information the model can act on.
-		if (!openedToolCallIds.has(msg.toolCallId) || settledToolCallIds.has(msg.toolCallId)) {
-			changed = true;
-			return;
-		}
-		settledToolCallIds.add(msg.toolCallId);
-		result.push(msg);
-	};
-
-	for (let i = 0; i < messages.length; i++) {
-		const msg = messages[i]!;
-
-		if (msg.role === "toolResult") {
-			pushToolResult(msg as ToolResultMessage);
-			continue;
-		}
-
-		result.push(msg);
-		if (msg.role !== "assistant") continue;
-
-		const batchIds = new Set(
-			(msg as AssistantMessage).content.filter((b) => b.type === "toolCall").map((b) => (b as ToolCall).id),
-		);
-		if (batchIds.size === 0) continue;
-		for (const id of batchIds) openedToolCallIds.add(id);
-
-		// Scan to the next assistant turn: that is the window an injected message can
-		// land in. Results for this batch are emitted first, everything else after.
-		const displaced: Message[] = [];
-		let j = i + 1;
-		for (; j < messages.length; j++) {
-			const next = messages[j]!;
-			if (next.role === "assistant") break;
-			if (next.role === "toolResult" && batchIds.has((next as ToolResultMessage).toolCallId)) {
-				if (displaced.length > 0) changed = true;
-				pushToolResult(next as ToolResultMessage);
-				continue;
-			}
-			displaced.push(next);
-		}
-		for (const held of displaced) {
-			if (held.role === "toolResult") pushToolResult(held as ToolResultMessage);
-			else result.push(held);
-		}
-		i = j - 1;
-	}
-
-	return changed ? result : messages;
 }
 
 /**
@@ -256,15 +156,10 @@ export function transformMessages<TApi extends Api>(
 	});
 
 	// Second pass: insert synthetic empty tool results for orphaned tool calls
-	// This preserves thinking signatures and satisfies API requirements.
-	// Adjacency is restored first so a message injected mid-tool-call cannot make
-	// the pass below synthesise a result for a call the history already settles
-	// (that duplicate is itself an Anthropic 400 — pi-mono#479).
-	const adjacent = restoreToolResultAdjacency(transformed);
+	// This preserves thinking signatures and satisfies API requirements
 	const result: Message[] = [];
 	let pendingToolCalls: ToolCall[] = [];
 	let existingToolResultIds = new Set<string>();
-	const droppedToolCallIds = new Set<string>();
 	// System messages are transparent to tool-call accounting: one that lands between a tool
 	// call and its results is held back and emitted after the results (synthetic ones
 	// included), so it never causes a duplicate result for a call that is answered later.
@@ -290,8 +185,8 @@ export function transformMessages<TApi extends Api>(
 		heldSystemMessages.length = 0;
 	};
 
-	for (let i = 0; i < adjacent.length; i++) {
-		const msg = adjacent[i];
+	for (let i = 0; i < transformed.length; i++) {
+		const msg = transformed[i];
 
 		if (msg.role === "assistant") {
 			// If we have pending orphaned tool calls from a previous assistant, insert synthetic results now
@@ -304,14 +199,6 @@ export function transformMessages<TApi extends Api>(
 			// - The model should retry from the last valid state
 			const assistantMsg = msg as AssistantMessage;
 			if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
-				// Dropping the assistant message orphans any tool_result that references
-				// its tool calls (recorded results, or fork-placeholder results that
-				// context:"fork" synthesizes for unresolved calls). Providers reject
-				// orphans — Anthropic 400s with "unexpected tool_use_id" — so drop the
-				// dependent results with it.
-				for (const block of assistantMsg.content) {
-					if (block.type === "toolCall") droppedToolCallIds.add(block.id);
-				}
 				continue;
 			}
 
@@ -324,7 +211,6 @@ export function transformMessages<TApi extends Api>(
 
 			result.push(msg);
 		} else if (msg.role === "toolResult") {
-			if (droppedToolCallIds.has(msg.toolCallId)) continue;
 			existingToolResultIds.add(msg.toolCallId);
 			result.push(msg);
 		} else if (msg.role === "system") {
@@ -334,11 +220,6 @@ export function transformMessages<TApi extends Api>(
 				result.push(msg);
 			}
 		} else if (msg.role === "user") {
-			// Hidden/empty hook messages do not interrupt the tool flow. Providers
-			// discard them later, so synthesizing results here would create duplicate
-			// tool_result blocks for results that are already present.
-			if (!hasVisibleUserContent(msg)) continue;
-
 			// A new user turn interrupts tool flow - insert synthetic results for orphaned calls
 			closePendingToolCalls();
 			result.push(msg);

@@ -984,10 +984,10 @@ class TreeList implements Component {
 				const path = shortenPath(String(args.path || "."));
 				return `[grep: /${pattern}/ in ${path}]`;
 			}
-			case "Glob": {
+			case "find": {
 				const pattern = String(args.pattern || "");
 				const path = shortenPath(String(args.path || "."));
-				return `[Glob: ${pattern} in ${path}]`;
+				return `[find: ${pattern} in ${path}]`;
 			}
 			case "ls": {
 				const path = shortenPath(String(args.path || "."));

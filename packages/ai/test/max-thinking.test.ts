@@ -30,14 +30,12 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "max")).toBe("high");
 	});
 
-	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"] as const)(
+	it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-luna", "gpt-6-sol"] as const)(
 		"exposes xhigh and max for openai-codex/%s",
 		(modelId) => {
 			const model = getModel("openai-codex", modelId);
 			expect(model).toBeDefined();
 			expect(model?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
-			// sol/terra additionally opt into the fork's "ultra" tier; luna does not.
-			const hasUltra = modelId !== "gpt-5.6-luna";
 			expect(getSupportedThinkingLevels(model!)).toEqual([
 				"off",
 				"minimal",
@@ -46,7 +44,6 @@ describe("max thinking level", () => {
 				"high",
 				"xhigh",
 				"max",
-				...(hasUltra ? ["ultra"] : []),
 			]);
 		},
 	);
@@ -70,23 +67,26 @@ describe("max thinking level", () => {
 		expect(clampThinkingLevel(model, "xhigh")).toBe("max");
 	});
 
-	it.each(["gpt-5.6-sol", "gpt-6-astra"] as const)("sends max to the Codex Responses API for %s", async (modelId) => {
-		const model = getModel("openai-codex", modelId)!;
-		const context = normalizeContext({
-			systemPrompt: "You are a helpful assistant.",
-			messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
-		});
-		let payload: unknown;
+	it.each(["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna"] as const)(
+		"sends max to the Codex Responses API for %s",
+		async (modelId) => {
+			const model = getModel("openai-codex", modelId)!;
+			const context = normalizeContext({
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Hello", timestamp: Date.now() }],
+			});
+			let payload: unknown;
 
-		await streamSimpleOpenAICodexResponses(model, context, {
-			apiKey: mockToken(),
-			reasoning: "max",
-			onPayload: (request) => {
-				payload = request;
-				throw new Error("payload captured");
-			},
-		}).result();
+			await streamSimpleOpenAICodexResponses(model, context, {
+				apiKey: mockToken(),
+				reasoning: "max",
+				onPayload: (request) => {
+					payload = request;
+					throw new Error("payload captured");
+				},
+			}).result();
 
-		expect(payload).toMatchObject({ reasoning: { effort: "max", summary: "auto" } });
-	});
+			expect(payload).toMatchObject({ reasoning: { effort: "max", summary: "auto" } });
+		},
+	);
 });

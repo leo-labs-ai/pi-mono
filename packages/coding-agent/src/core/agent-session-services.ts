@@ -57,25 +57,11 @@ export interface CreateAgentSessionFromServicesOptions {
 	sessionStartEvent?: SessionStartEvent;
 	model?: Model<any>;
 	thinkingLevel?: ThinkingLevel;
-	/** Original requested model string for startup alias resolution hooks. */
-	requestedModel?: string;
-	/** Prompt/session metadata forwarded to startup alias resolution hooks. */
-	routingMetadata?: CreateAgentSessionOptions["routingMetadata"];
-	/** Defer requested auto-alias resolution until the first prompt supplies semantic input. */
-	deferRequestedModelResolution?: CreateAgentSessionOptions["deferRequestedModelResolution"];
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
 	tools?: string[];
 	excludeTools?: CreateAgentSessionOptions["excludeTools"];
 	noTools?: CreateAgentSessionOptions["noTools"];
 	customTools?: ToolDefinition[];
-	/** See `CreateAgentSessionOptions.source`. Forwarded as-is. */
-	source?: CreateAgentSessionOptions["source"];
-	/** Agent-tool services bound to the task session, enabling Agent execution. */
-	agentToolServices?: CreateAgentSessionOptions["agentToolServices"];
-	/** Explicitly leave the Agent execution engine unbound. */
-	disableAgentToolServices?: CreateAgentSessionOptions["disableAgentToolServices"];
-	/** Identity of this session's agent run, forwarded to telemetry. See `CreateAgentSessionOptions.agentRunIdentity`. */
-	agentRunIdentity?: CreateAgentSessionOptions["agentRunIdentity"];
 }
 
 /**
@@ -193,6 +179,18 @@ export async function createAgentSessionServices(
 		}
 	}
 	extensionsResult.runtime.pendingNativeProviderRegistrations = [];
+	for (const { definition, extensionPath } of extensionsResult.runtime.pendingVirtualModelRegistrations) {
+		try {
+			modelRuntime.registerVirtualModel(definition);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			diagnostics.push({
+				type: "error",
+				message: `Extension "${extensionPath}" error: ${message}`,
+			});
+		}
+	}
+	extensionsResult.runtime.pendingVirtualModelRegistrations = [];
 	await modelRuntime.refresh({ allowNetwork: false });
 	diagnostics.push(...applyExtensionFlagValues(resourceLoader, options.extensionFlagValues));
 
@@ -225,18 +223,11 @@ export async function createAgentSessionFromServices(
 		sessionManager: options.sessionManager,
 		model: options.model,
 		thinkingLevel: options.thinkingLevel,
-		requestedModel: options.requestedModel,
-		routingMetadata: options.routingMetadata,
-		deferRequestedModelResolution: options.deferRequestedModelResolution,
 		scopedModels: options.scopedModels,
 		tools: options.tools,
 		excludeTools: options.excludeTools,
 		noTools: options.noTools,
 		customTools: options.customTools,
 		sessionStartEvent: options.sessionStartEvent,
-		source: options.source,
-		agentToolServices: options.agentToolServices,
-		disableAgentToolServices: options.disableAgentToolServices,
-		agentRunIdentity: options.agentRunIdentity,
 	});
 }

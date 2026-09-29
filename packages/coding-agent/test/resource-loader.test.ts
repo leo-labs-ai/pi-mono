@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -38,6 +38,66 @@ describe("DefaultResourceLoader", () => {
 			expect(loader.getSkills().skills).toEqual([]);
 			expect(loader.getPrompts().prompts).toEqual([]);
 			expect(loader.getThemes().themes).toEqual([]);
+		});
+
+		it("should not treat a project manifest as the owner of a project extension", async () => {
+			const extensionsDir = join(cwd, ".pi", "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(cwd, "package.json"),
+				JSON.stringify({ dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "project-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([]);
+		});
+
+		it("should warn about host dependencies in an extension package manifest", async () => {
+			// Regression for #9863.
+			const packageRoot = join(tempDir, "extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(
+				join(packageRoot, "package.json"),
+				JSON.stringify({ dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" } }),
+			);
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions).toHaveLength(1);
+			expect(loader.getExtensions().warnings).toEqual([
+				{
+					path: join(packageRoot, "package.json"),
+					warning:
+						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @lue-labs/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
+				},
+			]);
+		});
+
+		it("should fail when an extension package manifest cannot be parsed", async () => {
+			const packageRoot = join(tempDir, "invalid-extension-package");
+			const extensionsDir = join(packageRoot, "extensions");
+			mkdirSync(extensionsDir, { recursive: true });
+			writeFileSync(join(packageRoot, "package.json"), "{");
+			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				settingsManager: SettingsManager.inMemory({ packages: [packageRoot] }),
+			});
+
+			await expect(loader.reload()).rejects.toThrow(SyntaxError);
 		});
 
 		it("should discover skills from agentDir", async () => {
@@ -303,9 +363,7 @@ export default function(pi) {
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
-				extensionsResult.deferredExtensions,
 				extensionsResult.runtime,
-				extensionsResult.eventBus,
 				cwd,
 				sessionManager,
 				modelRegistry,
@@ -377,55 +435,6 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
-		});
-
-		it("should expand AGENTS.md imports during resource loading", async () => {
-			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\n@docs/shared.md");
-			mkdirSync(join(cwd, "docs"), { recursive: true });
-			writeFileSync(join(cwd, "docs", "shared.md"), "Shared rules");
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles, diagnostics } = loader.getAgentsFiles();
-			expect(agentsFiles.map((f) => f.path)).toEqual([
-				join(cwd, "AGENTS.md"),
-				realpathSync(join(cwd, "docs", "shared.md")),
-			]);
-			expect(agentsFiles[1].content).toBe("Shared rules");
-			expect(agentsFiles[1].parentPath).toBe(join(cwd, "AGENTS.md"));
-			expect(diagnostics).toEqual([]);
-		});
-
-		it("should expose AGENTS.md import diagnostics", async () => {
-			writeFileSync(join(cwd, "AGENTS.md"), "@missing.md");
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles, diagnostics } = loader.getAgentsFiles();
-			expect(agentsFiles).toHaveLength(1);
-			expect(diagnostics[0].message).toContain("does not exist");
-		});
-
-		it("should dedupe context-file roots reached via symlink to the same realpath", async () => {
-			// Mirrors the user's setup: ~/.pi/agent/AGENTS.md is a symlink to a
-			// project AGENTS.md, and the cwd is that same project. Without dedup,
-			// pi loads the file twice and re-imports the whole tree.
-			const projectAgents = join(cwd, "AGENTS.md");
-			const globalAgents = join(agentDir, "AGENTS.md");
-			writeFileSync(projectAgents, "# Project Guidelines\n\n@shared.md");
-			writeFileSync(join(cwd, "shared.md"), "shared instructions");
-			symlinkSync(projectAgents, globalAgents);
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles } = loader.getAgentsFiles();
-			const paths = agentsFiles.map((f) => f.path);
-			// AGENTS.md (one canonical entry) + shared.md (one entry)
-			expect(paths).toHaveLength(2);
-			expect(paths.filter((p) => p.endsWith("shared.md"))).toHaveLength(1);
 		});
 
 		it("should prefer AGENTS.override.md within each directory while preserving ancestor layering", async () => {
@@ -526,7 +535,7 @@ Project skill content`,
 			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(agentDir, "AGENTS.md"))).toBe(
 				true,
 			);
-			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(cwd, "AGENTS.md"))).toBe(false);
+			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(cwd, "AGENTS.md"))).toBe(true);
 			expect(loader.getExtensions().extensions).toHaveLength(0);
 			expect(loader.getExtensions().errors).toEqual([]);
 			expect(loader.getSkills().skills.some((skill) => skill.name === "project-skill")).toBe(false);
@@ -1018,9 +1027,7 @@ export default function(pi: ExtensionAPI) {
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
-				extensionsResult.deferredExtensions,
 				extensionsResult.runtime,
-				extensionsResult.eventBus,
 				cwd,
 				sessionManager,
 				modelRegistry,
@@ -1029,6 +1036,151 @@ export default function(pi: ExtensionAPI) {
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
 			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
 			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+		});
+
+		it("should leave out replaceable extensions whose names another extension registers", async () => {
+			// A third-party MCP extension registering /mcp replaces the built-in one instead of both running.
+			const globalExtDir = join(agentDir, "extensions");
+			mkdirSync(globalExtDir, { recursive: true });
+			writeFileSync(
+				join(globalExtDir, "other-mcp.ts"),
+				`
+import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
+export default function(pi: ExtensionAPI) {
+  pi.registerCommand("mcp", { description: "other mcp", handler: async () => {} });
+}`,
+			);
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{
+						name: "mcp",
+						replaceable: true,
+						factory: (pi) => pi.registerCommand("mcp", { description: "built-in mcp", handler: async () => {} }),
+					},
+					{
+						name: "llama",
+						replaceable: true,
+						factory: (pi) =>
+							pi.registerCommand("llama", { description: "built-in llama", handler: async () => {} }),
+					},
+				],
+			});
+			await loader.reload();
+
+			const extensionsResult = loader.getExtensions();
+			expect(extensionsResult.extensions.map((extension) => extension.path)).toEqual([
+				join(globalExtDir, "other-mcp.ts"),
+				"<inline:llama>",
+			]);
+			expect(extensionsResult.errors).toEqual([]);
+
+			const runner = new ExtensionRunner(
+				extensionsResult.extensions,
+				extensionsResult.runtime,
+				cwd,
+				SessionManager.inMemory(),
+				await createModelRegistry(AuthStorage.create(join(tempDir, "auth-replaceable.json"))),
+			);
+			expect(runner.getCommand("mcp")?.description).toBe("other mcp");
+			expect(runner.getCommand("llama")?.description).toBe("built-in llama");
+		});
+
+		it("should skip built-in extensions disabled in settings", async () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ extensions: ["-builtin:mcp"] }));
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(loader.getExtensions().extensions[0].sourceInfo).toMatchObject({
+				path: "builtin:llama",
+				source: "builtin",
+			});
+			expect(loader.getExtensions().extensions[0].hidden).toBe(true);
+			expect(loaded).toEqual(["llama"]);
+		});
+
+		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
+			const userExtDir = join(agentDir, "extensions");
+			mkdirSync(userExtDir, { recursive: true });
+			writeFileSync(join(userExtDir, "user.ts"), "export default function() {}");
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			// A project override gives the built-in project scope, which must not move it ahead.
+			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [{ name: "mcp", builtin: true, factory: () => {} }],
+			});
+			const expected = [join(userExtDir, "user.ts"), "builtin:mcp"];
+
+			await loader.reload({ resolveProjectTrust: async () => true });
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(expected);
+			await loader.reload();
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(expected);
+		});
+
+		it("should disable built-in extensions with noExtensions unless loaded with -e builtin:<name>", async () => {
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				noExtensions: true,
+				additionalExtensionPaths: ["builtin:mcp", "builtin:missing"],
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload();
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(["builtin:mcp"]);
+			expect(loader.getExtensions().errors).toEqual([
+				{ path: "builtin:missing", error: "Unknown built-in extension: builtin:missing" },
+			]);
+			expect(loaded).toEqual(["mcp"]);
+		});
+
+		it("should apply project built-in extension overrides after trust resolves", async () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ extensions: ["-builtin:mcp"] }));
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(
+				join(cwd, ".pi", "settings.json"),
+				JSON.stringify({ extensions: ["+builtin:mcp", "-builtin:llama"] }),
+			);
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "plain", factory: () => void loaded.push("plain") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload({
+				resolveProjectTrust: async ({ extensionsResult }) => {
+					// Built-in extensions wait until project settings are known.
+					expect(extensionsResult.extensions.map((extension) => extension.path)).toEqual(["<inline:plain>"]);
+					return true;
+				},
+			});
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual([
+				"builtin:mcp",
+				"<inline:plain>",
+			]);
+			expect(loaded).toEqual(["plain", "mcp"]);
 		});
 	});
 

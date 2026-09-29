@@ -21,7 +21,6 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "../../src/index.ts";
-import { fixtureSessionDir } from "../helpers/session-storage.ts";
 
 type RecordedSessionEvent =
 	| SessionBeforeSwitchEvent
@@ -108,7 +107,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(tempDir, fixtureSessionDir(tempDir)),
+			sessionManager: SessionManager.create(tempDir),
 		});
 		await runtime.session.bindExtensions({});
 
@@ -318,7 +317,7 @@ describe("AgentSessionRuntime characterization", () => {
 		events.length = 0;
 		const otherDir = join(tmpdir(), `pi-runtime-other-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(otherDir, { recursive: true });
-		const otherSession = SessionManager.create(otherDir, fixtureSessionDir(otherDir));
+		const otherSession = SessionManager.create(otherDir);
 		otherSession.appendMessage({ role: "user", content: [{ type: "text", text: "other" }], timestamp: Date.now() });
 		const otherSessionFile = otherSession.getSessionFile();
 		cancelReason = "resume";
@@ -385,7 +384,7 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(leafId).toBeTruthy();
 
 		await expect(runtime.fork(leafId!, { position: "at" })).rejects.toThrow(
-			"This session has not been saved yet. Wait for the first assistant response before cloning or forking it.",
+			"This session has not been saved yet. Send a message before cloning or forking it.",
 		);
 	});
 
@@ -604,7 +603,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const otherRuntime = await createAgentSessionRuntime(createOtherRuntime, {
 			cwd: secondDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(secondDir, fixtureSessionDir(secondDir)),
+			sessionManager: SessionManager.create(secondDir),
 		});
 		cleanups.push(async () => {
 			await otherRuntime.dispose();
@@ -677,7 +676,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const otherRuntime = await createAgentSessionRuntime(createOtherRuntime, {
 			cwd: otherDir,
 			agentDir: tempDir,
-			sessionManager: SessionManager.create(otherDir, fixtureSessionDir(otherDir)),
+			sessionManager: SessionManager.create(otherDir),
 		});
 		cleanups.push(async () => {
 			await otherRuntime.dispose();

@@ -97,7 +97,7 @@ function assertContentIndex(contentIndex: number): void {
 	}
 }
 
-function eventBlock(event: Extract<AssistantMessageEvent, { contentIndex: number }>) {
+function eventBlock(event: Exclude<AssistantMessageEvent, { type: "start" | "done" | "error" }>) {
 	assertContentIndex(event.contentIndex);
 	const block = event.partial.content[event.contentIndex];
 	if (!block) {

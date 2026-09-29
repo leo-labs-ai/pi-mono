@@ -12,9 +12,6 @@ const MAX_NAME_LENGTH = 64;
 
 /** Max description length per spec */
 const MAX_DESCRIPTION_LENGTH = 1024;
-const MAX_PROMPT_DESCRIPTION_LENGTH = 250;
-/** Hard cap on total chars emitted by formatSkillsForPrompt (~2k tokens at 4 chars/token). */
-const MAX_SKILLS_PROMPT_CHARS = 8000;
 
 const IGNORE_FILE_NAMES = [".gitignore", ".ignore", ".fdignore"];
 
@@ -127,14 +124,6 @@ function validateDescription(description: unknown): string[] {
 	}
 
 	return errors;
-}
-
-function haveSameSkillFileContent(firstPath: string, secondPath: string): boolean {
-	try {
-		return readFileSync(firstPath, "utf-8") === readFileSync(secondPath, "utf-8");
-	} catch {
-		return false;
-	}
 }
 
 export interface LoadSkillsFromDirOptions {
@@ -363,20 +352,14 @@ function loadSkillFromFile(
  * Skills with disableModelInvocation=true are excluded from the prompt
  * (they can only be invoked explicitly via /skill:name commands).
  */
-export function formatSkillsForPrompt(
-	skills: Skill[],
-	fileReadTool: "read" | "bash" = "read",
-	opts: { maxChars?: number } = {},
-): string {
+export function formatSkillsForPrompt(skills: Skill[], fileReadTool: "read" | "bash" = "read"): string {
 	const visibleSkills = skills.filter((s) => !s.disableModelInvocation);
 
 	if (visibleSkills.length === 0) {
 		return "";
 	}
 
-	const maxChars = opts.maxChars ?? MAX_SKILLS_PROMPT_CHARS;
-
-	const header = [
+	const lines = [
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
 		fileReadTool === "read"
 			? "Use the read tool to load a skill's file when the task matches its description."
@@ -384,28 +367,19 @@ export function formatSkillsForPrompt(
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<available_skills>",
-	].join("\n");
-
-	const footer = "</available_skills>";
-	let remaining = maxChars - header.length - footer.length - 1; // 1 for the joining newline
-	const entries: string[] = [];
+	];
 
 	for (const skill of visibleSkills) {
-		const entry = `  <skill name="${escapeXml(skill.name)}" description="${escapeXml(formatPromptDescription(skill.description))}" location="${escapeXml(skill.filePath)}" />`;
-		if (entry.length > remaining) break;
-		entries.push(entry);
-		remaining -= entry.length + 1; // +1 for newline
+		lines.push("  <skill>");
+		lines.push(`    <name>${escapeXml(skill.name)}</name>`);
+		lines.push(`    <description>${escapeXml(skill.description)}</description>`);
+		lines.push(`    <location>${escapeXml(skill.filePath)}</location>`);
+		lines.push("  </skill>");
 	}
 
-	return [header, ...entries, footer].join("\n");
-}
+	lines.push("</available_skills>");
 
-function formatPromptDescription(description: string): string {
-	const normalized = description.replace(/\s+/g, " ").trim();
-	if (normalized.length <= MAX_PROMPT_DESCRIPTION_LENGTH) {
-		return normalized;
-	}
-	return `${normalized.slice(0, MAX_PROMPT_DESCRIPTION_LENGTH - 3).trimEnd()}...`;
+	return lines.join("\n");
 }
 
 function escapeXml(str: string): string {
@@ -457,10 +431,6 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 
 			const existing = skillMap.get(skill.name);
 			if (existing) {
-				realPathSet.add(realPath);
-				if (haveSameSkillFileContent(existing.filePath, skill.filePath)) {
-					continue;
-				}
 				collisionDiagnostics.push({
 					type: "collision",
 					message: `name "${skill.name}" collision`,

@@ -1,13 +1,4 @@
-import type {
-	AssistantMessage,
-	Context,
-	ImageContent,
-	Message,
-	TextContent,
-	ToolReferenceContent,
-	TranscriptContext,
-	Usage,
-} from "../types.ts";
+import type { AssistantMessage, ImageContent, Message, TextContent, TranscriptContext, Usage } from "../types.ts";
 import { getSystemMessageText } from "./text.ts";
 
 export interface ContextUsageEstimate {
@@ -23,8 +14,6 @@ export interface ContextUsageEstimate {
 
 const CHARS_PER_TOKEN = 4;
 const ESTIMATED_IMAGE_CHARS = 4800;
-const STALE_USAGE_RECOUNT_FACTOR = 2;
-const STALE_USAGE_MIN_TOKENS = 5_000;
 
 export function calculateContextTokens(usage: Usage): number {
 	return usage.totalTokens || usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
@@ -38,17 +27,11 @@ function safeJsonStringify(value: unknown): string {
 	}
 }
 
-function estimateTextAndImageContentChars(
-	content: string | Array<TextContent | ImageContent | ToolReferenceContent>,
-): number {
+function estimateTextAndImageContentChars(content: string | Array<TextContent | ImageContent>): number {
 	if (typeof content === "string") return content.length;
 
 	let chars = 0;
-	for (const block of content) {
-		if (block.type === "text") chars += block.text.length;
-		else if (block.type === "image") chars += ESTIMATED_IMAGE_CHARS;
-		else chars += block.name.length;
-	}
+	for (const block of content) chars += block.type === "text" ? block.text.length : ESTIMATED_IMAGE_CHARS;
 	return chars;
 }
 
@@ -56,9 +39,7 @@ export function estimateTextTokens(text: string): number {
 	return Math.ceil(text.length / CHARS_PER_TOKEN);
 }
 
-export function estimateTextAndImageContentTokens(
-	content: string | Array<TextContent | ImageContent | ToolReferenceContent>,
-): number {
+export function estimateTextAndImageContentTokens(content: string | Array<TextContent | ImageContent>): number {
 	return Math.ceil(estimateTextAndImageContentChars(content) / CHARS_PER_TOKEN);
 }
 
@@ -80,10 +61,8 @@ export function estimateMessageTokens(message: Message): number {
 			chars += block.text.length;
 		} else if (block.type === "thinking") {
 			chars += block.thinking.length;
-		} else if (block.type === "toolCall") {
-			chars += block.name.length + safeJsonStringify(block.arguments).length;
 		} else {
-			chars += block.name.length;
+			chars += block.name.length + safeJsonStringify(block.arguments).length;
 		}
 	}
 	return Math.ceil(chars / CHARS_PER_TOKEN);
@@ -124,37 +103,10 @@ export function estimateContextTokens(context: TranscriptContext | readonly Mess
 		for (let i = usageInfo.index + 1; i < messages.length; i++) {
 			trailingTokens += estimateMessageTokens(messages[i]);
 		}
-		const legacyContext = Array.isArray(context) ? undefined : (context as Context);
-		if (legacyContext?.tools) {
-			const addedNames = new Set(
-				messages
-					.slice(usageInfo.index + 1)
-					.filter((message) => message.role === "toolResult")
-					.flatMap((message) => message.addedToolNames ?? []),
-			);
-			trailingTokens += estimateToolsTokens(legacyContext.tools.filter((tool) => addedNames.has(tool.name)));
-		}
-		const anchoredTokens = usageTokens + trailingTokens;
-		let recountTokens =
-			legacyContext?.systemPrompt === undefined ? 0 : estimateTextTokens(legacyContext.systemPrompt);
-		if (legacyContext?.tools) recountTokens += estimateToolsTokens(legacyContext.tools);
-		for (const message of messages) recountTokens += estimateMessageTokens(message);
-		if (
-			anchoredTokens > STALE_USAGE_MIN_TOKENS &&
-			recountTokens > 0 &&
-			anchoredTokens > recountTokens * STALE_USAGE_RECOUNT_FACTOR
-		) {
-			return { tokens: recountTokens, usageTokens: 0, trailingTokens: recountTokens, lastUsageIndex: null };
-		}
-		return { tokens: anchoredTokens, usageTokens, trailingTokens, lastUsageIndex: usageInfo.index };
+		return { tokens: usageTokens + trailingTokens, usageTokens, trailingTokens, lastUsageIndex: usageInfo.index };
 	}
 
 	let tokens = 0;
-	if (!Array.isArray(context)) {
-		const legacyContext = context as Context;
-		if (legacyContext.systemPrompt) tokens += estimateTextTokens(legacyContext.systemPrompt);
-		if (legacyContext.tools) tokens += estimateToolsTokens(legacyContext.tools);
-	}
 	for (const message of messages) tokens += estimateMessageTokens(message);
 	return { tokens, usageTokens: 0, trailingTokens: tokens, lastUsageIndex: null };
 }

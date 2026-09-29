@@ -1,6 +1,6 @@
 {
 	"name": "@lue-labs/pi-client",
-	"version": "0.89.1",
+	"version": "0.99.0",
 	"description": "Transport-neutral client for remote pi sessions over framed CBOR bytes",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -43,19 +43,19 @@
 		"url": "git+https://github.com/lue-labs/pi-mono.git",
 		"directory": "packages/client"
 	},
-	"publishConfig": {
-		"registry": "https://npm.pkg.github.com",
-		"access": "restricted"
-	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@lue-labs/pi-protocol": "0.89.1",
-		"@earendil-works/chord": "^0.87.0"
+		"@lue-labs/pi-protocol": "0.99.0",
+		"@earendil-works/chord": "^0.99.0"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",
-		"vitest": "4.1.9"
+		"vitest": "4.1.11"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com",
+		"access": "restricted"
 	}
 }

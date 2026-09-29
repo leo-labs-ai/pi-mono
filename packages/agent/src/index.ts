@@ -1,5 +1,3 @@
-// Core Agent
-
 export { uuidv7 } from "@lue-labs/pi-ai";
 export type {
 	AttributeValue,
@@ -74,7 +72,6 @@ export {
 } from "./harness/compaction/compaction.ts";
 export * from "./harness/context.ts";
 export * from "./harness/messages.ts";
-export * from "./harness/progressive-disclosure.ts";
 export * from "./harness/prompt-templates.ts";
 export * from "./harness/result.ts";
 export { type LaneSnapshotReduction, reduceLaneSnapshot } from "./harness/runtime/reducer.ts";

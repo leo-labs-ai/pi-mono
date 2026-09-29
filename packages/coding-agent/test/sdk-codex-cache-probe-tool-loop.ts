@@ -18,6 +18,7 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	type Context,
+	getModel,
 	type Model,
 	type SimpleStreamOptions,
 	Type,
@@ -27,14 +28,12 @@ import {
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../../ai/src/api/openai-codex-responses.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
@@ -174,16 +173,8 @@ function buildPrompt(turn: number): string {
 }
 
 function createMinimalResourceLoader(systemPrompt: string): ResourceLoader {
-	const emptyExtensionsResult = {
-		extensions: [],
-		deferredExtensions: [],
-		errors: [],
-		eventBus: createEventBus(),
-		runtime: createExtensionRuntime(),
-	};
 	return {
-		getExtensions: () => emptyExtensionsResult,
-		getExtensionsForRunner: () => emptyExtensionsResult,
+		getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
 		getSkills: () => ({ skills: [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -290,7 +281,10 @@ async function main(): Promise<void> {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = await createModelRegistry(authStorage);
 
-	const model = pickModel("openai-codex");
+	const model = getModel("openai-codex", "gpt-5.5");
+	if (!model) {
+		throw new Error("Model openai-codex/gpt-5.5 not found");
+	}
 	const baseModel = { ...model, maxTokens: args.maxTokens };
 	const streamSimpleOpenAICodexResponsesForRegistry = (
 		registryModel: Model<Api>,

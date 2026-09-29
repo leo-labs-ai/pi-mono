@@ -8,18 +8,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentTool } from "@lue-labs/pi-agent-core";
 import { Agent } from "@lue-labs/pi-agent-core";
-import type { FauxModelDefinition, FauxProviderRegistration, FauxResponseStep, Model } from "@lue-labs/pi-ai/compat";
+import type {
+	FauxModelDefinition,
+	FauxProviderRegistration,
+	FauxResponseStep,
+	Model,
+	ToolResultMessage,
+} from "@lue-labs/pi-ai/compat";
 import { registerFauxProvider, streamSimple } from "@lue-labs/pi-ai/compat";
-import { type AgentRunIdentity, AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
+import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.ts";
 import { AuthStorage } from "../../src/core/auth-storage.ts";
-import type { ExtensionRunner } from "../../src/core/extensions/index.ts";
+import type { ExtensionRunner, ExtensionUIContext } from "../../src/core/extensions/index.ts";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { boundModelFacingContextImages } from "../../src/core/tool-artifacts.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
-import { redirectOmittedSessionCreates } from "../helpers/session-storage.ts";
+import { theme } from "../../src/modes/interactive/theme/theme.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
@@ -57,6 +62,52 @@ export function getAssistantTexts(harness: Harness): string[] {
 		.map((message) => getMessageText(message));
 }
 
+/** The latest result of `toolName` in the session transcript. */
+export function getToolResult(harness: Harness, toolName: string): ToolResultMessage {
+	const result = harness.session.messages.findLast(
+		(message): message is ToolResultMessage => message.role === "toolResult" && message.toolName === toolName,
+	);
+	if (!result) throw new Error(`No ${toolName} tool result`);
+	return result;
+}
+
+/** An extension UI context that does nothing, with `overrides` applied. */
+export function createTestUiContext(overrides: Partial<ExtensionUIContext> = {}): ExtensionUIContext {
+	return {
+		select: async () => undefined,
+		confirm: async () => false,
+		input: async () => undefined,
+		notify: () => {},
+		onTerminalInput: () => () => {},
+		setStatus: () => {},
+		setWorkingMessage: () => {},
+		setWorkingVisible: () => {},
+		setWorkingIndicator: () => {},
+		setHiddenThinkingLabel: () => {},
+		setWidget: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		setTitle: () => {},
+		custom: async <T>() => undefined as T,
+		pasteToEditor: () => {},
+		setEditorText: () => {},
+		getEditorText: () => "",
+		editor: async () => undefined,
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
+		getEditorComponent: () => undefined,
+		get theme() {
+			return theme;
+		},
+		getAllThemes: () => [],
+		getTheme: () => undefined,
+		setTheme: () => ({ success: false, error: "Theme switching not available in tests" }),
+		getToolsExpanded: () => false,
+		setToolsExpanded: () => {},
+		...overrides,
+	};
+}
+
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	settings?: Partial<Settings>;
@@ -67,10 +118,6 @@ export interface HarnessOptions {
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
-	provider?: string;
-	systemPrompt?: string;
-	/** Identity of the agent run this session represents (for telemetry-identity tests). */
-	agentRunIdentity?: AgentRunIdentity;
 	modelsJson?: Record<string, unknown>;
 }
 
@@ -100,25 +147,7 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
-	const restoreOmittedSessionCreates = redirectOmittedSessionCreates(tempDir);
-	try {
-		return await createHarnessWithTempDir(tempDir, restoreOmittedSessionCreates, options);
-	} catch (error) {
-		restoreOmittedSessionCreates();
-		if (existsSync(tempDir)) {
-			rmSync(tempDir, { recursive: true });
-		}
-		throw error;
-	}
-}
-
-async function createHarnessWithTempDir(
-	tempDir: string,
-	restoreOmittedSessionCreates: () => void,
-	options: HarnessOptions,
-): Promise<Harness> {
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		provider: options.provider,
 		models: options.models,
 	});
 	fauxProvider.setResponses([]);
@@ -164,7 +193,7 @@ async function createHarnessWithTempDir(
 		streamFn: streamSimple,
 		initialState: {
 			model,
-			systemPrompt: options.systemPrompt ?? "",
+			systemPrompt: "",
 			tools: [],
 		},
 		convertToLlm,
@@ -188,8 +217,8 @@ async function createHarnessWithTempDir(
 		},
 		transformContext: async (messages: AgentMessage[]) => {
 			const runner = extensionRunnerRef.current;
-			const extensionMessages = runner ? await runner.emitContext(messages) : messages;
-			return boundModelFacingContextImages<AgentMessage>(extensionMessages);
+			if (!runner) return messages;
+			return runner.emitContext(messages);
 		},
 	});
 	const extensionsResult = options.extensionFactories
@@ -203,7 +232,6 @@ async function createHarnessWithTempDir(
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
 		baseToolsOverride: toolMap,
@@ -211,11 +239,7 @@ async function createHarnessWithTempDir(
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
-		agentRunIdentity: options.agentRunIdentity,
 	});
-	if (options.systemPrompt !== undefined) {
-		session.overrideBaseSystemPrompt(options.systemPrompt);
-	}
 
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {
@@ -241,7 +265,6 @@ async function createHarnessWithTempDir(
 		cleanup() {
 			session.dispose();
 			fauxProvider.unregister();
-			restoreOmittedSessionCreates();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}

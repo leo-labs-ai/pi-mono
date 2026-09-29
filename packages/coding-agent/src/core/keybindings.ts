@@ -33,9 +33,6 @@ export interface AppKeybindings {
 	"app.session.tree": true;
 	"app.session.fork": true;
 	"app.session.resume": true;
-	"app.agents.interrupt": true;
-	"app.agents.cancel": true;
-	"app.agents.resume": true;
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
 	"app.tree.editLabel": true;
@@ -58,7 +55,6 @@ export interface AppKeybindings {
 	"app.tree.filter.all": true;
 	"app.tree.filter.cycleForward": true;
 	"app.tree.filter.cycleBackward": true;
-	"app.agentView.back": true;
 }
 
 export type AppKeybinding = keyof AppKeybindings;
@@ -145,15 +141,12 @@ export const KEYBINDINGS = {
 	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: windowsKeybindings ? "alt+v" : "ctrl+v",
-		description: "Paste image from clipboard (text fallback)",
+		description: "Paste files on macOS, images, or text from clipboard",
 	},
 	"app.session.new": { defaultKeys: [], description: "Start a new session" },
 	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
 	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
 	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
-	"app.agents.interrupt": { defaultKeys: "i", description: "Interrupt selected background agent run" },
-	"app.agents.cancel": { defaultKeys: "c", description: "Cancel selected background agent run" },
-	"app.agents.resume": { defaultKeys: "r", description: "Resume selected background agent run" },
 	"app.tree.foldOrUp": {
 		defaultKeys: process.platform === "darwin" ? ["alt+left", "ctrl+left"] : ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",
@@ -241,10 +234,6 @@ export const KEYBINDINGS = {
 	"app.tree.filter.cycleBackward": {
 		defaultKeys: "shift+ctrl+o",
 		description: "Tree filter: cycle backward",
-	},
-	"app.agentView.back": {
-		defaultKeys: "left",
-		description: "Return to the Agent View dashboard (only when the editor is empty)",
 	},
 } as const satisfies KeybindingDefinitions;
 
@@ -409,4 +398,4 @@ export class KeybindingsManager extends TuiKeybindingsManager {
 	}
 }
 
-export type { Keybinding, KeybindingsConfig, KeyId };
+export type { Keybinding, KeyId, KeybindingsConfig };

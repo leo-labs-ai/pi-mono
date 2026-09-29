@@ -2,13 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { normalizeContext } from "@lue-labs/pi-ai";
-import type {
-	AnthropicMessagesCompat,
-	Api,
-	Model,
-	OpenAICodexResponsesCompat,
-	OpenAICompletionsCompat,
-} from "@lue-labs/pi-ai/compat";
+import type { AnthropicMessagesCompat, Api, Model, OpenAICompletionsCompat } from "@lue-labs/pi-ai/compat";
 import { getApiProvider, getModels, getSupportedThinkingLevels } from "@lue-labs/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -79,11 +73,6 @@ describe("ModelRegistry", () => {
 	function writeRawModelsJson(providers: Record<string, unknown>) {
 		writeFileSync(modelsJsonPath, JSON.stringify({ providers }));
 	}
-
-	const openRouterFixtureModels = [
-		{ id: "fixture/model-a", name: "Fixture Model A" },
-		{ id: "fixture/model-b", name: "Fixture Model B" },
-	];
 
 	const openAiModel: Model<Api> = {
 		id: "test-openai-model",
@@ -531,41 +520,6 @@ describe("ModelRegistry", () => {
 			});
 		});
 
-		test("compat schema accepts Codex gateway account-header opt-out", async () => {
-			writeRawModelsJson({
-				demo: {
-					baseUrl: "https://gateway.example/api",
-					apiKey: "DEMO_KEY",
-					api: "openai-codex-responses",
-					compat: {
-						sendChatgptAccountId: false,
-						supportsWebSocketTransport: false,
-						supportsZstdRequestCompression: false,
-					},
-					models: [
-						{
-							id: "gateway-codex-model",
-							reasoning: true,
-							input: ["text"],
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-							contextWindow: 128000,
-							maxTokens: 16384,
-						},
-					],
-				},
-			});
-
-			const registry = await createModelRegistry(authStorage, modelsJsonPath);
-			const compat = registry.find("demo", "gateway-codex-model")?.compat as OpenAICodexResponsesCompat | undefined;
-
-			expect(registry.getError()).toBeUndefined();
-			expect(compat).toEqual({
-				sendChatgptAccountId: false,
-				supportsWebSocketTransport: false,
-				supportsZstdRequestCompression: false,
-			});
-		});
-
 		test("compat schema accepts Anthropic eager tool input streaming flag", async () => {
 			writeRawModelsJson({
 				demo: {
@@ -932,12 +886,9 @@ describe("ModelRegistry", () => {
 
 		test("supportsFinishReason can be configured at provider and model levels", async () => {
 			const provider: ModelsJsonProvider = {
-				baseUrl: "https://openrouter.ai/api/v1",
-				api: "openai-completions",
-				models: openRouterFixtureModels,
 				compat: { supportsFinishReason: true },
 				modelOverrides: {
-					"fixture/model-a": {
+					"anthropic/claude-sonnet-4": {
 						compat: { supportsFinishReason: false },
 					},
 				},
@@ -946,11 +897,11 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const modelA = models.find((model) => model.id === "fixture/model-a");
-			const modelB = models.find((model) => model.id === "fixture/model-b");
+			const sonnet = models.find((model) => model.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((model) => model.id === "anthropic/claude-opus-4.1");
 
-			expect((modelA?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
-			expect((modelB?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
+			expect((sonnet?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(false);
+			expect((opus?.compat as OpenAICompletionsCompat | undefined)?.supportsFinishReason).toBe(true);
 		});
 
 		test("model override deep merges compat settings", async () => {
@@ -978,14 +929,11 @@ describe("ModelRegistry", () => {
 		test("multiple model overrides on same provider", async () => {
 			writeRawModelsJson({
 				openrouter: {
-					baseUrl: "https://openrouter.ai/api/v1",
-					api: "openai-completions",
-					models: openRouterFixtureModels,
 					modelOverrides: {
-						"fixture/model-a": {
+						"anthropic/claude-sonnet-4": {
 							compat: { openRouterRouting: { only: ["amazon-bedrock"] } },
 						},
-						"fixture/model-b": {
+						"anthropic/claude-opus-4.1": {
 							compat: { openRouterRouting: { only: ["anthropic"] } },
 						},
 					},
@@ -995,24 +943,22 @@ describe("ModelRegistry", () => {
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
 
-			const modelA = models.find((m) => m.id === "fixture/model-a");
-			const modelB = models.find((m) => m.id === "fixture/model-b");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
+			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
 
-			const modelACompat = modelA?.compat as OpenAICompletionsCompat | undefined;
-			const modelBCompat = modelB?.compat as OpenAICompletionsCompat | undefined;
-			expect(modelACompat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
-			expect(modelBCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
+			const sonnetCompat = sonnet?.compat as OpenAICompletionsCompat | undefined;
+			const opusCompat = opus?.compat as OpenAICompletionsCompat | undefined;
+			expect(sonnetCompat?.openRouterRouting).toEqual({ only: ["amazon-bedrock"] });
+			expect(opusCompat?.openRouterRouting).toEqual({ only: ["anthropic"] });
 		});
 
 		test("model override combined with baseUrl override", async () => {
 			writeRawModelsJson({
 				openrouter: {
 					baseUrl: "https://my-proxy.example.com/v1",
-					api: "openai-completions",
-					models: openRouterFixtureModels,
 					modelOverrides: {
-						"fixture/model-a": {
-							name: "Proxied Model A",
+						"anthropic/claude-sonnet-4": {
+							name: "Proxied Sonnet",
 						},
 					},
 				},
@@ -1020,16 +966,16 @@ describe("ModelRegistry", () => {
 
 			const registry = await createModelRegistry(authStorage, modelsJsonPath);
 			const models = getModelsForProvider(registry, "openrouter");
-			const modelA = models.find((m) => m.id === "fixture/model-a");
+			const sonnet = models.find((m) => m.id === "anthropic/claude-sonnet-4");
 
 			// Both overrides should apply
-			expect(modelA?.baseUrl).toBe("https://my-proxy.example.com/v1");
-			expect(modelA?.name).toBe("Proxied Model A");
+			expect(sonnet?.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(sonnet?.name).toBe("Proxied Sonnet");
 
 			// Other models should have the baseUrl but not the name override
-			const modelB = models.find((m) => m.id === "fixture/model-b");
-			expect(modelB?.baseUrl).toBe("https://my-proxy.example.com/v1");
-			expect(modelB?.name).not.toBe("Proxied Model A");
+			const opus = models.find((m) => m.id === "anthropic/claude-opus-4.1");
+			expect(opus?.baseUrl).toBe("https://my-proxy.example.com/v1");
+			expect(opus?.name).not.toBe("Proxied Sonnet");
 		});
 
 		test("model override for non-existent model ID is ignored", async () => {

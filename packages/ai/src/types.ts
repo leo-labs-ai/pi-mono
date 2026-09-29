@@ -8,6 +8,7 @@ import type { MistralOptions } from "./api/mistral-conversations.ts";
 import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.ts";
 import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+import type { PiMessagesOptions } from "./api/pi-messages.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -22,13 +23,18 @@ export type KnownApi =
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
-	| "google-vertex";
+	| "google-vertex"
+	| "pi-messages";
 
 export type Api = KnownApi | (string & {});
 
-export type KnownImagesApi = "openrouter-images";
+export type KnownImageApi = "openrouter-images";
 
-export type ImagesApi = KnownImagesApi | (string & {});
+export type ImageApi = KnownImageApi | (string & {});
+
+export type KnownClassifierApi = "typesafe-system-one" | "cloudflare-workers-ai-system-one" | "llama-cpp-classify";
+
+export type ClassifierApi = KnownClassifierApi | (string & {});
 
 export type KnownProvider =
 	| "amazon-bedrock"
@@ -40,6 +46,7 @@ export type KnownProvider =
 	| "azure-openai-responses"
 	| "openai-codex"
 	| "radius"
+	| "typesafe"
 	| "nvidia"
 	| "deepseek"
 	| "github-copilot"
@@ -74,12 +81,8 @@ export type KnownProvider =
 	| "xiaomi-token-plan-sgp";
 export type ProviderId = KnownProvider | string;
 
-export type KnownImagesProvider = "openrouter";
-
-export type ImagesProviderId = KnownImagesProvider | string;
-
 export type ToolChoice = "auto" | "none";
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "adaptive";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 export type ChatTemplateKwargValue =
@@ -101,8 +104,6 @@ export interface ThinkingBudgets {
 	low?: number;
 	medium?: number;
 	high?: number;
-	ultra?: number;
-	adaptive?: number;
 }
 
 // Base options all providers share
@@ -116,12 +117,11 @@ export type ModelPromptCache = Partial<Record<Exclude<CacheRetention, "none">, n
 
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
-export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
-
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
 export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
 export type FetchFunction = typeof globalThis.fetch;
+export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
 export interface ProviderResponse {
 	status: number;
@@ -190,6 +190,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * its body stream is consumed.
 	 */
 	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
+	/**
+	 * Optional observer for each parsed provider stream event before Pi normalization.
+	 * Event data is adapter-owned and must be treated as read-only.
+	 * Adapter support is explicit; unsupported adapters do not invoke it.
+	 */
+	onProviderStreamEvent?: (data: unknown, model: Model<Api>) => void | Promise<void>;
 	temperature?: number;
 	/**
 	 * Arbitrary sampling parameters merged into the request body as-is, after the named request
@@ -207,7 +213,7 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	transport?: Transport;
 	/**
 	 * Prompt cache retention preference. Providers map this to their supported values.
-	 * Default: "long".
+	 * Default: "short".
 	 */
 	cacheRetention?: CacheRetention;
 	/**
@@ -216,12 +222,6 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * session-aware features. Ignored by providers that don't support it.
 	 */
 	sessionId?: string;
-	/**
-	 * Optional provider prompt-cache affinity key. Unlike sessionId, this may be
-	 * shared across sessions so background heartbeats can warm a stable prefix.
-	 * Providers that do not expose prompt-cache routing ignore it.
-	 */
-	cacheAffinityKey?: string;
 	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
@@ -264,6 +264,7 @@ export interface ApiOptionsMap {
 	"google-vertex": GoogleVertexOptions;
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;
+	"pi-messages": PiMessagesOptions;
 }
 
 /**
@@ -300,18 +301,36 @@ export interface ProviderStreams {
 /**
  * The uniform contract of an image-generation API implementation module:
  * every image API module under `src/api/` exports exactly `generateImages`,
- * so the module itself satisfies this interface. Lazy wrappers and image
- * provider factories pass these around as values.
+ * so the module itself satisfies this interface. Lazy wrappers and
+ * `createProvider({ images })` pass these around as values.
  */
 export interface ProviderImages {
 	generateImages(
-		model: ImagesModel<ImagesApi>,
+		model: ImageModel<ImageApi>,
 		context: ImagesContext,
 		options?: ImagesOptions,
 	): Promise<AssistantImages>;
 }
 
-export interface ImagesOptions extends ProviderRequestOptions<ImagesModel<ImagesApi>> {
+/** The uniform contract implemented by classifier API modules. */
+export interface ProviderClassifier {
+	classify(
+		model: ClassifierModel<ClassifierApi>,
+		context: ClassifierContext,
+		options?: ClassifierOptions,
+	): Promise<ClassifierResult>;
+}
+
+export interface ClassifierOptions extends ProviderRequestOptions<ClassifierModel<ClassifierApi>> {
+	/**
+	 * Divides the answer logits by this value before they are normalized into probabilities.
+	 * Values above 1 soften the distribution; values below 1 sharpen it. Must be positive.
+	 * APIs that cannot apply it ignore it.
+	 */
+	temperature?: number;
+}
+
+export interface ImagesOptions extends ProviderRequestOptions<ImageModel<ImageApi>> {
 	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
@@ -355,11 +374,17 @@ export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOption
 	options?: TOptions,
 ) => AssistantMessageEventStream;
 
-export type ImagesFunction<TApi extends ImagesApi = ImagesApi, TOptions extends ImagesOptions = ImagesOptions> = (
-	model: ImagesModel<TApi>,
+export type ImagesFunction<TOptions extends ImagesOptions = ImagesOptions> = (
+	model: ImageModel<ImageApi>,
 	context: ImagesContext,
 	options?: TOptions,
 ) => Promise<AssistantImages>;
+
+export type ClassifierFunction<TOptions extends ClassifierOptions = ClassifierOptions> = (
+	model: ClassifierModel<ClassifierApi>,
+	context: ClassifierContext,
+	options?: TOptions,
+) => Promise<ClassifierResult>;
 
 export interface TextSignatureV1 {
 	v: 1;
@@ -387,11 +412,6 @@ export interface ImageContent {
 	type: "image";
 	data: string; // base64 encoded image data
 	mimeType: string; // e.g., "image/jpeg", "image/png"
-}
-
-export interface ToolReferenceContent {
-	type: "tool_reference";
-	name: string;
 }
 
 export interface ToolCall {
@@ -525,7 +545,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall | ToolReferenceContent)[];
+	content: (TextContent | ThinkingContent | ToolCall)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -533,6 +553,8 @@ export interface AssistantMessage {
 	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	/** Exact provider-native effort level used for this response. Absent for legacy or unmanaged responses. */
 	providerThinkingLevel?: string;
+	/** Pi thinking level the agent loop requested for this response. Absent outside the agent loop and for legacy responses. */
+	thinkingLevel?: ModelThinkingLevel;
 	diagnostics?: AssistantMessageDiagnostic[]; // Redacted provider/runtime diagnostics for failures and recoveries.
 	usage: Usage;
 	stopReason: StopReason;
@@ -547,15 +569,39 @@ export interface AssistantMessage {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
+/** A tool call that another tool made while it ran, for example from a codemode script. */
+export interface NestedToolCallRecord {
+	id: string;
+	name: string;
+	/** Omitted when over the size limits; `argumentsBytes` then gives their size. */
+	arguments?: JsonObject;
+	/** UTF-8 size of the arguments as JSON, set when `arguments` is omitted. */
+	argumentsBytes?: number;
+	/** `unfinished`: the call was still running when the calling tool finished. */
+	status: "ok" | "error" | "unfinished";
+	durationMs?: number;
+	/** Error text, truncated. */
+	error?: string;
+}
+
+/** Bounded record of the nested calls a tool made. Results are not recorded. */
+export interface NestedToolCalls {
+	calls: NestedToolCallRecord[];
+	/** False when calls were dropped, arguments omitted, or calls had not finished. */
+	complete: boolean;
+}
+
 export type ToolResultMessage<TDetails = JsonValue> = IsJsonCompatible<TDetails> extends true
 	? {
 			role: "toolResult";
 			toolCallId: string;
 			toolName: string;
-			content: (TextContent | ImageContent | ToolReferenceContent)[];
+			content: (TextContent | ImageContent)[]; // Supports text and images
 			details?: JsonRepresentation<TDetails>;
 			/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
 			usage?: Usage;
+			/** Calls this tool made to other tools. Kept for the session record; not sent to the model. */
+			nestedCalls?: NestedToolCalls;
 			/**
 			 * Names from `Context.tools` that became available after this result.
 			 * Providers with native deferred tool loading use this as the load point.
@@ -578,8 +624,8 @@ export interface ImagesContext {
 export type ImagesStopReason = "stop" | "error" | "aborted";
 
 export interface AssistantImages {
-	api: ImagesApi;
-	provider: ImagesProviderId;
+	api: ImageApi;
+	provider: ProviderId;
 	model: string;
 	output: ImagesOutputContent[];
 	responseId?: string;
@@ -589,14 +635,65 @@ export interface AssistantImages {
 	timestamp: number; // Unix timestamp in milliseconds
 }
 
-import type { TSchema } from "typebox";
-
-/** Marker used to split stable and dynamic system-prompt sections for providers that support block-level cache control. */
-export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__PI_SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
-
-export function stripSystemPromptDynamicBoundary(systemPrompt: string): string {
-	return systemPrompt.replaceAll(SYSTEM_PROMPT_DYNAMIC_BOUNDARY, "");
+export interface ClassifierChoiceQuestion {
+	type: "choice";
+	instructions: string;
+	criteria: Record<string, string>;
 }
+
+export interface ClassifierScoreQuestion {
+	type: "score";
+	instructions: string;
+	criteria: string[];
+}
+
+export interface ClassifierBoolQuestion {
+	type: "bool";
+	instructions: string;
+	criteria: { true: string; false: string };
+}
+
+export type ClassifierQuestion = ClassifierChoiceQuestion | ClassifierScoreQuestion | ClassifierBoolQuestion;
+
+export interface ClassifierContext {
+	state: JsonObject;
+	questions: Record<string, ClassifierQuestion>;
+}
+
+export interface ClassifierChoiceAnswer {
+	type: "choice";
+	choice: string;
+	probabilities: Record<string, number>;
+	confidence: number;
+}
+
+export interface ClassifierScoreAnswer {
+	type: "score";
+	score: number;
+	confidence: number;
+}
+
+export interface ClassifierBoolAnswer {
+	type: "bool";
+	probability: number;
+}
+
+export type ClassifierAnswer = ClassifierChoiceAnswer | ClassifierScoreAnswer | ClassifierBoolAnswer;
+export type ClassifierStopReason = "stop" | "error" | "aborted";
+
+export interface ClassifierResult {
+	api: ClassifierApi;
+	provider: ProviderId;
+	model: string;
+	answers: Record<string, ClassifierAnswer>;
+	/** Token usage and its cost at the model's catalog price, when the service reports token counts. */
+	usage?: Usage;
+	stopReason: ClassifierStopReason;
+	errorMessage?: string;
+	timestamp: number; // Unix timestamp in milliseconds
+}
+
+import type { TSchema } from "typebox";
 
 /** OpenAI grammar variants for constrained sampling. */
 export type GrammarFormat = "openai_lark" | "openai_regex";
@@ -624,28 +721,6 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
-	/** Provider-native hint to defer loading the full tool implementation/schema until discovered. */
-	deferLoading?: boolean;
-	/** Keep this tool eagerly loaded even when other tools are deferred. */
-	alwaysLoad?: boolean;
-	/** Concise searchable hint used by progressive tool discovery surfaces. */
-	searchHint?: string;
-	/**
-	 * Optional namespace/group label for this tool. Set by the policy owner
-	 * (e.g. tool-search) so provider serializers can group related tools into a
-	 * provider-native namespace. Pure serialization metadata: undefined = flat.
-	 */
-	namespace?: string;
-	/** Optional provider allow-list. Runtime surfaces should hide the tool for other providers. */
-	providers?: string[];
-	/**
-	 * When set, Anthropic-family providers send this exact server tool block
-	 * (e.g. { type: "web_search_20250305", name: "web_search", max_uses: 8 })
-	 * instead of a client tool schema. The tool then executes on Anthropic's
-	 * infrastructure; local execute() never runs. Explicit opt-in replaces the
-	 * old name-based web_fetch/web_search interception.
-	 */
-	anthropicServerTool?: Record<string, unknown>;
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
@@ -665,12 +740,6 @@ export interface Context {
 	tools?: Tool[];
 }
 
-/** A single source/result surfaced by a provider-executed server-side tool. */
-export interface ServerToolSource {
-	title?: string;
-	url: string;
-}
-
 declare const transcriptContextBrand: unique symbol;
 
 /**
@@ -679,8 +748,9 @@ declare const transcriptContextBrand: unique symbol;
  * Only `normalizeContext()` produces this type, so a raw `Context` cannot reach
  * provider code by accident.
  */
-export type TranscriptContext = Context & {
-	readonly [transcriptContextBrand]?: true;
+export type TranscriptContext = {
+	messages: Message[];
+	readonly [transcriptContextBrand]: true;
 };
 
 /**
@@ -698,12 +768,6 @@ export type TranscriptContext = Context & {
  * authoritative `*_end`. Redacted thinking may be complete at start and emit no
  * deltas. Tool-call arguments at `toolcall_start` are provider-specific;
  * `toolcall_delta` carries subsequent JSON updates.
- *
- * `server_tool_use`/`server_tool_result` are display-only signals for provider-executed
- * tools (Anthropic native web_search/web_fetch). They are NOT backed by content blocks:
- * the provider runs them server-side, so they never enter `AssistantMessage.content`, are
- * never executed by the agent loop, and never round-trip to the API. Consumers use them
- * purely to render an activity card.
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
@@ -716,16 +780,6 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
-	| { type: "server_tool_use"; id: string; toolName: string; query?: string; url?: string; partial: AssistantMessage }
-	| {
-			type: "server_tool_result";
-			toolUseId: string;
-			toolName: string;
-			status: "completed" | "error";
-			sources?: ServerToolSource[];
-			errorCode?: string;
-			partial: AssistantMessage;
-	  }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
@@ -803,8 +857,6 @@ export interface OpenAICompletionsCompat {
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
 	sendSessionAffinityHeaders?: boolean;
-	/** Provider-specific deferred tool serialization mode. */
-	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
@@ -836,39 +888,11 @@ export interface OpenAIResponsesCompat {
 	supportsAdditionalTools?: boolean;
 	/** Whether the model supports client-executed tool search for transcript-anchored additions. Default: false. */
 	supportsToolSearch?: boolean;
-	/**
-	 * Whether the exact model accepts `configuration_update` input items for mid-conversation
-	 * reasoning-effort changes (GPT-6 Astra, standard mode). When true, Pi pins the request-level
-	 * `reasoning.effort` to the conversation's first effort and expresses later changes as
-	 * positional updates, so a level change no longer misses the whole prompt-cache prefix
-	 * (`reasoning_effort_changed`). Pi persists each response's native effort to replay history.
-	 * Not for `-pro` models or transports that only imitate the Responses shape. Default: false.
-	 */
-	supportsMidConvoEffort?: boolean;
-	/**
-	 * Prompt-cache API generation. `"legacy"` (default) sends `prompt_cache_retention`;
-	 * `"breakpoints"` (GPT-5.6+) omits the deprecated retention field and marks explicit
-	 * `prompt_cache_breakpoint` blocks on the stable system-prompt prefix and the previous
-	 * user message. Older models reject breakpoint fields, so this must be opt-in per model.
-	 */
-	promptCacheApi?: "legacy" | "breakpoints";
-	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
+	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
-	/** Whether to derive and send the ChatGPT account header (Codex Responses only). Default: true. */
-	sendChatgptAccountId?: boolean;
-	/** Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only). Default: true. */
-	supportsWebSocketTransport?: boolean;
-	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
-	supportsZstdRequestCompression?: boolean;
 }
-
-/**
- * Compatibility settings for OpenAI Codex Responses APIs. Codex lanes share
- * {@link OpenAIResponsesCompat}; the Codex-only flags live there as optional fields.
- */
-export type OpenAICodexResponsesCompat = OpenAIResponsesCompat;
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
@@ -882,26 +906,6 @@ export interface AnthropicMessagesCompat {
 	supportsEagerToolInputStreaming?: boolean;
 	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
 	supportsLongCacheRetention?: boolean;
-	/** Whether the provider supports native deferred tool schemas (`defer_loading`) and tool references. Default: true. */
-	supportsDeferredTools?: boolean;
-	/**
-	 * Whether the provider supports deferred tools loaded by `tool_reference`
-	 * blocks in tool results. Default: true for first-party Anthropic models
-	 * except Haiku and models older than Claude 4.5; false for other providers.
-	 */
-	supportsToolReferences?: boolean;
-	/**
-	 * Message-anchored schema delivery for gateways with NO native deferral wire
-	 * (`supportsToolReferences: false` lanes such as OAuth bridges that drop
-	 * `defer_loading`/`tool_reference`). When true, tools activated mid-session
-	 * (marked via toolResult `addedToolNames`) are permanently excluded from the
-	 * wire `tools[]` and their JSON schema is delivered once as a plain text
-	 * block appended after the activating tool_result — keeping `tools[]`
-	 * byte-stable so activation never busts the prompt-cache prefix.
-	 * Ignored when `supportsToolReferences` resolves true.
-	 * Default: false.
-	 */
-	inlineDeferredTools?: boolean;
 	/**
 	 * Whether to send the `x-session-affinity` header from `options.sessionId`
 	 * when caching is enabled. Required for providers like Fireworks that use
@@ -940,14 +944,7 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
-	/**
-	 * Whether the exact model transport supports changing reasoning effort mid-conversation
-	 * without invalidating the prompt cache. Anthropic: effort-only system messages plus thinking
-	 * binding controls. OpenAI Responses / Codex Responses: positional `configuration_update`
-	 * items with the request-level `reasoning.effort` pinned to the conversation's first effort
-	 * (GPT-6 Astra). Pi persists each response's native effort to replay history faithfully.
-	 * Default: false.
-	 */
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
@@ -1062,17 +1059,19 @@ export interface VercelGatewayRouting {
 }
 
 export interface ModelCostRates {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
+	input: number; // $/million tokens
+	output: number; // $/million tokens
+	cacheRead: number; // $/million tokens
+	cacheWrite: number; // $/million tokens
 }
 
 export interface ModelCostTier extends ModelCostRates {
+	/** Use this tier for requests whose total input usage exceeds this token count. */
 	inputTokensAbove: number;
 }
 
 export interface ModelCost extends ModelCostRates {
+	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
 }
 
@@ -1099,30 +1098,40 @@ export interface ModelInputLimits {
 	images?: ModelImageInputLimits;
 }
 
-// Model interface for the unified model system
-export interface Model<TApi extends Api> {
+/** Fields shared by every catalog entry, regardless of what you can do with it. */
+export interface BaseModel<TApi extends string> {
 	id: string;
 	name: string;
 	api: TApi;
 	provider: ProviderId;
 	baseUrl: string;
+	input: ("text" | "image")[];
+	/** Provider input limits and cache-safe preprocessing metadata. */
+	inputLimits?: ModelInputLimits;
+	cost: ModelCost;
+	headers?: Record<string, string>;
+}
+
+/** Chat model: usable with `stream()` and friends. */
+export interface Model<TApi extends Api> extends BaseModel<TApi> {
+	/**
+	 * Optional: chat is the default model type, so models without `type` are chat
+	 * models. Narrow mixed model lists with `isModelType()` instead of comparing
+	 * `type` directly.
+	 */
+	type?: "chat";
 	reasoning: boolean;
 	/**
 	 * Maps pi thinking levels to provider/model-specific values.
 	 * Missing keys use provider defaults. null marks a level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image")[];
-	/** Provider input limits and cache-safe preprocessing metadata. */
-	inputLimits?: ModelInputLimits;
-	cost: ModelCost;
 	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
 	promptCache?: ModelPromptCache;
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
 	samplingParams?: Record<string, unknown>;
-	headers?: Record<string, string>;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat
@@ -1137,9 +1146,28 @@ export interface Model<TApi extends Api> {
 						: never;
 }
 
-export interface ImagesModel<TApi extends ImagesApi>
-	extends Omit<Model<Api>, "api" | "provider" | "reasoning" | "contextWindow" | "maxTokens" | "compat"> {
-	api: TApi;
-	provider: ImagesProviderId;
+/** Image-generation model: usable with `generateImages()` only. */
+export interface ImageModel<TApi extends ImageApi> extends BaseModel<TApi> {
+	type: "image";
+	/** Output modalities. Always includes `"image"`; `"text"` means the model can also return text blocks. */
 	output: ("text" | "image")[];
 }
+
+/** Structured classifier model: usable with `classify()` only. */
+export interface ClassifierModel<TApi extends ClassifierApi> extends BaseModel<TApi> {
+	type: "classifier";
+	contextWindow: number;
+}
+
+/** Model shape for each model type. */
+export interface ModelTypeMap {
+	chat: Model<Api>;
+	image: ImageModel<ImageApi>;
+	classifier: ClassifierModel<ClassifierApi>;
+}
+
+/** What a catalog entry is for. Decides which `Models` operation accepts it. */
+export type ModelType = keyof ModelTypeMap;
+
+/** Anything a provider can list. Narrow with `isModelType()`. */
+export type AnyModel = ModelTypeMap[ModelType];

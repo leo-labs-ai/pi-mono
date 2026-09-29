@@ -1,6 +1,6 @@
 {
 	"name": "@lue-labs/pi-tui",
-	"version": "0.89.1",
+	"version": "0.99.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -8,10 +8,10 @@
 		"clean": "shx rm -rf dist",
 		"build": "tsc -p tsconfig.build.json",
 		"build:native:darwin": "native/darwin/build.sh",
+		"build:native:linux": "native/linux/build.sh",
 		"build:native:win32": "node native/win32/build.mjs",
 		"test": "node --test --test-reporter=dot --test-reporter-destination=stdout test/*.test.ts",
-		"prepublishOnly": "npm run clean && npm run build",
-		"build:native:linux": "native/linux/build.sh"
+		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"files": [
 		"dist/**/*",
@@ -48,15 +48,12 @@
 		"directory": "packages/tui"
 	},
 	"engines": {
-		"node": ">=24.14.0"
+		"node": ">=22.19.0"
 	},
 	"types": "./dist/index.d.ts",
 	"dependencies": {
 		"get-east-asian-width": "1.6.0",
 		"marked": "18.0.11"
-	},
-	"optionalDependencies": {
-		"koffi": "2.16.2"
 	},
 	"devDependencies": {
 		"@xterm/headless": "5.5.0",
@@ -65,5 +62,8 @@
 	"publishConfig": {
 		"registry": "https://npm.pkg.github.com",
 		"access": "restricted"
+	},
+	"optionalDependencies": {
+		"koffi": "2.16.2"
 	}
 }

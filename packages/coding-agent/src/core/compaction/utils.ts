@@ -6,85 +6,6 @@ import type { AgentMessage } from "@lue-labs/pi-agent-core";
 import { contentText, type Message } from "@lue-labs/pi-ai";
 
 // ============================================================================
-// Auto-compaction thrashing detector
-//
-// Ports the auto-compaction breaker behavior observed in Claude Code 2.1.201:
-// if auto-compaction keeps refilling the context back to the threshold within
-// a handful of turns, something structural (an oversized tool result, a huge
-// file read) is at fault, not the conversation itself - repeatedly compacting
-// is expensive and gives the user no signal. This module only implements the
-// pure rapid-refill streak calculation; the pi-native wiring, session state,
-// and message text live in AgentSession.
-// ============================================================================
-
-/** Turns-since-compaction window used to decide whether a refill was "rapid". */
-export const RAPID_REFILL_WINDOW = 3;
-
-/** Consecutive rapid refills required to trip the thrashing breaker. */
-export const RAPID_REFILL_TRIP_COUNT = 3;
-
-/** Consecutive compaction failures required to trip the failure breaker. */
-export const COMPACTION_FAILURE_TRIP_COUNT = 3;
-
-/**
- * Provider-availability failures that self-resolve: rate limits / usage-limit
- * windows (OpenAI 429 usage_limit_reached responses even carry
- * resets_in_seconds), overload shedding (Anthropic 529 overloaded_error), and
- * transient gateway errors (502/503/504). Matched on the flattened error
- * message because provider errors reach the compaction catch as plain Error
- * messages, e.g.
- * `Summarization failed: OpenAI API error (429): {"type":"usage_limit_reached",...}`.
- */
-const TRANSIENT_COMPACTION_ERROR_PATTERN =
-	/\b(?:429|502|503|504|529)\b|rate.?limit|usage.?limit|too many requests|(?<!disk )quota|RESOURCE_EXHAUSTED|overloaded|service unavailable|resets_in_seconds/i;
-
-/**
- * Whether a compaction failure is a transient provider-availability error
- * (rate limit, usage-limit window, overload) rather than a structural one
- * (oversized payload, broken auth, missing model). Transient failures must
- * not count toward the failure circuit breaker: the breaker permanently
- * disables auto-compaction for the session, but a rate-limited provider
- * recovers on its own (usage-limit 429s carry an explicit reset time) — the
- * session keeps working after the reset, so tripping the breaker would leave
- * a healthy session unable to compact until it dies at the context-window
- * limit. Transient failures also must not reset a real-failure streak: they
- * carry no signal about whether the underlying structural problem went away.
- */
-export function isTransientCompactionError(errorMessage: string): boolean {
-	return TRANSIENT_COMPACTION_ERROR_PATTERN.test(errorMessage);
-}
-
-export interface RapidRefillInput {
-	/** Whether a compaction has already happened earlier in this session. */
-	hadPriorCompaction: boolean;
-	/** Assistant turns elapsed since the most recent compaction. */
-	turnsSinceCompaction: number;
-	/** Current consecutive-rapid-refill streak carried from prior evaluations. */
-	consecutiveRapidRefills: number;
-}
-
-export interface RapidRefillResult {
-	/** "trip" once the rapid-refill streak reaches RAPID_REFILL_TRIP_COUNT. */
-	action: "trip" | "proceed";
-	/** Updated streak to persist for the next evaluation. */
-	consecutiveRapidRefills: number;
-}
-
-/**
- * Evaluate whether a new auto-compaction is part of a rapid-refill thrashing
- * streak. A refill counts as "rapid" when a prior compaction is still active
- * and fewer than RAPID_REFILL_WINDOW assistant turns have happened since it -
- * i.e. context refilled to the compaction threshold almost immediately after
- * being compacted. Any non-rapid refill resets the streak to zero.
- */
-export function evaluateRapidRefill(input: RapidRefillInput): RapidRefillResult {
-	const isRapid = input.hadPriorCompaction && input.turnsSinceCompaction < RAPID_REFILL_WINDOW;
-	const consecutiveRapidRefills = isRapid ? input.consecutiveRapidRefills + 1 : 0;
-	const action: "trip" | "proceed" = consecutiveRapidRefills >= RAPID_REFILL_TRIP_COUNT ? "trip" : "proceed";
-	return { action, consecutiveRapidRefills };
-}
-
-// ============================================================================
 // File Operation Tracking
 // ============================================================================
 
@@ -103,9 +24,15 @@ export function createFileOps(): FileOperations {
 }
 
 /**
- * Extract file operations from tool calls in an assistant message.
+ * Extract file operations from tool calls in an assistant message, or from the nested calls
+ * recorded on a tool result.
  */
 export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOperations): void {
+	if (message.role === "toolResult") {
+		// Calls made from codemode scripts are recorded on the script's result.
+		for (const call of message.nestedCalls?.calls ?? []) addFileOp(call.name, call.arguments, fileOps);
+		return;
+	}
 	if (message.role !== "assistant") return;
 	if (!("content" in message) || !Array.isArray(message.content)) return;
 
@@ -113,24 +40,23 @@ export function extractFileOpsFromMessage(message: AgentMessage, fileOps: FileOp
 		if (typeof block !== "object" || block === null) continue;
 		if (!("type" in block) || block.type !== "toolCall") continue;
 		if (!("arguments" in block) || !("name" in block)) continue;
+		addFileOp(block.name, block.arguments as Record<string, unknown> | undefined, fileOps);
+	}
+}
 
-		const args = block.arguments as Record<string, unknown> | undefined;
-		if (!args) continue;
-
-		const path = typeof args.path === "string" ? args.path : undefined;
-		if (!path) continue;
-
-		switch (block.name) {
-			case "read":
-				fileOps.read.add(path);
-				break;
-			case "write":
-				fileOps.written.add(path);
-				break;
-			case "edit":
-				fileOps.edited.add(path);
-				break;
-		}
+function addFileOp(toolName: string, args: Record<string, unknown> | undefined, fileOps: FileOperations): void {
+	const path = typeof args?.path === "string" ? args.path : undefined;
+	if (!path) return;
+	switch (toolName) {
+		case "read":
+			fileOps.read.add(path);
+			break;
+		case "write":
+			fileOps.written.add(path);
+			break;
+		case "edit":
+			fileOps.edited.add(path);
+			break;
 	}
 }
 

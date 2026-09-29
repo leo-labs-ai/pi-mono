@@ -1,6 +1,6 @@
 {
 	"name": "@lue-labs/pi-telemetry",
-	"version": "0.89.1",
+	"version": "0.99.0",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -37,15 +37,15 @@
 		"url": "git+https://github.com/lue-labs/pi-mono.git",
 		"directory": "packages/telemetry"
 	},
-	"publishConfig": {
-		"registry": "https://npm.pkg.github.com",
-		"access": "restricted"
-	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"devDependencies": {
-		"@types/node": "24.12.4",
-		"vitest": "4.1.9"
+		"@types/node": "22.19.19",
+		"vitest": "4.1.11"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com",
+		"access": "restricted"
 	}
 }

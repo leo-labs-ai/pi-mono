@@ -2,28 +2,23 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createGlobToolDefinition } from "../../../src/core/tools/glob.ts";
+import { createFindToolDefinition } from "../../../src/core/tools/find.ts";
 
 /**
  * Regression test for https://github.com/earendil-works/pi/issues/3303
  *
- * The `Glob` tool previously collected every `.gitignore` under the search
+ * The `find` tool previously collected every `.gitignore` under the search
  * path and passed them to `fd` via `--ignore-file`. fd treats `--ignore-file`
  * entries as a single global ignore source, so rules from `a/.gitignore`
  * also filtered files under sibling `b/`. The fix switches to fd's
  * hierarchical `.gitignore` handling via `--no-require-git` and drops the
  * manual collection.
- *
- * Fork note: this fork prefers `bfs` over `fd` and `bfs` matches Claude
- * Code Glob semantics by intentionally not filtering `.gitignore`. The
- * regression assertions here therefore force the `fd` backend so the
- * fd-fallback path still gets nested-gitignore coverage.
  */
 describe("issue #3303 nested .gitignore rules leak into sibling directories", () => {
 	let tempRoot: string;
 
-	async function runGlob(pattern: string): Promise<string[]> {
-		const def = createGlobToolDefinition(tempRoot, { backend: "fd" });
+	async function runFind(pattern: string): Promise<string[]> {
+		const def = createFindToolDefinition(tempRoot);
 		const ctx = {} as Parameters<typeof def.execute>[4];
 		const result = (await def.execute("call-1", { pattern }, undefined, undefined, ctx)) as {
 			content: Array<{ type: string; text?: string }>;
@@ -55,7 +50,7 @@ describe("issue #3303 nested .gitignore rules leak into sibling directories", ()
 		});
 
 		it("applies a/.gitignore only inside a/ and leaves b/ untouched", async () => {
-			const files = await runGlob("**/*.txt");
+			const files = await runFind("**/*.txt");
 			expect(files).toEqual(["a/kept.txt", "b/ignored.txt", "b/kept.txt", "root.txt"]);
 		});
 	});
@@ -78,7 +73,7 @@ describe("issue #3303 nested .gitignore rules leak into sibling directories", ()
 		});
 
 		it("scopes each .gitignore to its own subtree", async () => {
-			const files = await runGlob("**/*.txt");
+			const files = await runFind("**/*.txt");
 			// a/.gitignore ignores 'ignored.txt' within a/ and a/deep/.
 			// a/deep/.gitignore additionally ignores 'secret.txt' within a/deep/.
 			// b/ is untouched by either.

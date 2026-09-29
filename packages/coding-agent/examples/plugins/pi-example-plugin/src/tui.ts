@@ -3,7 +3,7 @@ import { AgentController, PresentationUI, SlashCommands } from "@lue-labs/pi-cod
 import { ExampleFacetService } from "./contract.ts";
 
 export default defineFacet({
-	id: "@lue-labs/pi-example-plugin/tui",
+	id: "@earendil-works/pi-example-plugin/tui",
 	setup(env) {
 		const example = env.use(ExampleFacetService);
 		const commands = env.use(SlashCommands);

@@ -1,5 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@lue-labs/pi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@lue-labs/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, getMessageText, type Harness } from "./harness.ts";
@@ -535,13 +535,7 @@ describe("AgentSession actionable boundaries", () => {
 		await harness.session.prompt("small prompt");
 
 		expect(harness.eventsOfType("compaction_start")).toEqual([]);
-		// The real guard here is the compaction_start assertion above. This bound
-		// is a secondary growth check: the omitted assistant reported 9,801
-		// tokens, so counting it would land far above 3,000. Upstream's 2,000 is
-		// unreachable on the fork — measured floor is ~2,289 tokens (structured
-		// system prompt + the fork's larger tool schemas), so the budget was
-		// raised rather than the schemas trimmed (they are load-bearing).
-		expect(harness.session.getContextUsage()?.tokens).toBeLessThan(3_000);
+		expect(harness.session.getContextUsage()?.tokens).toBeLessThan(2_000);
 	});
 
 	it("does not trigger successful-response overflow from usage captured before a boundary edit", async () => {
@@ -578,10 +572,7 @@ describe("AgentSession actionable boundaries", () => {
 		await harness.session.prompt("large input that is later omitted");
 
 		expect(harness.eventsOfType("compaction_start")).toEqual([]);
-		// As above: compaction_start is the real guard. The pre-edit usage
-		// reported 5,100 input tokens, so counting it would exceed 3,000.
-		// Measured fork floor here is ~2,287 tokens.
-		expect(harness.session.getContextUsage()?.tokens).toBeLessThan(3_000);
+		expect(harness.session.getContextUsage()?.tokens).toBeLessThan(2_000);
 	});
 
 	it("does not trigger threshold compaction from post-edit usage captured before a later compaction", async () => {
@@ -781,11 +772,7 @@ describe("durable length recovery", () => {
 
 		expect(executed).toBe(false);
 		expect(harness.faux.state.callCount).toBe(2);
-		// The fork intercepts a length-stopped trailing tool call earlier, in agent-loop's
-		// isTruncatedTrailingToolCall (upstream reaches truncatedOutcome in drive/tools.ts).
-		// Same contract — not executed, synthetic result kept in context, no context_edit —
-		// with fork-specific wording.
-		expect(requests[0]).toContain("This tool call was cut off");
+		expect(requests[0]).toContain("may be truncated");
 		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "context_edit")).toBe(false);
 	});
 

@@ -1,11 +1,6 @@
 import { visibleWidth } from "@lue-labs/pi-tui";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
-import {
-	clearAgentRecentRunsForTests,
-	formatAgentFooterStatus,
-	startAgentRecentRun,
-} from "../src/core/agents/status.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -23,104 +18,78 @@ function createSession(options: {
 	sessionName: string;
 	modelId?: string;
 	provider?: string;
-	api?: string;
 	reasoning?: boolean;
 	thinkingLevel?: string;
-	pendingAutoModelAlias?: string;
 	usage?: AssistantUsage;
-	entries?: unknown[];
-	branchEntries?: unknown[];
-	isStreaming?: boolean;
-	contextUsage?: {
-		tokens: number | null;
-		contextWindow: number;
-		percent: number | null;
-		details?: {
-			source?: "provider_usage" | "loaded_estimate";
-			loadedContextTokens?: number;
-			deferredToolSchemaTokens?: number;
-			loadedDeferredToolCount?: number;
-			nativeDeferredTools?: boolean;
-		};
-	};
 	branchUsage?: AssistantUsage;
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	routedModel?: { model: { id: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
-	const entries =
-		options.entries ??
-		(usage === undefined
-			? []
-			: [
-					{
-						type: "message",
-						message: {
-							role: "assistant",
-							usage,
-						},
-					},
-				]);
+	const entries: Array<Record<string, unknown>> = [];
+
+	if (usage !== undefined) {
+		entries.push({
+			type: "message",
+			message: {
+				role: "assistant",
+				usage,
+			},
+		});
+	}
+
+	if (options.branchUsage !== undefined) {
+		entries.push({
+			type: "branch_summary",
+			usage: options.branchUsage,
+		});
+	}
+
+	if (options.compactionUsage !== undefined) {
+		entries.push({
+			type: "compaction",
+			usage: options.compactionUsage,
+		});
+	}
+
+	if (options.toolUsage !== undefined) {
+		entries.push({
+			type: "message",
+			message: {
+				role: "toolResult",
+				usage: options.toolUsage,
+			},
+		});
+	}
 
 	const session = {
 		state: {
 			model: {
 				id: options.modelId ?? "test-model",
 				provider: options.provider ?? "test",
-				api: options.api ?? "openai-responses",
 				contextWindow: 200_000,
 				reasoning: options.reasoning ?? false,
 			},
 			thinkingLevel: options.thinkingLevel ?? "off",
 		},
-		isStreaming: options.isStreaming ?? false,
-		extensionRunner: {
-			// Mirrors the production agents extension hook (core/extensions/agents.ts)
-			// which contributes the background-agent status pill.
-			getRegisteredFooters: () => {
-				const rendered = formatAgentFooterStatus();
-				if (rendered === undefined) return [];
-				return [
-					{
-						id: "agents-status",
-						extensionPath: "<builtin:hook:agents>",
-						spec: {
-							render: () => rendered,
-							onActivate: () => {},
-						},
-					},
-				];
-			},
-		},
-		pendingAutoModelAlias: options.pendingAutoModelAlias,
 		sessionManager: {
 			getEntries: () => entries,
-			getBranch: () => options.branchEntries ?? entries,
+			getEntryCount: () => entries.length,
+			getSessionId: () => "test-session",
+			getLeafId: () => null,
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () =>
-			options.contextUsage ?? {
-				contextWindow: 200_000,
-				percent: 12.3,
-				tokens: 24_600,
-			},
+		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
 	};
 
 	return session as unknown as AgentSession;
-}
-
-type RegisteredFooter = ReturnType<AgentSession["extensionRunner"]["getRegisteredFooters"]>[number];
-
-function stubRegisteredFooters(session: AgentSession, footers: RegisteredFooter[]): { emitted: unknown[] } {
-	const emitted: unknown[] = [];
-	const extensionRunner = { getRegisteredFooters: () => footers, emitError: (error: unknown) => emitted.push(error) };
-	(session as unknown as { extensionRunner: typeof extensionRunner }).extensionRunner = extensionRunner;
-	return { emitted };
 }
 
 function createFooterData(providerCount: number): ReadonlyFooterDataProvider {
@@ -153,174 +122,6 @@ describe("FooterComponent width handling", () => {
 		initTheme(undefined, false);
 	});
 
-	beforeEach(() => clearAgentRecentRunsForTests());
-
-	it("memoizes rendered lines when nothing that affects the footer changed", () => {
-		// Regression: render(width) used to rebuild the full string set
-		// (theme.fg/padding/truncation) unconditionally on
-		// every call. Fails on the pre-fix baseline (each call returns a fresh
-		// array), passes once render() returns the memoized array for an
-		// unchanged cache key.
-		const session = createSession({ sessionName: "same-session" });
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const first = footer.render(100);
-		const second = footer.render(100);
-		expect(second).toBe(first);
-
-		footer.setAutoCompactEnabled(false);
-		const third = footer.render(100);
-		expect(third).not.toBe(first);
-		expect(third).toEqual(expect.arrayContaining([expect.stringContaining("200k")]));
-	});
-
-	it("repaints memoized footer lines when extension footer selection changes", () => {
-		const selectedArgs: boolean[] = [];
-		const session = createSession({ sessionName: "same-session" });
-		stubRegisteredFooters(session, [
-			{
-				id: "bg-test",
-				extensionPath: "/tmp/footer-test",
-				spec: {
-					visible: () => true,
-					render: ({ selected }) => {
-						selectedArgs.push(selected);
-						return "bg ready";
-					},
-					onActivate: () => {},
-				},
-			},
-		]);
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const first = footer.render(100);
-		expect(selectedArgs).toEqual([false]);
-
-		footer.setSelectedExtensionFooterId("bg-test");
-		const second = footer.render(100);
-		expect(second).not.toBe(first);
-		expect(selectedArgs).toEqual([false, true]);
-	});
-
-	it("isolates a throwing footer pill so healthy pills and the core footer still render", () => {
-		// Regression (#260): renderBackgroundStatusLine() invoked every pill's
-		// render()/visible() without isolation. A throwing third-party pill broke
-		// the whole footer render loop. Fails on the pre-fix baseline (render()
-		// throws); passes once each pill callback is contained.
-		const session = createSession({ sessionName: "same-session" });
-		const { emitted } = stubRegisteredFooters(session, [
-			{
-				id: "boom",
-				extensionPath: "/tmp/boom-ext",
-				spec: {
-					visible: () => true,
-					render: () => {
-						throw new Error("pill exploded");
-					},
-					onActivate: () => {},
-				},
-			},
-			{
-				id: "healthy",
-				extensionPath: "/tmp/healthy-ext",
-				spec: {
-					visible: () => true,
-					render: () => "healthy pill",
-					onActivate: () => {},
-				},
-			},
-		]);
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-		expect(rendered).toContain("healthy pill");
-		expect(rendered).not.toContain("pill exploded");
-		expect((emitted as Array<{ extensionPath?: string; event?: string }>)[0]).toMatchObject({
-			extensionPath: "/tmp/boom-ext",
-			event: "footer:boom",
-		});
-	});
-
-	it("isolates a throwing footer visible() callback and reports it once per pill id", () => {
-		const session = createSession({ sessionName: "same-session" });
-		const { emitted } = stubRegisteredFooters(session, [
-			{
-				id: "bad-visible",
-				extensionPath: "/tmp/bad-visible-ext",
-				spec: {
-					visible: () => {
-						throw new Error("visible exploded");
-					},
-					render: () => "never shown",
-					onActivate: () => {},
-				},
-			},
-			{
-				id: "healthy",
-				extensionPath: "/tmp/healthy-ext",
-				spec: {
-					visible: () => true,
-					render: () => "healthy pill",
-					onActivate: () => {},
-				},
-			},
-		]);
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const first = stripAnsi(footer.render(140).join("\n"));
-		expect(first).toContain("healthy pill");
-		expect(first).not.toContain("never shown");
-		// Report once per pill id even across repeated render passes.
-		footer.invalidate();
-		footer.render(140);
-		expect(emitted).toHaveLength(1);
-		expect((emitted as Array<{ event?: string }>)[0]).toMatchObject({ event: "footer:bad-visible" });
-	});
-
-	it("invalidate() forces a rebuild even when the render key is unchanged", () => {
-		const session = createSession({ sessionName: "same-session" });
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const first = footer.render(100);
-		footer.invalidate();
-		const second = footer.render(100);
-
-		expect(second).not.toBe(first);
-		expect(second).toEqual(first);
-	});
-
-	it("repaints dynamic registered footers on the next render without explicit invalidation", () => {
-		let visible = false;
-		let label = "workflow: 2 runs active";
-		const session = createSession({ sessionName: "same-session" });
-		stubRegisteredFooters(session, [
-			{
-				id: "workflow-status",
-				extensionPath: "<extension:workflow>",
-				spec: {
-					visible: () => visible,
-					render: () => label,
-					onActivate: () => {},
-				},
-			},
-		]);
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		// Prime the memo with the pill hidden.
-		expect(stripAnsi(footer.render(100).join("\n"))).not.toContain("workflow:");
-
-		// Extension state changes with no invalidate() and no other key change —
-		// exactly what registerFooter consumers (monitor, workflow) do today.
-		visible = true;
-		expect(stripAnsi(footer.render(100).join("\n"))).toContain("workflow: 2 runs active");
-
-		label = "workflow: 1 run active";
-		expect(stripAnsi(footer.render(100).join("\n"))).toContain("workflow: 1 run active");
-
-		visible = false;
-		expect(stripAnsi(footer.render(100).join("\n"))).not.toContain("workflow:");
-	});
-
 	it("keeps all lines within width for wide session names", () => {
 		const width = 93;
 		const session = createSession({ sessionName: "한글".repeat(30) });
@@ -330,173 +131,6 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
-	});
-
-	it("shows unloaded provider-deferred tool schema tokens separately from loaded estimates", () => {
-		const session = createSession({
-			sessionName: "",
-			contextUsage: {
-				tokens: 24_600,
-				contextWindow: 200_000,
-				percent: 12.3,
-				details: { source: "loaded_estimate", loadedContextTokens: 24_600, deferredToolSchemaTokens: 11_100 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("25k+d11k/200k");
-	});
-
-	it("keeps provider-backed tokens primary while still showing deferred schema budget", () => {
-		const session = createSession({
-			sessionName: "",
-			contextUsage: {
-				tokens: 35_700,
-				contextWindow: 200_000,
-				percent: 17.85,
-				details: {
-					source: "provider_usage",
-					loadedContextTokens: 24_600,
-					deferredToolSchemaTokens: 11_100,
-					nativeDeferredTools: true,
-				},
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("36k+d11k/200k");
-		expect(rendered).not.toContain("25k+d11k/200k");
-	});
-
-	it("uses loaded context as a floor when the last native-deferred schema has just loaded", () => {
-		const session = createSession({
-			sessionName: "",
-			contextUsage: {
-				tokens: 35_700,
-				contextWindow: 200_000,
-				percent: 17.85,
-				details: {
-					source: "provider_usage",
-					loadedContextTokens: 48_200,
-					deferredToolSchemaTokens: 0,
-					loadedDeferredToolCount: 1,
-					nativeDeferredTools: true,
-				},
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("48k/200k");
-		expect(rendered).not.toContain("36k/200k");
-	});
-
-	it("does not turn unknown post-compaction context usage into a concrete percent", () => {
-		const session = createSession({
-			sessionName: "",
-			contextUsage: {
-				tokens: null,
-				contextWindow: 200_000,
-				percent: null,
-				details: { source: "loaded_estimate", loadedContextTokens: 24_600, deferredToolSchemaTokens: 11_100 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("?% ?+d11k/200k");
-		expect(rendered).not.toContain("25k+d11k/200k");
-	});
-
-	it("uses provider-backed context usage when there is no deferred schema budget to split", () => {
-		const session = createSession({
-			sessionName: "",
-			contextUsage: {
-				tokens: 50_000,
-				contextWindow: 200_000,
-				percent: 25,
-				details: { loadedContextTokens: 24_600, deferredToolSchemaTokens: 0 },
-			},
-		});
-		const footer = new FooterComponent(session, createFooterData(1));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("50k/200k");
-		expect(rendered).not.toContain("25k/200k");
-	});
-
-	it("shows only the pending auto alias, never the unrouted seed model", () => {
-		// The concrete model behind a pending alias is just the compat seed —
-		// routing has not happened yet, so rendering it reads as a resolved model.
-		const session = createSession({
-			sessionName: "",
-			modelId: "gpt-5.3-codex-spark",
-			provider: "openai-codex",
-			reasoning: true,
-			thinkingLevel: "low",
-			pendingAutoModelAlias: "openai-codex/auto",
-		});
-		const footer = new FooterComponent(session, createFooterData(2));
-
-		const rendered = stripAnsi(footer.render(160).join("\n"));
-
-		expect(rendered).toContain("(openai-codex) openai-codex/auto");
-		expect(rendered).not.toContain("gpt-5.3-codex-spark");
-		expect(rendered).not.toContain("→");
-		expect(rendered).toContain("low");
-	});
-
-	it("does not render implementation adapter badges in the model footer", () => {
-		const session = createSession({
-			sessionName: "",
-			modelId: "gpt-5.5",
-			provider: "clawrouter",
-			api: "anthropic-messages",
-			reasoning: true,
-			thinkingLevel: "low",
-		});
-		const footer = new FooterComponent(session, createFooterData(2));
-
-		const rendered = stripAnsi(footer.render(160).join("\n"));
-
-		expect(rendered).toContain("(clawrouter) gpt-5.5");
-		expect(rendered).toContain("low");
-		expect(rendered).not.toContain("adapter:");
-	});
-
-	it("shows the resolved backend model for provider-side auto aliases", () => {
-		const usage = { input: 100, output: 10, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } };
-		const session = createSession({
-			sessionName: "",
-			modelId: "auto",
-			provider: "clawrouter",
-			reasoning: true,
-			thinkingLevel: "medium",
-			entries: [
-				{
-					type: "message",
-					message: {
-						role: "assistant",
-						provider: "clawrouter",
-						model: "gpt-5.5",
-						usage,
-					},
-				},
-			],
-		});
-		const footer = new FooterComponent(session, createFooterData(2));
-
-		const rendered = stripAnsi(footer.render(120).join("\n"));
-
-		expect(rendered).toContain("auto→gpt-5.5");
-		expect(rendered).toContain("medium");
 	});
 
 	it("keeps stats line within width for wide model and provider names", () => {
@@ -523,559 +157,84 @@ describe("FooterComponent width handling", () => {
 		}
 	});
 
-	it("resets token and cache totals after the latest compaction entry", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				entries: [
-					{
-						id: "before",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: {
-								input: 100_000,
-								output: 1,
-								cacheRead: 300_000,
-								cacheWrite: 100_000,
-								cost: { total: 9 },
-							},
-						},
-					},
-					{
-						id: "compact",
-						type: "compaction",
-						timestamp: "2026-05-31T08:00:00.000Z",
-						summary: "summary",
-						firstKeptEntryId: "after",
-						tokensBefore: 100_000,
-					},
-					{
-						id: "after",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: {
-								input: 2_000,
-								output: 1,
-								cacheRead: 8_000,
-								cacheWrite: 2_000,
-								cost: { total: 1 },
-							},
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = footer.render(140).join("\n");
-
-		expect(rendered).toContain("↑2.0k");
-		expect(rendered).toContain("R8.0k");
-		expect(rendered).toContain("W2.0k");
-		// First assistant turn after a compaction: the cold full-prefix write is
-		// expected, so the cache label is informational, not drift-colored.
-		expect(rendered).toContain("cache 67% ⟳compact");
-		expect(rendered).toContain("t1");
-		expect(rendered).not.toContain("↑102k");
-		expect(rendered).not.toContain("t2");
-	});
-
-	it("drops the post-compaction marker from the second turn onward", () => {
-		const usage = (cacheRead: number, cacheWrite: number) => ({
-			role: "assistant" as const,
-			usage: { input: 0, output: 1, cacheRead, cacheWrite, cost: { total: 1 } },
+	it("shows the physical model a virtual model routed to", () => {
+		const session = createSession({
+			sessionName: "",
+			modelId: "auto",
+			reasoning: true,
+			thinkingLevel: "high",
+			routedModel: { model: { id: "gpt-5.6-luna" }, thinkingLevel: "medium" },
 		});
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				entries: [
-					{
-						id: "compact",
-						type: "compaction",
-						timestamp: "2026-05-31T08:00:00.000Z",
-						summary: "summary",
-						firstKeptEntryId: "after",
-						tokensBefore: 100_000,
-					},
-					{ id: "after", type: "message", message: usage(8_000, 2_000) },
-					{ id: "warm", type: "message", message: usage(10_000, 0) },
-				],
-			}),
-			createFooterData(1),
-		);
+		const footer = new FooterComponent(session, createFooterData(1));
 
-		const rendered = footer.render(140).join("\n");
-		expect(rendered).toContain("cache 100%");
-		expect(rendered).not.toContain("⟳compact");
+		const statsLine = stripAnsi(footer.render(120)[1]);
+
+		expect(statsLine).toContain("auto \u2022 high \u2192 gpt-5.6-luna \u2022 medium");
 	});
 
-	it("computes token and cache totals from the active branch only", () => {
-		const shared = {
-			id: "shared",
-			type: "message",
-			message: {
-				role: "assistant",
-				usage: {
-					input: 1_000,
-					output: 1,
-					cacheRead: 9_000,
-					cacheWrite: 0,
-					cost: { total: 1 },
-				},
+	it("includes summary and tool result usage in the total cost", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.5 },
 			},
-		};
-		const abandoned = {
-			id: "abandoned",
-			type: "message",
-			message: {
-				role: "assistant",
-				usage: {
-					input: 100_000,
-					output: 1,
-					cacheRead: 0,
-					cacheWrite: 100_000,
-					cost: { total: 9 },
-				},
+			branchUsage: {
+				input: 20,
+				output: 5,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.25 },
 			},
-		};
-		const active = {
-			id: "active",
-			type: "message",
-			message: {
-				role: "assistant",
-				usage: {
-					input: 2_000,
-					output: 1,
-					cacheRead: 8_000,
-					cacheWrite: 0,
-					cost: { total: 1 },
-				},
+			compactionUsage: {
+				input: 5,
+				output: 2,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.125 },
 			},
-		};
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				entries: [shared, abandoned, active],
-				branchEntries: [shared, active],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = footer.render(140).join("\n");
-
-		expect(rendered).toContain("↑3.0k");
-		expect(rendered).toContain("R17k");
-		expect(rendered).toContain("cache 80%");
-		expect(rendered).not.toContain("↑103k");
-		expect(rendered).not.toContain("W100k");
-	});
-
-	it("shows cold first-turn cache status", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				provider: "test",
-				modelId: "test-model",
-				usage: {
-					input: 37_196,
-					output: 1,
-					cacheRead: 0,
-					cacheWrite: 0,
-					cost: { total: 1 },
-				},
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = footer.render(140).join("\n");
-
-		expect(rendered).toContain("↑37k");
-		expect(rendered).toContain("cache 0%");
-		expect(rendered).toContain("t1");
-	});
-
-	it("shows warm first-turn cache status", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				provider: "test",
-				modelId: "test-model",
-				usage: {
-					input: 300,
-					output: 1,
-					cacheRead: 36_864,
-					cacheWrite: 0,
-					cost: { total: 1 },
-				},
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = footer.render(140).join("\n");
-
-		expect(rendered).toContain("R37k");
-		expect(rendered).toContain("cache 99%");
-		expect(rendered).toContain("t1");
-	});
-
-	it("shows latest-turn cache warmth instead of cumulative cold-start dilution", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				provider: "openai-codex",
-				entries: [
-					{
-						id: "cold",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: {
-								input: 34_000,
-								output: 1,
-								cacheRead: 0,
-								cacheWrite: 0,
-								cost: { total: 1 },
-							},
-						},
-					},
-					{
-						id: "warm",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: {
-								input: 13,
-								output: 1,
-								cacheRead: 33_000,
-								cacheWrite: 0,
-								cost: { total: 1 },
-							},
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = footer.render(140).join("\n");
-
-		expect(rendered).toContain("↑34k");
-		expect(rendered).toContain("R33k");
-		expect(rendered).toContain("cache 100%");
-		expect(rendered).not.toContain("cache 49%");
-	});
-
-	it("flags a large fresh input tail while keeping coverage as the primary cache metric", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				provider: "openai-codex",
-				usage: {
-					input: 29_033,
-					output: 1,
-					cacheRead: 35_840,
-					cacheWrite: 0,
-					cost: { total: 1 },
-				},
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 55% ⚠fresh");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("does not warn when small fresh input rides a warm prefix", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				usage: { input: 300, output: 1, cacheRead: 36_864, cacheWrite: 0, cost: { total: 1 } },
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 99%");
-		expect(rendered).not.toContain("⚠fresh");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("flags unexpected large prefix writes after warmup", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				entries: [
-					{
-						id: "warm",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: { input: 200, output: 1, cacheRead: 20_000, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-					{
-						id: "cold-write",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: { input: 100, output: 1, cacheRead: 10_000, cacheWrite: 6_000, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 62% 🔥write");
-	});
-
-	it("does not flag first-turn cache writes as prefix drift", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				usage: { input: 100, output: 1, cacheRead: 0, cacheWrite: 6_000, cost: { total: 1 } },
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0%");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("flags likely TTL-expiry cold turns", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				modelId: "gpt-5.5",
-				entries: [
-					{
-						id: "warm",
-						timestamp: "2026-06-29T08:48:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 19_361, output: 1, cacheRead: 87_040, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-					{
-						id: "cold",
-						timestamp: "2026-06-29T08:53:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 110_133, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0% ⌛ttl");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("does not flag short cold gaps as TTL expiry", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				modelId: "gpt-5.5",
-				entries: [
-					{
-						id: "warm",
-						timestamp: "2026-06-29T08:48:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 19_361, output: 1, cacheRead: 87_040, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-					{
-						id: "cold",
-						timestamp: "2026-06-29T08:50:00.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 110_133, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0%");
-		expect(rendered).not.toContain("⌛ttl");
-	});
-
-	it("suppresses cache-health warnings across model changes", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				modelId: "gpt-5.5",
-				entries: [
-					{
-						id: "warm",
-						timestamp: "2026-06-29T08:48:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.4-mini",
-							usage: { input: 19_361, output: 1, cacheRead: 87_040, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-					{
-						id: "model-change",
-						timestamp: "2026-06-29T08:50:00.000Z",
-						type: "model_change",
-						provider: "openai-codex",
-						modelId: "gpt-5.5",
-					},
-					{
-						id: "cold",
-						timestamp: "2026-06-29T08:53:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 110_133, output: 1, cacheRead: 0, cacheWrite: 6_000, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0%");
-		expect(rendered).not.toContain("⌛ttl");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("does not infer TTL expiry when previous model metadata is missing", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				modelId: "gpt-5.5",
-				entries: [
-					{
-						id: "warm",
-						timestamp: "2026-06-29T08:48:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: { input: 19_361, output: 1, cacheRead: 87_040, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-					{
-						id: "cold",
-						timestamp: "2026-06-29T08:53:27.000Z",
-						type: "message",
-						message: {
-							role: "assistant",
-							model: "gpt-5.5",
-							usage: { input: 110_133, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0%");
-		expect(rendered).not.toContain("⌛ttl");
-	});
-
-	it("marks post-compaction cache writes as expected instead of prefix drift", () => {
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				entries: [
-					{
-						id: "compact",
-						type: "compaction",
-						timestamp: "2026-05-31T08:00:00.000Z",
-						summary: "summary",
-						firstKeptEntryId: "after",
-						tokensBefore: 100_000,
-					},
-					{
-						id: "after",
-						type: "message",
-						message: {
-							role: "assistant",
-							usage: { input: 100, output: 1, cacheRead: 0, cacheWrite: 6_000, cost: { total: 1 } },
-						},
-					},
-				],
-			}),
-			createFooterData(1),
-		);
-
-		const rendered = stripAnsi(footer.render(140).join("\n"));
-
-		expect(rendered).toContain("cache 0% ⟳compact");
-		expect(rendered).not.toContain("🔥prefix");
-	});
-
-	it("never renders the work-bar in the footer (moved to the working loader, #53)", () => {
-		// The streaming work-bar + esc-to-interrupt hint + elapsed-timer pulse were
-		// moved out of the footer into the interactive-mode working loader (#53), so
-		// the footer must not render them in either the idle or streaming state.
-		const idle = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
-		expect(idle.render(120).join("\n")).not.toContain("esc to interrupt");
-
-		const streaming = new FooterComponent(createSession({ sessionName: "", isStreaming: true }), createFooterData(1));
-		const rendered = streaming.render(120).join("\n");
-		expect(rendered).not.toContain("esc to interrupt");
-		expect(rendered).not.toMatch(/[●○] \d+s/);
-	});
-
-	it("keeps the stats line within width while streaming on a narrow terminal", () => {
-		const width = 50;
-		const footer = new FooterComponent(
-			createSession({
-				sessionName: "",
-				modelId: "claude-opus-4-8",
-				isStreaming: true,
-				usage: { input: 12_345, output: 6_789, cacheRead: 4_000, cacheWrite: 1_000, cost: { total: 1.234 } },
-			}),
-			createFooterData(2),
-		);
-		for (const line of footer.render(width)) {
-			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-		}
-	});
-
-	it("shows active background agent runs in the footer", () => {
-		startAgentRecentRun("single", [{ agent: "worker", task: "Sleep" }], {
-			background: true,
+			toolUsage: {
+				input: 15,
+				output: 3,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.375 },
+			},
 		});
-		const footer = new FooterComponent(createSession({ sessionName: "" }), createFooterData(1));
-		const rendered = footer.render(100).join("\n");
+		const footer = new FooterComponent(session, createFooterData(1));
 
-		expect(rendered).toContain("Agents: 1 running");
-		expect(rendered).toContain("/agents runs");
+		const statsLine = stripAnsi(footer.render(120)[1]);
+		expect(statsLine).toContain("$1.250");
+	});
+
+	it("updates cached usage totals after an entry is appended", () => {
+		const usage = { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: 0.5 } };
+		const session = createSession({ sessionName: "", usage });
+		const footer = new FooterComponent(session, createFooterData(1));
+		expect(stripAnsi(footer.render(120)[1])).toContain("$0.500");
+
+		session.sessionManager.getEntries().push({ type: "message", message: { role: "assistant", usage } } as never);
+		expect(stripAnsi(footer.render(120)[1])).toContain("$1.000");
+	});
+
+	it("shows the latest cache hit rate when cache usage is present", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 50,
+				cacheWrite: 50,
+				cost: { total: 0.001 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		const statsLine = stripAnsi(footer.render(120)[1]);
+		expect(statsLine).toContain("CH25.0%");
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {

@@ -78,32 +78,25 @@ describe("buildSystemPrompt", () => {
 		test("includes all default tools when snippets are provided", () => {
 			const prompt = buildSystemPrompt({
 				toolSnippets: {
-					Read: "Read file contents",
-					Bash: "Execute bash commands",
-					Edit: "Make surgical edits",
-					Write: "Create or overwrite files",
-					Grep: "Search file contents",
-					Glob: "Match files by glob pattern",
-					Ls: "List directory contents",
+					read: "Read file contents",
+					bash: "Execute bash commands",
+					edit: "Make surgical edits",
+					write: "Create or overwrite files",
 				},
 				contextFiles: [],
 				skills: [],
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("- Read:");
-			expect(prompt).toContain("- Bash:");
-			expect(prompt).toContain("- Edit:");
-			expect(prompt).toContain("- Write:");
-			expect(prompt).toContain("- Grep:");
-			expect(prompt).toContain("- Glob:");
-			// CC 2.x / Codex parity: Ls is no longer a default tool.
-			expect(prompt).not.toContain("- Ls:");
+			expect(prompt).toContain("- read:");
+			expect(prompt).toContain("- bash:");
+			expect(prompt).toContain("- edit:");
+			expect(prompt).toContain("- write:");
 		});
 
 		test.each([
 			[["powershell"], "Use PowerShell for file operations"],
-			[["bash", "powershell"], "Use Bash or PowerShell for file operations"],
+			[["bash", "powershell"], "Use bash or PowerShell for file operations"],
 		] as const)("uses shell-specific guidance for %j", (selectedTools, expected) => {
 			const prompt = buildSystemPrompt({
 				selectedTools: [...selectedTools],
@@ -115,65 +108,17 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain(expected);
 		});
 
-		const piSkill = {
-			name: "pi",
-			description: "Pi router",
-			filePath: "/tmp/skills/pi/SKILL.md",
-			baseDir: "/tmp/skills/pi",
-			sourceInfo: createSyntheticSourceInfo("<test:pi>", { source: "test" }),
-			disableModelInvocation: false,
-		};
-
-		test("routes Pi development through the pi skill when it is loaded", () => {
-			const prompt = buildSystemPrompt({
-				contextFiles: [],
-				skills: [piSkill],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain(
-				"Pi documentation: load skill `pi`; it routes runtime identity, updates, and the installed docs/examples at ",
-			);
-			expect(prompt).toContain("README.md");
-			expect(prompt).toContain("/docs");
-			expect(prompt).toContain("/examples");
-			expect(prompt).not.toContain("Pi documentation (read only when");
-		});
-
-		test("keeps the self-contained Pi doc map when no pi skill is loaded", () => {
+		test("instructs models to resolve pi docs and examples under absolute base paths", () => {
 			const prompt = buildSystemPrompt({
 				contextFiles: [],
 				skills: [],
 				cwd: process.cwd(),
 			});
 
-			expect(prompt).toContain("Pi documentation (read only when");
-			expect(prompt).toContain("- Main documentation: ");
-			expect(prompt).not.toContain("load skill `pi`");
-		});
-
-		test("keeps the Pi doc map when the pi skill is loaded but read is unavailable", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: ["bash"],
-				contextFiles: [],
-				skills: [piSkill],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain("Pi documentation (read only when");
-			expect(prompt).not.toContain("load skill `pi`");
-		});
-
-		test("keeps the Pi doc map when the loaded pi skill has model invocation disabled", () => {
-			const disabledPiSkill = { ...piSkill, disableModelInvocation: true };
-			const prompt = buildSystemPrompt({
-				contextFiles: [],
-				skills: [disabledPiSkill],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain("Pi documentation (read only when");
-			expect(prompt).not.toContain("load skill `pi`");
+			expect(prompt).toContain(
+				"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+			);
+			expect(prompt).toContain("environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)");
 		});
 	});
 
@@ -204,83 +149,7 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
-	describe("structured ordering", () => {
-		test("places project context and cwd after the stable default sections", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: [],
-				contextFiles: [{ path: "/repo/AGENTS.md", content: "Project rules" }],
-				skills: [],
-				cwd: "/repo",
-			});
-
-			expect(prompt.indexOf("<project_context>")).toBeGreaterThan(prompt.indexOf("<docs>"));
-			expect(prompt.indexOf("<cwd>")).toBeGreaterThan(prompt.indexOf("<project_context>"));
-			expect(prompt).toContain("<cwd>\n/repo\n</cwd>");
-		});
-	});
-
-	describe("context files", () => {
-		test("renders imported context files as separate stable sections", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: [],
-				contextFiles: [
-					{ path: "/repo/AGENTS.md", content: "Root @docs/rules.md" },
-					{
-						path: "/repo/docs/rules.md",
-						content: "Imported rules",
-						parentPath: "/repo/AGENTS.md",
-						rootPath: "/repo/AGENTS.md",
-						importDepth: 1,
-					},
-				],
-				skills: [],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain('<project_instructions path="/repo/AGENTS.md">\nRoot @docs/rules.md');
-			expect(prompt).toContain('<project_instructions path="/repo/docs/rules.md">\nImported rules');
-			expect(prompt.indexOf('path="/repo/AGENTS.md"')).toBeLessThan(prompt.indexOf('path="/repo/docs/rules.md"'));
-		});
-	});
-
 	describe("prompt guidelines", () => {
-		test("routes repo exploration to native tools and shell output to Bash", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: ["bash", "grep", "Glob"],
-				toolSnippets: {
-					bash: "Execute bash commands",
-					grep: "Search file contents",
-					Glob: "Match files by glob pattern",
-				},
-				contextFiles: [],
-				skills: [],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain(
-				"File exploration uses native tools, not bash: Read = file contents (replaces cat/head/tail/sed on files); Grep = content search (known strings/regex); Glob = file discovery by glob; SemanticGrep = conceptual search. Avoid running `grep`/`rg`/`find` in Bash for repo exploration unless explicitly instructed or a dedicated tool cannot accomplish the task; pipeline filters on command output (e.g. `kubectl get pods | grep Ready`) are fine. Directory listing via Bash `ls` is fine.",
-			);
-			expect(prompt).toContain(
-				"Use Bash for shell work and non-repo command output: `kubectl ... | jq`, `ps ... | awk`, git, package managers, `stat`/`wc`/`head`/`tail`.",
-			);
-			expect(prompt).toContain(
-				"Use Read/Edit/Write for files instead of shelling out to view or modify file contents.",
-			);
-		});
-
-		test("steers independent work into batched parallel tool calls", () => {
-			const prompt = buildSystemPrompt({
-				selectedTools: ["read", "grep", "Glob", "ls"],
-				contextFiles: [],
-				skills: [],
-				cwd: process.cwd(),
-			});
-
-			expect(prompt).toContain(
-				"Batch independent tool calls in a single message: when several calls have no data dependency on each other — reads, directory listings, searches, bounded reads, independent read-only bash queries, edits to different files, or multiple Agent launches — emit them together in one assistant message instead of one call per turn. Serialize only when a later call needs an earlier call's result.",
-			);
-		});
-
 		test("appends promptGuidelines to default guidelines", () => {
 			const prompt = buildSystemPrompt({
 				selectedTools: ["read", "dynamic_tool"],
@@ -306,81 +175,6 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
-	describe("custom prompt guidelines", () => {
-		test("includes tool promptGuidelines under a custom prompt before dynamic context", () => {
-			const prompt = buildSystemPrompt({
-				customPrompt: "You are a child agent.",
-				selectedTools: ["read", "dynamic_tool"],
-				promptGuidelines: ["Use dynamic_tool for project summaries."],
-				contextFiles: [],
-				skills: [],
-				cwd: "/repo",
-			});
-
-			const guidelineIdx = prompt.indexOf("- Use dynamic_tool for project summaries.");
-			expect(guidelineIdx).toBeGreaterThan(0);
-			expect(prompt.indexOf("<tool_guidelines>")).toBeLessThan(prompt.indexOf("<cwd>"));
-			expect(guidelineIdx).toBeLessThan(prompt.indexOf("<cwd>"));
-			expect(prompt).toContain("Tool guidelines:");
-		});
-
-		test("deduplicates and trims promptGuidelines under a custom prompt", () => {
-			const prompt = buildSystemPrompt({
-				customPrompt: "You are a child agent.",
-				selectedTools: ["read"],
-				promptGuidelines: ["Use dynamic_tool for summaries.", "  Use dynamic_tool for summaries.  ", "   "],
-				contextFiles: [],
-				skills: [],
-				cwd: "/repo",
-			});
-
-			expect(prompt.match(/- Use dynamic_tool for summaries\./g)).toHaveLength(1);
-		});
-
-		test("emits no Tool guidelines section when none are provided (byte-parity)", () => {
-			const prompt = buildSystemPrompt({
-				customPrompt: "You are a child agent.",
-				selectedTools: ["read"],
-				contextFiles: [],
-				skills: [],
-				cwd: "/repo",
-			});
-
-			expect(prompt).not.toContain("Tool guidelines:");
-		});
-	});
-
-	describe("shared guideline strings", () => {
-		test("bash tool promptGuidelines dedupe against the default guidelines (byte-identical shared rules)", async () => {
-			const { createBashToolDefinition } = await import("../src/core/tools/bash.ts");
-			const { GUIDELINE_NATIVE_FILE_TOOLS, GUIDELINE_BASH_SHELL_WORK, GUIDELINE_READ_EDIT_WRITE } = await import(
-				"../src/core/prompt-guidelines.ts"
-			);
-			const bashGuidelines = createBashToolDefinition("/repo").promptGuidelines ?? [];
-
-			// The shared rules must be the exact constants — a hand-copied variant
-			// silently defeats addRule's exact-string dedupe.
-			for (const shared of [GUIDELINE_NATIVE_FILE_TOOLS, GUIDELINE_BASH_SHELL_WORK, GUIDELINE_READ_EDIT_WRITE]) {
-				expect(bashGuidelines).toContain(shared);
-			}
-
-			// End-to-end: feeding bash's guidelines into the default prompt must not
-			// produce duplicate bullets.
-			const prompt = buildSystemPrompt({
-				selectedTools: ["bash", "grep", "Glob", "ls", "read"],
-				promptGuidelines: bashGuidelines,
-				contextFiles: [],
-				skills: [],
-				cwd: "/repo",
-			});
-			for (const shared of [GUIDELINE_NATIVE_FILE_TOOLS, GUIDELINE_BASH_SHELL_WORK, GUIDELINE_READ_EDIT_WRITE]) {
-				expect(prompt.split(shared).length - 1).toBe(1);
-			}
-			// No leftover drifted variant of the native-tools rule.
-			expect(prompt).not.toContain("Prefer native file tools for repo exploration");
-		});
-	});
-
 	describe("skills", () => {
 		test.each([
 			{ name: "default prompt", customPrompt: undefined },
@@ -396,7 +190,7 @@ describe("buildSystemPrompt", () => {
 
 			expect(prompt).toContain("<skills>");
 			expect(prompt).toContain("<available_skills>");
-			expect(prompt).toContain('name="test-skill"');
+			expect(prompt).toContain("<name>test-skill</name>");
 			expect(prompt).toContain("Use bash to load a skill's file");
 		});
 

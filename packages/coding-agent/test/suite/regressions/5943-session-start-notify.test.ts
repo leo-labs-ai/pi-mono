@@ -2,48 +2,9 @@ import { fauxAssistantMessage } from "@lue-labs/pi-ai";
 import { Container, Text } from "@lue-labs/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
-import type { ExtensionUIContext } from "../../../src/core/extensions/index.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
-import { initTheme, type Theme, theme } from "../../../src/modes/interactive/theme/theme.ts";
-import { createHarness } from "../harness.ts";
-
-function createUiContext(
-	onNotify: (message: string, type: "info" | "warning" | "error" | undefined) => void,
-): ExtensionUIContext {
-	return {
-		select: async () => undefined,
-		confirm: async () => false,
-		input: async () => undefined,
-		notify: onNotify,
-		addInputHighlighter: () => {},
-		onTerminalInput: () => () => {},
-		setStatus: () => {},
-		setWorkingMessage: () => {},
-		setWorkingVisible: () => {},
-		setWorkingIndicator: () => {},
-		setHiddenThinkingLabel: () => {},
-		setWidget: () => {},
-		setFooter: () => {},
-		setHeader: () => {},
-		setTitle: () => {},
-		custom: async <T>() => undefined as T,
-		pasteToEditor: () => {},
-		setEditorText: () => {},
-		getEditorText: () => "",
-		editor: async () => undefined,
-		addAutocompleteProvider: () => {},
-		setEditorComponent: () => {},
-		getEditorComponent: () => undefined,
-		get theme() {
-			return theme;
-		},
-		getAllThemes: () => [],
-		getTheme: () => undefined,
-		setTheme: (_theme: string | Theme) => ({ success: false, error: "Theme switching not available in tests" }),
-		getToolsExpanded: () => false,
-		setToolsExpanded: () => {},
-	};
-}
+import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
+import { createHarness, createTestUiContext } from "../harness.ts";
 
 type LoadedResourcesResult<T> = { [K in keyof T]: T[K] } & { diagnostics: [] };
 
@@ -293,7 +254,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext((message) => events.push(`notify:${message}`)),
+						uiContext: createTestUiContext({ notify: (message) => events.push(`notify:${message}`) }),
 						mode: "tui",
 					});
 				},
@@ -334,7 +295,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext(() => {}),
+						uiContext: createTestUiContext(),
 						mode: "tui",
 					});
 				},
@@ -386,7 +347,7 @@ describe("regression #5943: session_start transient UI", () => {
 				bindCurrentSessionExtensions: async () => {
 					events.push("bind");
 					await harness.session.bindExtensions({
-						uiContext: createUiContext(() => {}),
+						uiContext: createTestUiContext(),
 						mode: "tui",
 					});
 				},
@@ -405,11 +366,7 @@ describe("regression #5943: session_start transient UI", () => {
 			};
 
 			await interactiveModePrototype.rebindCurrentSession.call(context, { renderBeforeBind: true });
-			// sendUserMessage() is intentionally fire-and-forget from extension hooks;
-			// yield once so its async prompt preflight enters the session busy scope
-			// before waiting for the resulting turn to settle.
-			await Promise.resolve();
-			await harness.session.waitForIdle();
+			await harness.session.agent.waitForIdle();
 
 			expect(events.slice(0, 3)).toEqual(["render", "subscribe", "bind"]);
 			expect(events).toContain("message_start:user:user from start");
@@ -438,7 +395,7 @@ describe("regression #5943: session_start transient UI", () => {
 
 		try {
 			await harness.session.bindExtensions({
-				uiContext: createUiContext((message) => events.push(message)),
+				uiContext: createTestUiContext({ notify: (message) => events.push(message) }),
 				mode: "tui",
 			});
 			expect(events).toEqual(["start:startup", "notify:startup"]);

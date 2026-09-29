@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
-import type { Model } from "../src/types.ts";
-import { allOf, pickModel } from "./helpers/models.ts";
 
 const mockState = vi.hoisted(() => ({
 	constructorOpts: undefined as Record<string, unknown> | undefined,
@@ -71,6 +69,11 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		expect(getSupportedThinkingLevels(opus5)).toContain("xhigh");
 		expect(getSupportedThinkingLevels(opus5)).toContain("max");
 
+		const opus55 = getModel("github-copilot", "claude-opus-5.5");
+		expect(opus55.api).toBe("anthropic-messages");
+		expect(opus55.contextWindow).toBe(1000000);
+		expect(getSupportedThinkingLevels(opus55)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+
 		const sonnet46 = getModel("github-copilot", "claude-sonnet-4.6");
 		expect(sonnet46.thinkingLevelMap).toMatchObject({ minimal: "low", max: "max" });
 		expect(getSupportedThinkingLevels(sonnet46)).toContain("max");
@@ -78,7 +81,7 @@ describe("Copilot Claude via Anthropic Messages", () => {
 	});
 
 	it("uses Bearer auth, Copilot headers, and valid Anthropic Messages payload", async () => {
-		const model = pickModel("github-copilot", (m) => m.api === "anthropic-messages") as Model<"anthropic-messages">;
+		const model = getModel("github-copilot", "claude-sonnet-4.6");
 		expect(model.api).toBe("anthropic-messages");
 
 		const s = streamAnthropic(model, context, { apiKey: "tid_copilot_session_test_token" });
@@ -105,20 +108,14 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		// Payload is valid Anthropic Messages format
 		const params = mockState.createParams!;
 		expect(params.betas ?? []).not.toContain("fine-grained-tool-streaming-2025-05-14");
-		expect(params.model).toBe(model.id);
+		expect(params.model).toBe("claude-sonnet-4.6");
 		expect(params.stream).toBe(true);
 		expect(params.max_tokens).toBe(model.maxTokens);
 		expect(Array.isArray(params.messages)).toBe(true);
 	});
 
 	it("omits interleaved-thinking beta for adaptive-thinking models", async () => {
-		const model = pickModel(
-			"github-copilot",
-			allOf(
-				(m) => m.api === "anthropic-messages",
-				(m) => (m.compat as { forceAdaptiveThinking?: boolean } | undefined)?.forceAdaptiveThinking === true,
-			),
-		) as Model<"anthropic-messages">;
+		const model = getModel("github-copilot", "claude-sonnet-4.6");
 		const s = streamAnthropic(model, context, {
 			apiKey: "tid_copilot_session_test_token",
 			interleavedThinking: true,

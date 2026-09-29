@@ -1,6 +1,4 @@
 // UI Components for extensions
-export { type AgentRunsSelectorAction, AgentRunsSelectorComponent } from "./agent-runs-selector.ts";
-export { AgentsSelectorComponent } from "./agents-selector.ts";
 export { ArminComponent } from "./armin.ts";
 export { AssistantMessageComponent } from "./assistant-message.ts";
 export { BashExecutionComponent } from "./bash-execution.ts";
@@ -23,7 +21,6 @@ export {
 export { FooterComponent } from "./footer.ts";
 export { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 export { LoginDialogComponent } from "./login-dialog.ts";
-export { MemorySavedMessageComponent, memorySavedMessageRenderer } from "./memory-saved-message.ts";
 export { ModelSelectorComponent } from "./model-selector.ts";
 export { OAuthSelectorComponent } from "./oauth-selector.ts";
 export { type ModelsCallbacks, type ModelsConfig, ScopedModelsSelectorComponent } from "./scoped-models-selector.ts";

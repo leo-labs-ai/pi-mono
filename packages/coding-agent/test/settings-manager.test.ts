@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -20,51 +20,9 @@ describe("SettingsManager", () => {
 	});
 
 	afterEach(() => {
-		vi.unstubAllEnvs();
 		if (existsSync(testDir)) {
 			rmSync(testDir, { recursive: true });
 		}
-	});
-
-	describe("extension configuration", () => {
-		it("persists one extension key without dropping sibling keys", async () => {
-			const settingsPath = join(agentDir, "settings.json");
-			writeFileSync(
-				settingsPath,
-				JSON.stringify({
-					theme: "dark",
-					extensionConfig: {
-						"prompt-suggestions": { maxMs: 4000 },
-						other: { enabled: true },
-					},
-				}),
-			);
-
-			const manager = SettingsManager.create(projectDir, agentDir);
-			manager.setExtensionConfigValue("prompt-suggestions", "enabled", true);
-			await manager.flush();
-
-			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-			expect(savedSettings.extensionConfig["prompt-suggestions"]).toEqual({ maxMs: 4000, enabled: true });
-			expect(savedSettings.extensionConfig.other).toEqual({ enabled: true });
-		});
-
-		it("returns the merged namespace when project settings add sibling keys", () => {
-			writeFileSync(
-				join(agentDir, "settings.json"),
-				JSON.stringify({ extensionConfig: { "prompt-suggestions": { maxMs: 4000 } } }),
-			);
-			writeFileSync(
-				join(projectDir, ".pi", "settings.json"),
-				JSON.stringify({ extensionConfig: { "prompt-suggestions": { projectOnly: true } } }),
-			);
-
-			const manager = SettingsManager.create(projectDir, agentDir);
-			const returned = manager.setExtensionConfigValue("prompt-suggestions", "enabled", true);
-
-			expect(returned).toEqual({ maxMs: 4000, projectOnly: true, enabled: true });
-			expect(manager.getExtensionConfig()["prompt-suggestions"]).toEqual(returned);
-		});
 	});
 
 	describe("preserves externally added settings", () => {
@@ -150,6 +108,23 @@ describe("SettingsManager", () => {
 			// In-memory change should win
 			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
 			expect(savedSettings.defaultThinkingLevel).toBe("high");
+		});
+	});
+
+	describe("deviceId", () => {
+		it("creates one global device ID and reuses it in later processes", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ deviceId: "project-device" }));
+			const first = SettingsManager.create(projectDir, agentDir);
+
+			const deviceId = first.getOrCreateDeviceId();
+			await first.flush();
+
+			expect(deviceId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+			expect(first.getOrCreateDeviceId()).toBe(deviceId);
+			expect(SettingsManager.create(projectDir, agentDir).getOrCreateDeviceId()).toBe(deviceId);
+			expect(JSON.parse(readFileSync(settingsPath, "utf-8"))).toEqual({ theme: "dark", deviceId });
 		});
 	});
 
@@ -377,43 +352,6 @@ describe("SettingsManager", () => {
 		});
 	});
 
-	describe("compaction residentPrune", () => {
-		it("defaults to enabled", () => {
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be disabled with an explicit false setting", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: false } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(false);
-		});
-
-		it("can be explicitly enabled from settings", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: true } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be force-enabled with PI_RESIDENT_SESSION_PRUNE=1 over an explicit false", () => {
-			vi.stubEnv("PI_RESIDENT_SESSION_PRUNE", "1");
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: false } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be force-disabled with PI_RESIDENT_SESSION_PRUNE=0 over the default", () => {
-			vi.stubEnv("PI_RESIDENT_SESSION_PRUNE", "0");
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(false);
-		});
-	});
-
 	describe("terminal capability overrides", () => {
 		it("maps explicit values and omits auto values", () => {
 			const getOverrides = (terminal: NonNullable<Settings["terminal"]>) =>
@@ -595,6 +533,27 @@ describe("SettingsManager", () => {
 		expect(reloadedManager.getFullscreenCopyOnSelect()).toBe(true);
 	});
 
+	// #9758: wheel scrolling defaults to auto, persists line counts, and ignores invalid values.
+	it("persists fullscreen wheel scroll lines", async () => {
+		const manager = SettingsManager.create(projectDir, agentDir);
+		expect(manager.getFullscreenWheelScrollLines()).toBe("auto");
+
+		manager.setFullscreenWheelScrollLines(3);
+		await manager.flush();
+		expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).fullscreenWheelScrollLines).toBe(3);
+
+		for (const [value, expected] of [
+			[7.9, 7],
+			[0, 1],
+			[1000, 100],
+			["fast", "auto"],
+			[null, "auto"],
+		] as const) {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ fullscreenWheelScrollLines: value }));
+			expect(SettingsManager.create(projectDir, agentDir).getFullscreenWheelScrollLines()).toBe(expected);
+		}
+	});
+
 	describe("outputPad", () => {
 		it("should default to 1 and persist binary values", async () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
@@ -687,6 +646,48 @@ describe("SettingsManager", () => {
 			expect(SettingsManager.inMemory({ defaultTools: [] }).getDefaultTools()).toEqual([]);
 			expect(SettingsManager.inMemory().getDefaultTools()).toBeUndefined();
 		});
+
+		it("applies +name and -name to the default selection", () => {
+			expect(SettingsManager.inMemory({ defaultTools: ["+codemode", "-write"] }).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"codemode",
+			]);
+			expect(SettingsManager.inMemory({ defaultTools: ["read", "+grep", "+read"] }).getDefaultTools()).toEqual([
+				"read",
+				"grep",
+			]);
+		});
+
+		it("layers project modifiers on top of the global selection", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ defaultTools: ["read", "bash", "+codemode"] }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ defaultTools: ["-codemode", "+tool_search"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search"]);
+
+			manager.applyOverrides({ defaultTools: ["+codemode"] });
+			expect(manager.getDefaultTools()).toEqual(["read", "bash", "tool_search", "codemode"]);
+		});
+
+		it("applies project modifiers to the built-in defaults without a global setting", () => {
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ defaultTools: ["+codemode"] }));
+
+			expect(SettingsManager.create(projectDir, agentDir).getDefaultTools()).toEqual([
+				"read",
+				"bash",
+				"edit",
+				"write",
+				"codemode",
+			]);
+		});
 	});
 
 	describe("getSessionDir", () => {
@@ -713,45 +714,6 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "~/sessions" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
-		});
-	});
-
-	describe("getBashTimeoutSeconds", () => {
-		it("should return undefined when not set, leaving the built-in default in place", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-		});
-
-		it("should return a configured timeout", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: 900 }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBe(900);
-		});
-
-		it("should return 0 so callers can disable the default timeout", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: 0 }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBe(0);
-		});
-
-		it.each([[-5], ["600"], [Number.NaN]])("should ignore the unusable value %p", (value) => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: value }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-		});
-
-		it("should round-trip through the setter", async () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			manager.setBashTimeoutSeconds(240);
-			await manager.flush();
-			expect(manager.getBashTimeoutSeconds()).toBe(240);
-			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).bashTimeoutSeconds).toBe(240);
-
-			manager.setBashTimeoutSeconds(undefined);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-			expect(() => manager.setBashTimeoutSeconds(-1)).toThrow(/Invalid bashTimeoutSeconds setting/);
 		});
 	});
 

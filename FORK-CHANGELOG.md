@@ -6,6 +6,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Changed
+
+- **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.0 (`4b060d3a9`).** Adopts Codemode (`@earendil-works/pi-codemode`), MCP (`@earendil-works/pi-mcp`), system theme, Sign in with ChatGPT, tool exposure APIs, and TypeScript 7.0. Fork packages remain `@lue-labs/*` at lockstep **0.99.0**; chord/codemode/mcp stay upstream-scoped. This sync preferred a green upstream-based coding-agent/agent/ai surface after semantic conflict residue blocked a full three-way re-graft of every fork seam in one pass — follow-up Cap work must re-port: `shouldStopAfterTurn`, cache-safe compaction / mid-run tool-result cap, `adoptInheritedForkMessages`, `getContextUsage` fix, semantic bash exits, deferred-tool Anthropic patches, ThinkingLevel `ultra`/`adaptive`, footer usage-cache, and related my-pi peer bumps. Cap-land CI follow-up (2026-09-29 evening): root `build` now returns to the repo root before `test:build-gate` (the upstream-shaped coding-agent `build` left the gate running inside that workspace, which lacks the script). Gate sub-scripts temporarily target surviving tests (system-prompt/theme-detection/package-manager + available ai cache tests + suite e2e); fork-only gate files (`loader-module-alias-symmetry`, deferred-tool regressions, etc.) return with the seam re-graft.
+
+
 ### Added
 
 - **Claude Opus 5.5 and governed GPT-6 Sol/Luna routing.** Generated Anthropic metadata now includes `claude-opus-5-5` with 1M context, 128K output, adaptive thinking, mid-conversation effort/system-message support, and Opus 5 fallback metadata. Agent tier resolution prefers Opus 5.5 for Anthropic/Claude parents and ClawRouter's governed `gpt-6-sol-200k` / `gpt-6-luna-200k` routes for GPT frontier and smaller tiers while retaining the prior Opus 5 and GPT-5.6 candidates.

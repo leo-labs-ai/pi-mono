@@ -10,7 +10,6 @@ import type {
 	SimpleStreamOptions,
 	TextContent,
 	Tool,
-	ToolReferenceContent,
 	ToolResultMessage,
 	TranscriptContext,
 	Usage,
@@ -83,13 +82,17 @@ export interface BeforeToolCallResult {
  * - `isError`: if provided, replaces the tool result error flag
  * - `usage`: if provided, replaces the tool result usage
  * - `terminate`: if provided, replaces the early-termination hint
+ * - `structuredContent`: if provided, replaces the structured content. If `content` is provided
+ *   without it, the structured content is dropped, because it may no longer match the content.
+ *   Return it along with `content` to keep it.
  *
- * Omitted fields keep the original executed tool result values.
+ * Other omitted fields keep the original executed tool result values.
  * There is no deep merge for `content`, `details`, or `usage`.
  */
 export interface AfterToolCallResult {
-	content?: (TextContent | ImageContent | ToolReferenceContent)[];
+	content?: (TextContent | ImageContent)[];
 	details?: unknown;
+	structuredContent?: JsonValue;
 	isError?: boolean;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
@@ -138,13 +141,6 @@ export interface AgentTurnContext {
 	context: AgentContext;
 	/** Messages that this loop invocation will return if it exits at this point. Prompt runs include the initial prompt messages; continuation runs do not include pre-existing context messages. */
 	newMessages: AgentMessage[];
-	/**
-	 * Whether this turn's tool batch leaves the run with more model work: the assistant
-	 * made tool calls and no terminal tool (`result.terminate`) ended the batch, so the
-	 * loop would otherwise start another provider request. Independent of queued steering/follow-up
-	 * messages, which can still continue the run when this is false.
-	 */
-	hasMoreToolCalls: boolean;
 }
 
 /** Decision returned by {@link FinishTurn}. Returning undefined preserves normal scheduling. */
@@ -194,16 +190,6 @@ export type PrepareRequest = (
 
 export interface PrepareNextTurnContext extends AgentTurnContext {}
 
-/**
- * Graceful stop hook, checked after each completed turn and before `prepareNextTurn`.
- *
- * Use this to request a graceful stop after the current turn, e.g. before context gets too full.
- *
- * Contract: must not throw or reject. Throwing interrupts the low-level agent loop without
- * producing a normal event sequence.
- */
-export type ShouldStopAfterTurn = (context: AgentTurnContext) => boolean | Promise<boolean>;
-
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
@@ -234,16 +220,6 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * ```
 	 */
 	convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
-
-	/**
-	 * Optional hook called before each LLM request to refresh model-facing
-	 * context fields that may change during tool execution, such as dynamic
-	 * tool activation or system-prompt updates.
-	 *
-	 * The returned `messages` array, if present, replaces the current loop
-	 * transcript. Omit it to preserve in-loop assistant/tool-result messages.
-	 */
-	refreshContext?: () => Partial<AgentContext> | Promise<Partial<AgentContext>>;
 
 	/**
 	 * Optional transform applied to the context before `convertToLlm`.
@@ -287,25 +263,12 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	finishTurn?: FinishTurn;
 
-	/** See {@link ShouldStopAfterTurn}. Fork extension: runs before `prepareNextTurn`. */
-	shouldStopAfterTurn?: ShouldStopAfterTurn;
-
 	/**
 	 * Called immediately before every conversational provider request, including the first.
 	 * Pending messages have already been appended. The returned context, model, and thinking level
 	 * replace the runtime values for this and later requests in the run. This hook does not poll queues.
 	 */
 	prepareRequest?: PrepareRequest;
-
-	/**
-	 * Hard cap on the number of assistant turns this run may take. A "turn" is one
-	 * assistant message plus its tool executions. When the count reaches `maxTurns`,
-	 * the loop emits `agent_end` and exits before starting another LLM call — even if
-	 * the model still wants to call tools. Mirrors Claude Code's `query({ maxTurns })`
-	 * safety bound; use it to stop runaway agentic forks (e.g. background extractors).
-	 * Undefined or <= 0 means unbounded.
-	 */
-	maxTurns?: number;
 
 	/**
 	 * Called after `turn_end` when the loop will continue, immediately before the next turn starts.
@@ -380,13 +343,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 /**
  * Thinking/reasoning level for models that support it.
- * Note: "xhigh" and "adaptive" are only supported by selected model families.
- * - "adaptive" is Claude-4.6+ / Sonnet-4.6 only: model self-regulates thinking budget per turn.
- * - "xhigh" is reserved for native xhigh-effort models (Opus 4.7, GPT-5, etc.).
- * - "ultra" is a client orchestration mode mapped to the model's maximum native effort.
- * Use model thinking-level metadata from @lue-labs/pi-ai to detect support for a concrete model.
+ * Note: "xhigh" and "max" are only supported by selected model families. Use model
+ * thinking-level metadata from @lue-labs/pi-ai to detect support for a concrete model.
  */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "adaptive";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 /**
  * Extensible interface for custom app messages.
@@ -462,19 +422,34 @@ export interface AgentState {
 
 /** Final or partial result produced by a tool. */
 export interface AgentToolResult<T = JsonValue | undefined> {
-	/** Text, image, or provider-native reference content returned to the model. */
-	content: (TextContent | ImageContent | ToolReferenceContent)[];
+	/** Text or image content returned to the model. */
+	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
-	details?: T;
+	details: T;
+	/**
+	 * Machine-readable result matching the tool's `outputSchema`, for programmatic callers. Not sent
+	 * to the model; `content` remains the model-facing result.
+	 */
+	structuredContent?: JsonValue;
 	/** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
 	usage?: Usage;
-	/** Names of tools introduced by this result and available from this transcript point onward. */
-	addedToolNames?: string[];
+	/**
+	 * Report a failure without throwing. The model sees `content` as an error result, like a thrown
+	 * error, but `details` and `structuredContent` are kept for the UI and programmatic callers.
+	 */
+	isError?: boolean;
 	/**
 	 * Hint that the agent should stop after the current tool batch.
 	 * Early termination only happens when every finalized tool result in the batch sets this to true.
 	 */
 	terminate?: boolean;
+}
+
+/** Final outcome of a tool call after hooks ran. */
+export interface AgentToolCallOutcome {
+	toolCall: AgentToolCall;
+	result: AgentToolResult<any>;
+	isError: boolean;
 }
 
 /**
@@ -494,7 +469,15 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * Must return an object that matches `TParameters`.
 	 */
 	prepareArguments?: (args: unknown) => Static<TParameters>;
-	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
+	/**
+	 * JSON Schema of `structuredContent` in successful results. Tools that declare it should always
+	 * set `structuredContent`.
+	 */
+	outputSchema?: TSchema;
+	/**
+	 * Execute the tool call. Throw on failure, or return a result with `isError: true`; do not only
+	 * describe the failure in `content`.
+	 */
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,
@@ -515,8 +498,6 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
-	/** System prompt included with the request. */
-	systemPrompt?: string;
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for execution in this run. */

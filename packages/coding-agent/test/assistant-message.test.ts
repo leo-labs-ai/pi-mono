@@ -12,7 +12,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 
 function createAssistantMessage(
 	content: AssistantMessage["content"],
-	overrides: Partial<Pick<AssistantMessage, "stopReason">> & { errorMessage?: string } = {},
+	overrides: Partial<Pick<AssistantMessage, "stopReason">> = {},
 ): AssistantMessage {
 	return {
 		role: "assistant",
@@ -29,7 +29,6 @@ function createAssistantMessage(
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		},
 		stopReason: overrides.stopReason ?? "stop",
-		errorMessage: overrides.errorMessage,
 		timestamp: Date.now(),
 	};
 }
@@ -73,34 +72,6 @@ describe("AssistantMessageComponent", () => {
 
 		expect(rendered).toContain("Thinking...");
 		expect(rendered).toContain("Response was truncated before completion.");
-	});
-
-	test("renders normal aborts as visible errors", () => {
-		initTheme("dark");
-
-		const component = new AssistantMessageComponent(
-			createAssistantMessage([], { stopReason: "error", errorMessage: "Operation aborted" }),
-			true,
-		);
-		const rendered = component.render(80).join("\n");
-
-		expect(rendered).toContain("Operation aborted");
-	});
-
-	test("suppresses pi-goal stale continuation aborts", () => {
-		initTheme("dark");
-
-		const component = new AssistantMessageComponent(
-			createAssistantMessage([], {
-				stopReason: "aborted",
-				errorMessage: "pi-goal:stale-queued-continuation-cancelled",
-			}),
-			true,
-		);
-		const rendered = component.render(80).join("\n");
-
-		expect(rendered).not.toContain("Operation aborted");
-		expect(rendered).not.toContain("pi-goal:stale-queued-continuation-cancelled");
 	});
 
 	test("coalesces adjacent thinking blocks into one hidden thinking label", () => {

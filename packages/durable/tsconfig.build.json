@@ -4,7 +4,7 @@
 		"outDir": "./dist",
 		"paths": {
 			"@earendil-works/chord": ["../chord/dist/index.d.ts"],
-			"@earendil-works/pi-ai": ["../ai/dist/index.d.ts"]
+			"@lue-labs/pi-ai": ["../ai/dist/index.d.ts"]
 		},
 		"rootDir": "./src"
 	},

@@ -1,22 +1,18 @@
 import type { AgentMessage } from "@lue-labs/pi-agent-core";
-import type { AssistantMessage, TextContent, Usage } from "@lue-labs/pi-ai";
+import type { AssistantMessage, Usage } from "@lue-labs/pi-ai/compat";
+import { getModel } from "@lue-labs/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-	COMPACTION_FAILURE_TRIP_COUNT,
 	type CompactionSettings,
 	calculateContextTokens,
 	compact,
 	DEFAULT_COMPACTION_SETTINGS,
 	estimateContextTokens,
-	evaluateRapidRefill,
 	findCutPoint,
 	getLastAssistantUsage,
-	isTransientCompactionError,
 	prepareCompaction,
-	RAPID_REFILL_TRIP_COUNT,
-	RAPID_REFILL_WINDOW,
 	shouldCompact,
 } from "../src/core/compaction/index.ts";
 import {
@@ -30,8 +26,6 @@ import {
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../src/core/session-manager.ts";
-import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 
 // ============================================================================
 // Test fixtures
@@ -169,19 +163,18 @@ function extractText(messages: AgentMessage[]): string {
 								.join(" ");
 				case "assistant":
 					return message.content
-						.filter((block): block is TextContent => block.type === "text")
+						.filter((block): block is { type: "text"; text: string } => block.type === "text")
 						.map((block) => block.text)
 						.join(" ");
 				case "branchSummary":
 				case "compactionSummary":
 					return message.summary;
 				case "custom":
-					return message.content;
 				case "toolResult":
 					return typeof message.content === "string"
 						? message.content
 						: message.content
-								.filter((block): block is TextContent => block.type === "text")
+								.filter((block): block is { type: "text"; text: string } => block.type === "text")
 								.map((block) => block.text)
 								.join(" ");
 				case "bashExecution":
@@ -298,34 +291,6 @@ describe("shouldCompact", () => {
 		};
 
 		expect(shouldCompact(95000, 100000, settings)).toBe(false);
-	});
-
-	it("derives reserve tokens from absolute triggerTokens when context window is known", () => {
-		const settingsManager = SettingsManager.inMemory({
-			compaction: { triggerTokens: 150000, reserveTokens: 10000 },
-		});
-
-		const settings = settingsManager.getCompactionSettings(200000);
-
-		expect(settings.reserveTokens).toBe(50000);
-		expect(shouldCompact(151000, 200000, settings)).toBe(true);
-		expect(shouldCompact(149000, 200000, settings)).toBe(false);
-	});
-
-	it("falls back to reserveTokens when triggerTokens is above the context window", () => {
-		const settingsManager = SettingsManager.inMemory({
-			compaction: { triggerTokens: 150000, reserveTokens: 10000 },
-		});
-
-		expect(settingsManager.getCompactionSettings(100000).reserveTokens).toBe(10000);
-	});
-
-	it("falls back to reserveTokens when contextWindow is not provided", () => {
-		const settingsManager = SettingsManager.inMemory({
-			compaction: { triggerTokens: 150000, reserveTokens: 10000 },
-		});
-
-		expect(settingsManager.getCompactionSettings().reserveTokens).toBe(10000);
 	});
 });
 
@@ -638,7 +603,7 @@ describe("Large session fixture", () => {
 describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 	it("should generate a compaction result for the large session", async () => {
 		const entries = loadLargeSessionEntries();
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 
 		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
 		expect(preparation).toBeDefined();
@@ -659,7 +624,7 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 	it("should produce valid session after compaction", async () => {
 		const entries = loadLargeSessionEntries();
 		const loaded = buildSessionContext(entries);
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 
 		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
 		expect(preparation).toBeDefined();
@@ -687,115 +652,4 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 		console.log("Original messages:", loaded.messages.length);
 		console.log("After compaction:", reloaded.messages.length);
 	}, 60000);
-});
-
-describe("evaluateRapidRefill", () => {
-	it("trips on the 3rd rapid refill within the turn window, accumulating the streak", () => {
-		const first = evaluateRapidRefill({
-			hadPriorCompaction: false,
-			turnsSinceCompaction: 0,
-			consecutiveRapidRefills: 0,
-		});
-		expect(first).toEqual({ action: "proceed", consecutiveRapidRefills: 0 });
-
-		const second = evaluateRapidRefill({
-			hadPriorCompaction: true,
-			turnsSinceCompaction: 1,
-			consecutiveRapidRefills: first.consecutiveRapidRefills,
-		});
-		expect(second).toEqual({ action: "proceed", consecutiveRapidRefills: 1 });
-
-		const third = evaluateRapidRefill({
-			hadPriorCompaction: true,
-			turnsSinceCompaction: 2,
-			consecutiveRapidRefills: second.consecutiveRapidRefills,
-		});
-		expect(third).toEqual({ action: "proceed", consecutiveRapidRefills: 2 });
-
-		const fourth = evaluateRapidRefill({
-			hadPriorCompaction: true,
-			turnsSinceCompaction: 0,
-			consecutiveRapidRefills: third.consecutiveRapidRefills,
-		});
-		expect(fourth).toEqual({ action: "trip", consecutiveRapidRefills: RAPID_REFILL_TRIP_COUNT });
-	});
-
-	it("never trips and resets the streak when refills are spaced >= the turn window apart", () => {
-		let state = evaluateRapidRefill({
-			hadPriorCompaction: true,
-			turnsSinceCompaction: 1,
-			consecutiveRapidRefills: 1,
-		});
-		expect(state.consecutiveRapidRefills).toBe(2);
-
-		state = evaluateRapidRefill({
-			hadPriorCompaction: true,
-			turnsSinceCompaction: RAPID_REFILL_WINDOW,
-			consecutiveRapidRefills: state.consecutiveRapidRefills,
-		});
-		expect(state).toEqual({ action: "proceed", consecutiveRapidRefills: 0 });
-
-		for (let i = 0; i < 5; i++) {
-			state = evaluateRapidRefill({
-				hadPriorCompaction: true,
-				turnsSinceCompaction: RAPID_REFILL_WINDOW + i,
-				consecutiveRapidRefills: state.consecutiveRapidRefills,
-			});
-			expect(state).toEqual({ action: "proceed", consecutiveRapidRefills: 0 });
-		}
-	});
-
-	it("COMPACTION_FAILURE_TRIP_COUNT is a distinct constant from the rapid-refill window/trip count", () => {
-		expect(COMPACTION_FAILURE_TRIP_COUNT).toBe(3);
-		expect(RAPID_REFILL_TRIP_COUNT).toBe(3);
-		expect(RAPID_REFILL_WINDOW).toBe(3);
-	});
-});
-
-describe("isTransientCompactionError", () => {
-	it("classifies provider rate-limit / usage-limit / overload failures as transient", () => {
-		const transient = [
-			// Exact shape from the 2026-07-10 incident: a ChatGPT-Codex usage limit
-			// hit mid-session. The session resumed once resets_in_seconds elapsed,
-			// but the breaker had already permanently disabled auto-compaction.
-			'Summarization failed: OpenAI API error (429): {"type":"usage_limit_reached","message":"The usage limit has been reached","plan_type":"pro","resets_at":1783690536,"eligible_promo":null,"resets_in_seconds":5905}',
-			"Compaction failed: Summarization failed: OpenAI API error (429): Too Many Requests",
-			'Anthropic API error (529): {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}',
-			"rate_limit_error: This request would exceed your organization's rate limit",
-			"Google API error: RESOURCE_EXHAUSTED: Quota exceeded for quota metric",
-			// Billing/API quota errors are retried, not breaker strikes (in
-			// practice providers wrap these in a 429 anyway).
-			"You exceeded your current quota, please check your plan and billing details",
-			"HTTP 503 Service Unavailable",
-			"502 Bad Gateway",
-		];
-		for (const message of transient) {
-			expect(isTransientCompactionError(message), message).toBe(true);
-		}
-	});
-
-	it("keeps structural failures counting toward the breaker", () => {
-		const structural = [
-			"Summarization failed: Unknown error",
-			"compaction failed",
-			"No API key found for provider openai",
-			"Summarization failed: OpenAI API error (400): This model's maximum context length is 272000 tokens",
-			"Summarization failed: request entity too large",
-			// The terminal error of the 2026-07-10 incident: after the tripped
-			// breaker let context grow unchecked, every request died with this.
-			// A too-large payload never self-resolves - it must count.
-			'OpenAI API error (413): {"code":"request_too_large","message":"JSON request body exceeds the 8 MiB limit"}',
-			"Invalid model: gpt-5.6-sol",
-			// Digit substrings must not false-positive on the status-code patterns.
-			"Summarization failed: model produced 5290 tokens from 14290 input tokens",
-			// Filesystem quota on the session write (thrown after the paid
-			// summarization call) does not self-resolve - the breaker must stop
-			// the repeated-paid-summarization loop. Excluded via the
-			// `(?<!disk )quota` lookbehind.
-			"EDQUOT: disk quota exceeded, write '/Users/luke/.pi/agent/sessions/session.jsonl'",
-		];
-		for (const message of structural) {
-			expect(isTransientCompactionError(message), message).toBe(false);
-		}
-	});
 });

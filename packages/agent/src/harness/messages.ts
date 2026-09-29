@@ -33,8 +33,6 @@ export interface CustomMessage<T = unknown> {
 	customType: string;
 	content: string | (TextContent | ImageContent)[];
 	display: boolean;
-	/** Whether this message is included in the provider-facing context. Defaults to true. */
-	modelVisible?: boolean;
 	details?: T;
 	timestamp: number;
 }
@@ -112,9 +110,8 @@ export function createCustomMessage(
 	display: boolean,
 	details: unknown | undefined,
 	timestamp: string | number,
-	modelVisible?: boolean,
 ): CustomMessage {
-	const message: CustomMessage = {
+	return {
 		role: "custom",
 		customType,
 		content,
@@ -122,8 +119,6 @@ export function createCustomMessage(
 		details,
 		timestamp: typeof timestamp === "number" ? timestamp : new Date(timestamp).getTime(),
 	};
-	if (modelVisible !== undefined) message.modelVisible = modelVisible;
-	return message;
 }
 
 export function convertToLlm(messages: AgentMessage[]): Message[] {
@@ -140,7 +135,6 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
-					if (m.modelVisible === false) return undefined;
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

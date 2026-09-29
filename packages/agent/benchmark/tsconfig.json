@@ -1,11 +1,12 @@
 {
 	"extends": "../../../tsconfig.base.json",
 	"compilerOptions": {
-		"baseUrl": "../../..",
 		"noEmit": true,
 		"paths": {
-			"@lue-labs/pi-ai": ["packages/ai/src/index.ts"],
-			"@lue-labs/pi-ai/*": ["packages/ai/src/*"]
+			"@lue-labs/pi-ai": ["../../ai/src/index.ts"],
+			"@lue-labs/pi-ai/*": ["../../ai/src/*"],
+			"@earendil-works/pi-ai": ["../../ai/src/index.ts"],
+			"@earendil-works/pi-ai/*": ["../../ai/src/*"]
 		}
 	},
 	"include": ["./**/*.ts", "../src/**/*.ts"]

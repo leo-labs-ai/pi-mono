@@ -1,15 +1,15 @@
 {
 	"name": "@lue-labs/pi-coding-agent-install",
-	"version": "0.89.1",
+	"version": "0.99.0",
 	"private": true,
 	"description": "Lockfile root used by the Pi installer and updater.",
 	"dependencies": {
-		"@lue-labs/pi-coding-agent": "0.89.1"
+		"@lue-labs/pi-coding-agent": "0.99.0"
 	},
 	"overrides": {
 		"protobufjs": "7.6.6"
 	},
 	"engines": {
-		"node": ">=24.14.0"
+		"node": ">=22.19.0"
 	}
 }
