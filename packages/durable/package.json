@@ -1,6 +1,6 @@
 {
 	"name": "@lue-labs/pi-durable",
-	"version": "0.99.0",
+	"version": "0.99.1",
 	"description": "Durable conversation, task, and document runtime for Pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -84,8 +84,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@lue-labs/pi-ai": "0.99.0",
-		"@earendil-works/chord": "^0.99.0"
+		"@lue-labs/pi-ai": "0.99.1",
+		"@earendil-works/chord": "^0.99.1"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",
