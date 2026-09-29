@@ -1,4 +1,4 @@
-import { backgroundAnsi, foregroundAnsi, rgbColor } from "@earendil-works/pi-tui";
+import { backgroundAnsi, foregroundAnsi, rgbColor } from "@lue-labs/pi-tui";
 import { theme } from "../theme/theme.ts";
 
 const CORAL = rgbColor(228, 138, 122);

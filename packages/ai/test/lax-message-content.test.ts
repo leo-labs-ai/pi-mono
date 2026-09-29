@@ -59,14 +59,7 @@ describe("lax message content handling", () => {
 
 		const result = transformMessages(messages, makeTextOnlyModel());
 
-		// The null-content user message normalizes to [] (no crash) but is then
-		// dropped by the fork's hasVisibleUserContent filter (fork-owned; see
-		// transform-messages.ts): invisible/empty hook-style user turns must not
-		// interrupt tool_use -> toolResult adjacency. The null-content assistant
-		// message carries no toolCall, so its lone toolResult is an orphan and is
-		// dropped too (pi-mono#479) — only the assistant message survives.
-		expect(result).toHaveLength(1);
-		expect(result[0].role).toBe("assistant");
+		expect(result).toHaveLength(3);
 		for (const msg of result) {
 			expect(msg.content).toEqual([]);
 		}

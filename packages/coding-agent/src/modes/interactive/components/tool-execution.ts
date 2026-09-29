@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "@lue-labs/pi-agent-core";
 import {
+	Box,
 	type Component,
 	Container,
 	getCapabilities,
@@ -21,7 +22,7 @@ import type { Theme } from "../theme/theme.ts";
  * narrowing them here would make those definitions unassignable.
  */
 export interface ToolRenderers {
-	renderShell?: "default" | "self" | "hidden";
+	renderShell?: "default" | "self";
 	renderCall?: (args: any, theme: Theme, context: ToolRenderContext<any, any>) => Component;
 	renderResult?: (
 		result: AgentToolResult<any>,
@@ -35,7 +36,6 @@ import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "
 import { convertToPng } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
-import { ToolPanel } from "./tool-panel.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
@@ -44,10 +44,8 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
-export type ToolExecutionState = "queued" | "running" | "completed" | "error";
-
 export class ToolExecutionComponent extends Container {
-	private contentPanel: ToolPanel;
+	private contentBox: Box;
 	private contentText: Text;
 	private contentTextRegion: MouseRegion;
 	private selfRenderContainer: Container;
@@ -79,7 +77,6 @@ export class ToolExecutionComponent extends Container {
 		{ sourceData: string; sourceMimeType: string; data: string; mimeType: string }
 	> = new Map();
 	private hideComponent = false;
-	private disposed = false;
 
 	constructor(
 		toolName: string,
@@ -102,19 +99,18 @@ export class ToolExecutionComponent extends Container {
 
 		this.addChild(new Spacer(1));
 
-		// contentPanel is the fork's shell for default renderer-based composition (it supplies the
-		// padding and background upstream's Box did). selfRenderContainer is used when the tool
-		// renders its own framing. contentText is the generic fallback when no renderers exist.
-		this.contentPanel = new ToolPanel((text) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 0, 0);
+		// Always create all shell variants. contentBox is used for default renderer-based composition.
+		// selfRenderContainer is used when the tool renders its own framing.
+		// contentText is reserved for generic fallback rendering when no tool definition exists.
+		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentTextRegion = this.createResultRegion(this.contentText);
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentPanel);
+			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
 		} else {
-			this.contentPanel.addChild(this.contentTextRegion);
-			this.addChild(this.contentPanel);
+			this.addChild(this.contentTextRegion);
 		}
 
 		this.updateDisplay();
@@ -132,7 +128,7 @@ export class ToolExecutionComponent extends Container {
 		return this.toolDefinition !== undefined;
 	}
 
-	private getRenderShell(): "default" | "self" | "hidden" {
+	private getRenderShell(): "default" | "self" {
 		return this.toolDefinition?.renderShell ?? "default";
 	}
 
@@ -141,7 +137,6 @@ export class ToolExecutionComponent extends Container {
 			args: this.args,
 			toolCallId: this.toolCallId,
 			invalidate: () => {
-				if (this.disposed) return;
 				this.invalidate();
 				this.ui.requestRender();
 			},
@@ -175,11 +170,6 @@ export class ToolExecutionComponent extends Container {
 			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 		}
 		return new Text(text, 0, 0);
-	}
-
-	private updatePanelBackground(): void {
-		const background = this.isPartial ? "toolPendingBg" : this.result?.isError ? "toolErrorBg" : "toolSuccessBg";
-		this.contentPanel.setBackground((text) => theme.bg(background, text));
 	}
 
 	private createResultRegion(component: Component): MouseRegion {
@@ -266,36 +256,13 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	getToolCallId(): string {
-		return this.toolCallId;
-	}
-
-	isVisible(): boolean {
-		return !this.hideComponent;
-	}
-
-	getExecutionState(): ToolExecutionState {
-		if (this.result?.isError) return "error";
-		if (this.result && !this.isPartial) return "completed";
-		return this.executionStarted ? "running" : "queued";
-	}
-
-	dispose(): void {
-		if (this.disposed) return;
-		this.disposed = true;
-		const disposeRenderer = this.rendererState?.dispose;
-		if (typeof disposeRenderer === "function") disposeRenderer();
-		this.rendererState = {};
-	}
-
 	override invalidate(): void {
-		if (this.disposed) return;
 		super.invalidate();
 		this.updateDisplay();
 	}
 
 	override render(width: number): string[] {
-		if (this.disposed || this.hideComponent) {
+		if (this.hideComponent) {
 			return [];
 		}
 
@@ -338,17 +305,19 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
-		if (this.disposed) return;
-		if (this.getRenderShell() === "hidden") {
-			this.hideComponent = true;
-			return;
-		}
+		const bgFn = this.isPartial
+			? (text: string) => theme.bg("toolPendingBg", text)
+			: this.result?.isError
+				? (text: string) => theme.bg("toolErrorBg", text)
+				: (text: string) => theme.bg("toolSuccessBg", text);
 
 		let hasContent = false;
 		this.hideComponent = false;
-		this.updatePanelBackground();
 		if (this.hasRendererDefinition()) {
-			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentPanel;
+			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
+			if (renderContainer instanceof Box) {
+				renderContainer.setBgFn(bgFn);
+			}
 			renderContainer.clear();
 
 			const callRenderer = this.getCallRenderer();
@@ -398,6 +367,7 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
+			this.contentText.setCustomBgFn(bgFn);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}

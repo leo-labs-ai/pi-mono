@@ -98,13 +98,12 @@ function formatWriteCall(
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	cache: WriteHighlightCache | undefined,
-	label: string,
 	cwd: string,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
-	let text = `${theme.fg("toolTitle", theme.bold(label))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
 
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -143,48 +142,40 @@ function formatWriteResult(
 	return `\n${theme.fg("error", output)}`;
 }
 
-export type WriteRenderers = Pick<ToolDefinition<any, any>, "renderCall" | "renderResult">;
-
-/** The write tool is registered under more than one label, so the rendered title follows the definition. */
-export function createWriteRenderers(label = "Write"): WriteRenderers {
-	return {
-		renderCall(args, theme, context) {
-			const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
-			const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
-			const fileContent = str(renderArgs?.content);
-			const component =
-				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
-			if (fileContent !== null) {
-				component.cache = context.argsComplete
-					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
-					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
-			} else {
-				component.cache = undefined;
-			}
-			component.setText(
-				formatWriteCall(
-					renderArgs,
-					{ expanded: context.expanded, isPartial: context.isPartial },
-					theme,
-					component.cache,
-					label,
-					context.cwd,
-				),
-			);
+export const writeRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> = {
+	renderCall(args, theme, context) {
+		const renderArgs = args as { path?: string; file_path?: string; content?: string } | undefined;
+		const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
+		const fileContent = str(renderArgs?.content);
+		const component =
+			(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
+		if (fileContent !== null) {
+			component.cache = context.argsComplete
+				? rebuildWriteHighlightCacheFull(rawPath, fileContent)
+				: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
+		} else {
+			component.cache = undefined;
+		}
+		component.setText(
+			formatWriteCall(
+				renderArgs,
+				{ expanded: context.expanded, isPartial: context.isPartial },
+				theme,
+				component.cache,
+				context.cwd,
+			),
+		);
+		return component;
+	},
+	renderResult(result, _options, theme, context) {
+		const output = formatWriteResult({ ...result, isError: context.isError }, theme);
+		if (!output) {
+			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			component.clear();
 			return component;
-		},
-		renderResult(result, _options, theme, context) {
-			const output = formatWriteResult({ ...result, isError: context.isError }, theme);
-			if (!output) {
-				const component = (context.lastComponent as Container | undefined) ?? new Container();
-				component.clear();
-				return component;
-			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(output);
-			return text;
-		},
-	};
-}
-
-export const writeRenderers: WriteRenderers = createWriteRenderers();
+		}
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(output);
+		return text;
+	},
+};

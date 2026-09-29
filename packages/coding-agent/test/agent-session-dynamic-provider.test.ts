@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider } from "@lue-labs/pi-ai";
+import { getModel } from "@lue-labs/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -10,13 +11,9 @@ import type { ExtensionFactory } from "../src/core/sdk.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 
-// The native provider must expose the same model id the session is actually using
-// (pickModel("anthropic")), not a hardcoded id, so registerNativeProvider's
-// replacement provider still contains the active model for lookup to find.
 function nativeAnthropicProvider(baseUrl: string): Provider {
-	const model = { ...pickModel("anthropic"), baseUrl };
+	const model = { ...getModel("anthropic", "claude-sonnet-4-5")!, baseUrl };
 	return {
 		id: "anthropic",
 		name: "Native Anthropic",
@@ -73,7 +70,7 @@ describe("AgentSession dynamic provider registration", () => {
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir,
-			model: pickModel("anthropic"),
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
 			settingsManager,
 			sessionManager,
 			modelRuntime,

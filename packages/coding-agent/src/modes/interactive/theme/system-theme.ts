@@ -26,7 +26,7 @@ import {
 	oklabToOkhslLightness,
 	type RgbColor,
 	rgbColor,
-} from "@earendil-works/pi-tui";
+} from "@lue-labs/pi-tui";
 import type { ThemeAppearance, ThemeBg, ThemeColor, ThemeToken } from "./theme.ts";
 
 export const SYSTEM_THEME_NAME = "system";

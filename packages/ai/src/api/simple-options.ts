@@ -34,7 +34,6 @@ export function buildBaseOptions(
 		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
-		cacheAffinityKey: options?.cacheAffinityKey,
 		sessionId: options?.sessionId,
 		headers: options?.headers,
 		onPayload: options?.onPayload,
@@ -52,28 +51,16 @@ export function buildBaseOptions(
 /** Tokens always left for the answer when a thinking budget shares the response ceiling. */
 export const MIN_ANSWER_TOKENS = 1024;
 
-export function clampReasoning(
-	effort: ThinkingLevel | undefined,
-): Exclude<ThinkingLevel, "xhigh" | "max" | "ultra" | "adaptive"> | undefined {
-	if (effort === "xhigh" || effort === "max" || effort === "ultra" || effort === "adaptive") return "high";
-	return effort;
-}
-
-/**
- * Anthropic's budget-based thinking requires `budget_tokens >= 1024` (and
- * strictly below `max_tokens`). A request that violates the floor is dropped as
- * an EMPTY completion rather than a hard error — silently breaking small forks.
- * Callers should disable thinking when the available room can't carry at least
- * this many tokens. See `streamSimpleAnthropic`.
- */
-export const MIN_THINKING_BUDGET = 1024;
-
 export const DEFAULT_THINKING_BUDGETS: ThinkingBudgets = {
 	minimal: 1024,
 	low: 2048,
 	medium: 8192,
 	high: 16384,
 };
+
+export function clampReasoning(effort: ThinkingLevel | undefined): Exclude<ThinkingLevel, "xhigh" | "max"> | undefined {
+	return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
 
 export function thinkingBudgetForLevel(reasoningLevel: ThinkingLevel, customBudgets?: ThinkingBudgets): number {
 	const budgets = { ...DEFAULT_THINKING_BUDGETS, ...customBudgets };

@@ -56,12 +56,15 @@ describe("defaultTools setting", () => {
 	}
 
 	it("uses the configured list as the initial built-in selection", async () => {
-		const session = await createSession(["grep", "Glob"]);
+		const session = await createSession(["grep", "find"]);
 
-		const allToolNames = session.getAllTools().map((tool) => tool.name);
-		expect(allToolNames).toEqual(expect.arrayContaining(["grep", "Glob"]));
-		expect(allToolNames).not.toContain("find");
-		expect(session.getActiveToolNames()).toEqual(["grep", "Glob"]);
+		expect(
+			session
+				.getAllTools()
+				.map((tool) => tool.name)
+				.sort(),
+		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
+		expect(session.getActiveToolNames()).toEqual(["grep", "find"]);
 		expect(session.systemPrompt).toContain("- grep:");
 		expect(session.systemPrompt).not.toContain("- read:");
 		session.dispose();
@@ -162,9 +165,12 @@ describe("defaultTools setting", () => {
 			model: getModel("anthropic", "claude-sonnet-4-5")!,
 		});
 
-		const allToolNames = session.getAllTools().map((tool) => tool.name);
-		expect(allToolNames).toContain("ls");
-		expect(allToolNames).not.toContain("find");
+		expect(
+			session
+				.getAllTools()
+				.map((tool) => tool.name)
+				.sort(),
+		).toEqual(["bash", "edit", "find", "grep", "ls", "powershell", "read", "write"]);
 		expect(session.getActiveToolNames()).toEqual(["ls"]);
 		session.dispose();
 	});

@@ -11,11 +11,12 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
 	EventStream,
+	getModel,
 	type ImageContent,
 	type TextContent,
-} from "@lue-labs/pi-ai";
+} from "@lue-labs/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -25,7 +26,6 @@ import {
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
 } from "../src/core/system-prompt.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
 // Mock stream that mimics AssistantMessageEventStream
@@ -83,7 +83,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	async function createSession() {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		let abortSignal: AbortSignal | undefined;
 
 		// Use a stream function that responds to abort
@@ -124,7 +124,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});
@@ -187,7 +186,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should queue extension-origin steering messages while streaming", async () => {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		let abortSignal: AbortSignal | undefined;
 		let sawSteeringMessage = false;
 		let lastInputSource: string | undefined;
@@ -260,7 +259,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader({ extensionsResult }),
 		});
@@ -297,146 +295,9 @@ describe("AgentSession concurrent prompt guard", () => {
 		expect(sawSteeringMessage).toBe(true);
 	});
 
-	it("queues prompt() when a run is active but not streaming (compaction/agent_end window)", async () => {
-		// Regression: auto-compaction and the agent_end listener phase leave
-		// agent.isProcessing true while isStreaming is false. prompt() only gated
-		// on isStreaming, fell through to agent.prompt(), and rejected with
-		// "Agent is already processing a prompt" — fatal for un-awaited callers
-		// (extension sendUserMessage), which crashed the whole TUI process.
-		await createSession();
-
-		const firstPrompt = session.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		expect(session.agent.isProcessing).toBe(true);
-
-		// Simulate the busy-but-not-streaming window (compaction, agent_end phase).
-		// session.isStreaming now tracks the whole run (_isAgentRunActive);
-		// the gate's strict/steer split reads the raw agent flag.
-		(session.agent.state as { isStreaming: boolean }).isStreaming = false;
-		expect(session.agent.state.isStreaming).toBe(false);
-
-		// Must queue (default steer), not race agent.prompt() and reject.
-		await expect(session.prompt("Second message")).resolves.toBeUndefined();
-		expect(session.getSteeringMessages()).toContain("Second message");
-
-		await session.abort();
-		await firstPrompt.catch(() => {});
-	});
-
-	it("queues sendUserMessage() when a run is active but not streaming", async () => {
-		// Same window as above via the extension-facing API — the caller that
-		// actually crashed sessions in the wild (idle-return, pi-goal,
-		// suggested-tasks all call pi.sendUserMessage un-awaited).
-		await createSession();
-
-		const firstPrompt = session.prompt("First message");
-		await new Promise((resolve) => setTimeout(resolve, 10));
-		(session.agent.state as { isStreaming: boolean }).isStreaming = false;
-
-		await expect(session.sendUserMessage("Extension message")).resolves.toBeUndefined();
-		expect(session.getSteeringMessages()).toContain("Extension message");
-
-		await session.abort();
-		await firstPrompt.catch(() => {});
-	});
-
-	it("falls back to the steering queue when agent.prompt() loses a TOCTOU race", async () => {
-		// Regression: a run can start between prompt()'s busy gate and
-		// agent.prompt() (post-compaction resume, extension-triggered turn).
-		// The rejection must be absorbed by queueing, mirroring
-		// sendCustomMessage's fallback, instead of propagating to callers.
-		await createSession();
-
-		const promptSpy = vi
-			.spyOn(session.agent, "prompt")
-			.mockRejectedValueOnce(
-				new Error(
-					"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
-				),
-			);
-		const steerSpy = vi.spyOn(session.agent, "steer");
-
-		await expect(session.prompt("Raced message")).resolves.toBeUndefined();
-		expect(promptSpy).toHaveBeenCalledTimes(1);
-		expect(steerSpy).toHaveBeenCalled();
-		expect(session.getSteeringMessages()).toContain("Raced message");
-
-		vi.restoreAllMocks();
-	});
-
-	it("delivers messages queued while manual compaction held the busy gate", async () => {
-		// Review finding on the busy-gate fix: compact() aborts any active run,
-		// so a message steered while isCompacting held the gate had no run to
-		// drain it — it sat queued until the next prompt (or was lost on exit).
-		// compact()'s finally now calls _drainQueuedMessagesPostCompaction().
-		const model = pickModel("anthropic");
-		const seenUserTexts: string[] = [];
-		const agent = new Agent({
-			getApiKey: () => "test-key",
-			initialState: {
-				model,
-				systemPrompt: "Test",
-				tools: [],
-			},
-			streamFn: (_model, context) => {
-				const stream = new MockAssistantStream();
-				queueMicrotask(() => {
-					for (const message of context.messages) {
-						if (message.role !== "user" || typeof message.content === "string") continue;
-						for (const part of message.content) {
-							if (typeof part === "object" && part !== null && part.type === "text") {
-								seenUserTexts.push(part.text);
-							}
-						}
-					}
-					stream.push({ type: "start", partial: createAssistantMessage("") });
-					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Done") });
-				});
-				return stream;
-			},
-		});
-
-		const sessionManager = SessionManager.inMemory();
-		const settingsManager = SettingsManager.create(tempDir, tempDir);
-		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
-		const modelRegistry = await createModelRegistry(authStorage, tempDir);
-
-		session = new AgentSession({
-			agent,
-			sessionManager,
-			settingsManager,
-			cwd: tempDir,
-			modelRegistry,
-			modelRuntime: getModelRuntime(modelRegistry),
-			resourceLoader: createTestResourceLoader(),
-		});
-
-		// Seed a completed turn so the session is idle with a trailing assistant
-		// message — the state compact() leaves behind.
-		await session.prompt("First message");
-		await session.agent.waitForIdle();
-		expect(session.agent.isProcessing).toBe(false);
-
-		// A message queued during compaction (the broadened gate steers it).
-		session.agent.steer({
-			role: "user",
-			content: [{ type: "text", text: "Queued during compact" }],
-			timestamp: Date.now(),
-		});
-		expect(session.agent.hasQueuedMessages()).toBe(true);
-
-		(session as unknown as { _drainQueuedMessagesPostCompaction: () => void })._drainQueuedMessagesPostCompaction();
-		await new Promise((resolve) => setTimeout(resolve, 25));
-		await session.agent.waitForIdle();
-
-		expect(session.agent.hasQueuedMessages()).toBe(false);
-		expect(seenUserTexts).toContain("Queued during compact");
-	});
-
 	it("should allow prompt() after previous completes", async () => {
 		// Create session with a stream that completes immediately
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: {
@@ -465,7 +326,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});
@@ -481,7 +341,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should wait for queued agent events before emitting tool_call", async () => {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const tool = {
 			name: "dummy",
 			description: "Dummy tool",
@@ -572,7 +432,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 			baseToolsOverride: { dummy: tool },
@@ -597,19 +456,10 @@ describe("AgentSession concurrent prompt guard", () => {
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<{ messages: []; systemPromptOptions: NormalizedBuildSystemPromptOptions }>;
 				invalidate: (message?: string) => void;
-				fireSessionDispose?: () => void;
-				applySystemPromptBuildFilters: (
-					systemPrompt: string,
-					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<string>;
-				loadDeferredExtensions: () => Promise<void>;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
 			hasHandlers: (eventType) => eventType === "tool_call",
-			loadDeferredExtensions: async () => {},
-			applySystemPromptBuildFilters: async (systemPrompt: string) => systemPrompt,
-			fireSessionDispose: () => {},
 			emit: async () => {},
 			emitMessageEnd: async () => undefined,
 			emitToolCall: async () => {
@@ -639,7 +489,7 @@ describe("AgentSession concurrent prompt guard", () => {
 	});
 
 	it("should persist message_end events in order with slow extension handlers", async () => {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const tool = {
 			name: "dummy",
 			description: "Dummy tool",
@@ -731,7 +581,6 @@ describe("AgentSession concurrent prompt guard", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 			baseToolsOverride: { dummy: tool },
@@ -754,19 +603,10 @@ describe("AgentSession concurrent prompt guard", () => {
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<{ messages: []; systemPromptOptions: NormalizedBuildSystemPromptOptions }>;
 				invalidate: (message?: string) => void;
-				fireSessionDispose?: () => void;
-				applySystemPromptBuildFilters: (
-					systemPrompt: string,
-					systemPromptOptions: BuildSystemPromptOptions,
-				) => Promise<string>;
-				loadDeferredExtensions: () => Promise<void>;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
 			hasHandlers: () => false,
-			loadDeferredExtensions: async () => {},
-			applySystemPromptBuildFilters: async (systemPrompt: string) => systemPrompt,
-			fireSessionDispose: () => {},
 			emit: async () => {},
 			emitMessageEnd: async (event) => {
 				if (event.type === "message_end" && event.message?.role === "assistant") {

@@ -843,7 +843,6 @@ function toChatMessages(messages: Message[], supportsImages: boolean): MistralCh
 					}
 					continue;
 				}
-				if (block.type === "tool_reference") continue;
 				toolCalls.push({
 					id: block.id,
 					type: "function",

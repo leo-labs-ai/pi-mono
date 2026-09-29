@@ -4,12 +4,6 @@
 
 import { getSystemMessageText } from "@lue-labs/pi-ai";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../config.ts";
-import type { ContextFile } from "./context-file-imports.ts";
-import {
-	GUIDELINE_BASH_SHELL_WORK,
-	GUIDELINE_NATIVE_FILE_TOOLS,
-	GUIDELINE_READ_EDIT_WRITE,
-} from "./prompt-guidelines.ts";
 import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 
 export interface BuildSystemPromptOptions {
@@ -32,7 +26,7 @@ export interface BuildSystemPromptOptions {
 	/** Working directory. */
 	cwd: string;
 	/** Pre-loaded context files. */
-	contextFiles?: ContextFile[];
+	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
 }
@@ -61,7 +55,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 	return {
 		customPrompt: input.customPrompt,
 		forceSystemPrompt: input.forceSystemPrompt,
-		selectedTools: [...(input.selectedTools ?? ["read", "bash", "edit", "write", "grep", "glob"])],
+		selectedTools: [...(input.selectedTools ?? ["read", "bash", "edit", "write"])],
 		toolSnippets: { ...(input.toolSnippets ?? {}) },
 		toolGuidelines: Object.fromEntries(
 			Object.entries(input.toolGuidelines ?? {}).map(([name, guidelines]) => [name, [...guidelines]]),
@@ -84,19 +78,6 @@ function renderProjectContext(contextFiles: Array<{ path: string; content: strin
 	].join("\n\n");
 }
 
-function findCaseInsensitiveEntry<T>(record: Record<string, T>, name: string): [string, T] | undefined {
-	const normalizedName = name.toLowerCase();
-	return Object.entries(record).find(([key]) => key.toLowerCase() === normalizedName);
-}
-
-function renderGuidelines(guidelines: string[]): string {
-	const seen = new Set<string>();
-	const normalized = guidelines
-		.map((guideline) => guideline.trim())
-		.filter((guideline) => guideline.length > 0 && !seen.has(guideline) && seen.add(guideline));
-	return normalized.map((guideline) => `- ${guideline}`).join("\n");
-}
-
 function buildRules(
 	selectedTools: string[],
 	toolGuidelines: Record<string, string[]>,
@@ -111,45 +92,24 @@ function buildRules(
 		rules.push(normalized);
 	};
 
-	const selectedToolNames = new Set(selectedTools.map((name) => name.toLowerCase()));
-	const hasBash = selectedToolNames.has("bash");
-	const hasPowerShell = selectedToolNames.has("powershell");
-	const hasGrep = selectedToolNames.has("grep");
-	const hasGlob = selectedToolNames.has("glob");
-	const hasFind = selectedToolNames.has("find");
-	const hasLs = selectedToolNames.has("ls");
-	const hasRead = selectedToolNames.has("read");
+	const hasBash = selectedTools.includes("bash");
+	const hasPowerShell = selectedTools.includes("powershell");
+	const hasGrep = selectedTools.includes("grep");
+	const hasFind = selectedTools.includes("find");
+	const hasLs = selectedTools.includes("ls");
 
 	if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
 		if (hasBash && hasPowerShell) {
-			addRule("Use Bash or PowerShell for file operations like listing, searching, and finding files");
+			addRule("Use bash or PowerShell for file operations like listing, searching, and finding files");
 		} else if (hasPowerShell) {
 			addRule("Use PowerShell for file operations like listing, searching, and finding files");
 		} else {
-			addRule("Use Bash for file operations like ls, rg, find");
+			addRule("Use bash for file operations like ls, rg, find");
 		}
-	} else if (hasBash && (hasGrep || hasGlob || hasLs)) {
-		// Shared with bash.ts promptGuidelines via prompt-guidelines.ts so
-		// addRule deduplicates by exact string match.
-		addRule(GUIDELINE_NATIVE_FILE_TOOLS);
-		addRule(GUIDELINE_BASH_SHELL_WORK);
-		addRule(GUIDELINE_READ_EDIT_WRITE);
-	}
-
-	if (hasRead || hasGrep || hasGlob || hasLs) {
-		addRule(
-			"Batch independent tool calls in a single message: when several calls have no data dependency on each other — reads, directory listings, searches, bounded reads, independent read-only bash queries, edits to different files, or multiple Agent launches — emit them together in one assistant message instead of one call per turn. Serialize only when a later call needs an earlier call's result.",
-		);
-	}
-
-	if (hasBash) {
-		addRule(
-			"Run bash commands from the current working directory unless the command truly needs another directory. To run in another directory, pass the bash `workdir` parameter (absolute path) instead of `cd <dir> && ...`; or use command-native flags like `git -C <dir>` or `npm --prefix <dir>`.",
-		);
 	}
 
 	for (const name of selectedTools) {
-		for (const rule of findCaseInsensitiveEntry(toolGuidelines, name)?.[1] ?? []) addRule(rule);
+		for (const rule of toolGuidelines[name] ?? []) addRule(rule);
 	}
 	for (const rule of promptGuidelines) addRule(rule);
 	addRule("Be concise in your responses");
@@ -182,24 +142,15 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 	const promptSections: Record<string, string> = {};
 	if (customPrompt) {
 		promptSections.preamble = customPrompt;
-		const customGuidelines = renderGuidelines(promptGuidelines);
-		if (customGuidelines) promptSections.tool_guidelines = `Tool guidelines:\n${customGuidelines}`;
 	} else {
 		promptSections.preamble =
 			"You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.";
-		const visibleTools = selectedTools
-			.map((name) => findCaseInsensitiveEntry(toolSnippets, name))
-			.filter((entry): entry is [string, string] => entry !== undefined);
+		const visibleTools = selectedTools.filter((name) => !!toolSnippets[name]);
 		const tools =
-			visibleTools.length > 0 ? visibleTools.map(([name, snippet]) => `- ${name}: ${snippet}`).join("\n") : "(none)";
+			visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets[name]}`).join("\n") : "(none)";
 		promptSections.tools = `${tools}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.`;
 		promptSections.rules = buildRules(selectedTools, toolGuidelines, promptGuidelines);
-		const selectedToolNames = new Set(selectedTools.map((name) => name.toLowerCase()));
-		const hasPiSkill =
-			selectedToolNames.has("read") && skills.some((skill) => skill.name === "pi" && !skill.disableModelInvocation);
-		promptSections.docs = hasPiSkill
-			? `Pi documentation: load skill \`pi\`; it routes runtime identity, updates, and the installed docs/examples at ${getReadmePath()}, ${getDocsPath()}, and ${getExamplesPath()}.`
-			: `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+		promptSections.docs = `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
 - Main documentation: ${getReadmePath()}
 - Additional docs: ${getDocsPath()}
 - Examples: ${getExamplesPath()} (extensions, custom tools, SDK)
@@ -211,8 +162,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 
 	if (appendSystemPrompt) promptSections.addendum = appendSystemPrompt;
 	if (contextFiles.length > 0) promptSections.project_context = renderProjectContext(contextFiles);
-	const selectedToolNames = new Set(selectedTools.map((name) => name.toLowerCase()));
-	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedToolNames.has(tool));
+	const skillFileReadTool = (["read", "bash"] as const).find((tool) => selectedTools.includes(tool));
 	if (skillFileReadTool && skills.length > 0) {
 		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;

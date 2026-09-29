@@ -20,7 +20,7 @@ import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
 import {
 	createBashTool,
 	createEditTool,
-	createGlobTool,
+	createFindTool,
 	createGrepTool,
 	createLsTool,
 	createReadTool,
@@ -49,7 +49,7 @@ function createBuiltInTools(cwd: string) {
 		bash: createBashTool(cwd),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
-		Glob: createGlobTool(cwd),
+		find: createFindTool(cwd),
 		grep: createGrepTool(cwd),
 		ls: createLsTool(cwd),
 	};
@@ -249,18 +249,18 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	// =========================================================================
-	// Glob Tool
+	// Find Tool
 	// =========================================================================
 	pi.registerTool({
-		name: "Glob",
-		label: "Glob",
+		name: "find",
+		label: "find",
 		description:
-			"Match files by name pattern (glob). Searches recursively from the specified path. Output limited to 200 results.",
-		parameters: getBuiltInTools(process.cwd()).Glob.parameters,
+			"Find files by name pattern (glob). Searches recursively from the specified path. Output limited to 200 results.",
+		parameters: getBuiltInTools(process.cwd()).find.parameters,
 
 		async execute(toolCallId, params, signal, onUpdate, ctx) {
 			const tools = getBuiltInTools(ctx.cwd);
-			return tools.Glob.execute(toolCallId, params, signal, onUpdate);
+			return tools.find.execute(toolCallId, params, signal, onUpdate);
 		},
 
 		renderCall(args, theme, _context) {
@@ -268,7 +268,7 @@ export default function (pi: ExtensionAPI) {
 			const path = shortenPath(args.path || ".");
 			const limit = args.limit;
 
-			let text = `${theme.fg("toolTitle", theme.bold("Glob"))} ${theme.fg("accent", pattern)}`;
+			let text = `${theme.fg("toolTitle", theme.bold("find"))} ${theme.fg("accent", pattern)}`;
 			text += theme.fg("toolOutput", ` in ${path}`);
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);

@@ -2,7 +2,13 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, type Model } from "@lue-labs/pi-ai";
+import {
+	type AssistantMessage,
+	type AssistantMessageEvent,
+	EventStream,
+	getModel,
+	type Model,
+} from "@lue-labs/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
@@ -11,7 +17,6 @@ import type { LoadExtensionsResult } from "../src/core/extensions/index.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runRpcMode } from "../src/modes/rpc/rpc-mode.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.ts";
 
@@ -103,7 +108,7 @@ async function createRuntimeHost(options: {
 	const tempDir = join(tmpdir(), `pi-rpc-prompt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
-	const model = options.model ?? pickModel("anthropic");
+	const model = options.model ?? getModel("anthropic", "claude-sonnet-4-5");
 	if (!model) {
 		throw new Error("Test model not found");
 	}
@@ -140,7 +145,6 @@ async function createRuntimeHost(options: {
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader: createTestResourceLoader({ extensionsResult: options.extensionsResult }),
 	});

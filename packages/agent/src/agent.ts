@@ -23,7 +23,6 @@ import type {
 	AgentMessage,
 	AgentState,
 	AgentTool,
-	AgentTurnContext,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
 	FinishTurn,
@@ -123,7 +122,6 @@ export interface AgentOptions {
 	onProviderStreamEvent?: SimpleStreamOptions["onProviderStreamEvent"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
-	shouldStopAfterTurn?: (context: AgentTurnContext, signal?: AbortSignal) => boolean | Promise<boolean>;
 	finishTurn?: FinishTurn;
 	prepareRequest?: PrepareRequest;
 	prepareNextTurn?: (
@@ -136,13 +134,10 @@ export interface AgentOptions {
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	sessionId?: string;
-	cacheAffinityKey?: string;
 	thinkingBudgets?: ThinkingBudgets;
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
-	/** Hard cap on assistant turns per run. See {@link AgentLoopConfig.maxTurns}. */
-	maxTurns?: number;
 }
 
 class PendingMessageQueue {
@@ -161,11 +156,6 @@ class PendingMessageQueue {
 		return this.messages.length > 0;
 	}
 
-	/** Remove and return the most recently enqueued message, if any. */
-	removeLast(): AgentMessage | undefined {
-		return this.messages.pop();
-	}
-
 	peek(): AgentMessage[] {
 		if (this.mode === "all") return this.messages.slice();
 		const first = this.messages[0];
@@ -176,10 +166,6 @@ class PendingMessageQueue {
 		const drained = this.peek();
 		this.messages = this.messages.slice(drained.length);
 		return drained;
-	}
-
-	prepend(messages: AgentMessage[]): void {
-		this.messages = [...messages, ...this.messages];
 	}
 
 	clear(): void {
@@ -220,8 +206,6 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
-	/** Graceful stop hook checked after each turn. See {@link AgentLoopConfig.shouldStopAfterTurn}. */
-	public shouldStopAfterTurn?: (context: AgentTurnContext, signal?: AbortSignal) => boolean | Promise<boolean>;
 	public finishTurn?: FinishTurn;
 	public prepareRequest?: PrepareRequest;
 	public prepareNextTurn?: (
@@ -234,8 +218,6 @@ export class Agent {
 	private activeRun?: ActiveRun;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
-	/** Stable prompt-cache key forwarded to providers for cross-session cache affinity. */
-	public cacheAffinityKey?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
 	public thinkingBudgets?: ThinkingBudgets;
 	/** Preferred transport forwarded to the stream function. */
@@ -244,8 +226,6 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
-	/** Hard cap on assistant turns per run; undefined = unbounded. See {@link AgentLoopConfig.maxTurns}. */
-	public maxTurns?: number;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -260,7 +240,6 @@ export class Agent {
 		this.onProviderStreamEvent = runtimeOptions.onProviderStreamEvent;
 		this.beforeToolCall = runtimeOptions.beforeToolCall;
 		this.afterToolCall = runtimeOptions.afterToolCall;
-		this.shouldStopAfterTurn = runtimeOptions.shouldStopAfterTurn;
 		this.finishTurn = runtimeOptions.finishTurn;
 		this.prepareRequest = runtimeOptions.prepareRequest;
 		this.prepareNextTurn = runtimeOptions.prepareNextTurn;
@@ -268,12 +247,10 @@ export class Agent {
 		this.steeringQueue = new PendingMessageQueue(runtimeOptions.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(runtimeOptions.followUpMode ?? "one-at-a-time");
 		this.sessionId = runtimeOptions.sessionId;
-		this.cacheAffinityKey = runtimeOptions.cacheAffinityKey;
 		this.thinkingBudgets = runtimeOptions.thinkingBudgets;
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
-		this.maxTurns = runtimeOptions.maxTurns;
 	}
 
 	/**
@@ -333,16 +310,6 @@ export class Agent {
 		this.steeringQueue.clear();
 	}
 
-	/** Remove and return the most recently queued steering message, if any. */
-	removeLastSteeringMessage(): AgentMessage | undefined {
-		return this.steeringQueue.removeLast();
-	}
-
-	/** Remove and return the most recently queued follow-up message, if any. */
-	removeLastFollowUpMessage(): AgentMessage | undefined {
-		return this.followUpQueue.removeLast();
-	}
-
 	/** Remove all queued follow-up messages. */
 	clearFollowUpQueue(): void {
 		this.followUpQueue.clear();
@@ -359,37 +326,6 @@ export class Agent {
 		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	/** Deliver one configured queue unit, preferring steering over follow-up. */
-	async continueQueuedMessage(): Promise<void> {
-		if (this.activeRun) {
-			throw new Error("Agent is already processing. Wait for completion before continuing.");
-		}
-		if (this._state.messages.length === 0) {
-			throw new Error("No messages to continue from");
-		}
-
-		const queuedSteering = this.steeringQueue.drain();
-		if (queuedSteering.length > 0) {
-			try {
-				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
-			} catch (error) {
-				this.steeringQueue.prepend(queuedSteering);
-				throw error;
-			}
-			return;
-		}
-
-		const queuedFollowUps = this.followUpQueue.drain();
-		if (queuedFollowUps.length > 0) {
-			try {
-				await this.runPromptMessages(queuedFollowUps);
-			} catch (error) {
-				this.followUpQueue.prepend(queuedFollowUps);
-				throw error;
-			}
-		}
-	}
-
 	/** Preview the messages selected for the next turn without consuming them. */
 	peekQueuedMessages(): AgentMessage[] {
 		const steering = this.steeringQueue.peek();
@@ -401,20 +337,9 @@ export class Agent {
 		return this.activeRun?.abortController.signal;
 	}
 
-	/**
-	 * True while a run is in flight, i.e. between `prompt()`/`continue()` being
-	 * accepted and `waitForIdle()` resolving. Use this to gate calls into
-	 * `prompt()`/`continue()` from concurrent contexts (e.g. extension callbacks)
-	 * — those throw if `activeRun` is set, but the public flag `isStreaming`
-	 * doesn't cover compaction or the brief setup window before streaming begins.
-	 */
-	get isProcessing(): boolean {
-		return this.activeRun !== undefined;
-	}
-
 	/** Abort the current run, if one is active. */
-	abort(reason?: unknown): void {
-		this.activeRun?.abortController.abort(reason);
+	abort(): void {
+		this.activeRun?.abortController.abort();
 	}
 
 	/**
@@ -467,21 +392,19 @@ export class Agent {
 		}
 
 		if (lastMessage.role === "assistant") {
-			if (this.hasQueuedMessages()) {
-				await this.continueQueuedMessage();
+			const queuedSteering = this.steeringQueue.drain();
+			if (queuedSteering.length > 0) {
+				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
 				return;
 			}
 
-			// Nothing to continue from: the transcript ends on an assistant message
-			// and both queues are empty. Callers reach here from post-run loops
-			// (AgentSession._runAgentPrompt and the post-compaction resume) that
-			// gate on hasQueuedMessages(), but the queued work can be drained between
-			// that probe and this call (e.g. pi-goal continuation messages delivered
-			// via sendMessage({ triggerTurn: true })). Throwing here crashed the
-			// runtime; the error was swallowed to runtime-errors.log and stalled goal
-			// auto-continuation. Treat it as a benign no-op instead: the turn already
-			// ran, and the caller's loop exits once _lastAssistantMessage is consumed.
-			return;
+			const queuedFollowUps = this.followUpQueue.drain();
+			if (queuedFollowUps.length > 0) {
+				await this.runPromptMessages(queuedFollowUps);
+				return;
+			}
+
+			throw new Error("Cannot continue from message role: assistant");
 		}
 
 		await this.runContinuation();
@@ -543,16 +466,10 @@ export class Agent {
 
 	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
-		const shouldStopAfterTurn = this.shouldStopAfterTurn;
 		return {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
-			refreshContext: () => ({
-				systemPrompt: this._state.systemPrompt,
-				tools: this._state.tools.slice(),
-			}),
 			sessionId: this.sessionId,
-			cacheAffinityKey: this.cacheAffinityKey,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
 			onProviderStreamEvent: this.onProviderStreamEvent,
@@ -560,12 +477,8 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
-			maxTurns: this.maxTurns,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
-			shouldStopAfterTurn: shouldStopAfterTurn
-				? async (context) => await shouldStopAfterTurn(context, this.signal)
-				: undefined,
 			finishTurn: this.finishTurn,
 			prepareRequest: this.prepareRequest,
 			prepareNextTurn:

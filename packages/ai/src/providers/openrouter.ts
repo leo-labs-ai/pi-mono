@@ -8,9 +8,6 @@ import { createProvider, type Provider } from "../models.ts";
 import { OPENROUTER_CLASSIFIER_MODELS, OPENROUTER_IMAGE_MODELS, OPENROUTER_MODELS } from "./openrouter.models.ts";
 
 export function openrouterProvider(): Provider<"anthropic-messages" | "openai-completions"> {
-	// Pinned explicitly: the generated catalog only carries anthropic-messages
-	// entries after a model-data refresh, and inference from `models` alone would
-	// narrow TApi and reject the api map on a stale catalog.
 	return createProvider<"anthropic-messages" | "openai-completions">({
 		id: "openrouter",
 		name: "OpenRouter",

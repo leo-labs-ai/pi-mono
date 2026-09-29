@@ -10,7 +10,7 @@
  * the model; binary resources are saved to temp files. Scripts get the JSON payloads.
  */
 
-import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
+import type { ImageContent, JsonValue, TextContent } from "@lue-labs/pi-ai";
 import type {
 	ContentBlock,
 	ListResourcesResult,

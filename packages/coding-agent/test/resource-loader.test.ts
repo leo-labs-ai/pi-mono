@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,7 +45,7 @@ describe("DefaultResourceLoader", () => {
 			mkdirSync(extensionsDir, { recursive: true });
 			writeFileSync(
 				join(cwd, "package.json"),
-				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+				JSON.stringify({ dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" } }),
 			);
 			writeFileSync(join(extensionsDir, "project-extension.ts"), "export default function() {}");
 
@@ -63,7 +63,7 @@ describe("DefaultResourceLoader", () => {
 			mkdirSync(extensionsDir, { recursive: true });
 			writeFileSync(
 				join(packageRoot, "package.json"),
-				JSON.stringify({ dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" } }),
+				JSON.stringify({ dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" } }),
 			);
 			writeFileSync(join(extensionsDir, "package-extension.ts"), "export default function() {}");
 
@@ -79,7 +79,7 @@ describe("DefaultResourceLoader", () => {
 				{
 					path: join(packageRoot, "package.json"),
 					warning:
-						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @earendil-works/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
+						'Host-provided extension packages must be declared in peerDependencies with a "*" range, not dependencies: @lue-labs/pi-coding-agent. Installed copies can bypass the extension loader and create duplicate runtime modules.',
 				},
 			]);
 		});
@@ -363,9 +363,7 @@ export default function(pi) {
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
-				extensionsResult.deferredExtensions,
 				extensionsResult.runtime,
-				extensionsResult.eventBus,
 				cwd,
 				sessionManager,
 				modelRegistry,
@@ -437,55 +435,6 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
-		});
-
-		it("should expand AGENTS.md imports during resource loading", async () => {
-			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\n@docs/shared.md");
-			mkdirSync(join(cwd, "docs"), { recursive: true });
-			writeFileSync(join(cwd, "docs", "shared.md"), "Shared rules");
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles, diagnostics } = loader.getAgentsFiles();
-			expect(agentsFiles.map((f) => f.path)).toEqual([
-				join(cwd, "AGENTS.md"),
-				realpathSync(join(cwd, "docs", "shared.md")),
-			]);
-			expect(agentsFiles[1].content).toBe("Shared rules");
-			expect(agentsFiles[1].parentPath).toBe(join(cwd, "AGENTS.md"));
-			expect(diagnostics).toEqual([]);
-		});
-
-		it("should expose AGENTS.md import diagnostics", async () => {
-			writeFileSync(join(cwd, "AGENTS.md"), "@missing.md");
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles, diagnostics } = loader.getAgentsFiles();
-			expect(agentsFiles).toHaveLength(1);
-			expect(diagnostics[0].message).toContain("does not exist");
-		});
-
-		it("should dedupe context-file roots reached via symlink to the same realpath", async () => {
-			// Mirrors the user's setup: ~/.pi/agent/AGENTS.md is a symlink to a
-			// project AGENTS.md, and the cwd is that same project. Without dedup,
-			// pi loads the file twice and re-imports the whole tree.
-			const projectAgents = join(cwd, "AGENTS.md");
-			const globalAgents = join(agentDir, "AGENTS.md");
-			writeFileSync(projectAgents, "# Project Guidelines\n\n@shared.md");
-			writeFileSync(join(cwd, "shared.md"), "shared instructions");
-			symlinkSync(projectAgents, globalAgents);
-
-			const loader = new DefaultResourceLoader({ cwd, agentDir });
-			await loader.reload();
-
-			const { agentsFiles } = loader.getAgentsFiles();
-			const paths = agentsFiles.map((f) => f.path);
-			// AGENTS.md (one canonical entry) + shared.md (one entry)
-			expect(paths).toHaveLength(2);
-			expect(paths.filter((p) => p.endsWith("shared.md"))).toHaveLength(1);
 		});
 
 		it("should prefer AGENTS.override.md within each directory while preserving ancestor layering", async () => {
@@ -586,7 +535,7 @@ Project skill content`,
 			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(agentDir, "AGENTS.md"))).toBe(
 				true,
 			);
-			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(cwd, "AGENTS.md"))).toBe(false);
+			expect(loader.getAgentsFiles().agentsFiles.some((file) => file.path === join(cwd, "AGENTS.md"))).toBe(true);
 			expect(loader.getExtensions().extensions).toHaveLength(0);
 			expect(loader.getExtensions().errors).toEqual([]);
 			expect(loader.getSkills().skills.some((skill) => skill.name === "project-skill")).toBe(false);
@@ -1078,9 +1027,7 @@ export default function(pi: ExtensionAPI) {
 			const modelRegistry = await createModelRegistry(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
-				extensionsResult.deferredExtensions,
 				extensionsResult.runtime,
-				extensionsResult.eventBus,
 				cwd,
 				sessionManager,
 				modelRegistry,
@@ -1098,7 +1045,7 @@ export default function(pi: ExtensionAPI) {
 			writeFileSync(
 				join(globalExtDir, "other-mcp.ts"),
 				`
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
 export default function(pi: ExtensionAPI) {
   pi.registerCommand("mcp", { description: "other mcp", handler: async () => {} });
 }`,

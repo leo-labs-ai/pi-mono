@@ -1,13 +1,11 @@
 import type { ThinkingLevel, ThinkingLevelMap } from "../src/types.ts";
 import { getEffortThinkingLevelMap } from "./models-dev-reasoning-options.ts";
 
-type OpenRouterReasoningEffort = Exclude<ThinkingLevel, "ultra" | "adaptive"> | "none";
-
 export interface OpenRouterReasoningMetadata {
 	mandatory?: boolean;
 	default_enabled?: boolean;
-	supported_efforts?: OpenRouterReasoningEffort[];
-	default_effort?: OpenRouterReasoningEffort;
+	supported_efforts?: Array<ThinkingLevel | "none">;
+	default_effort?: ThinkingLevel | "none";
 }
 
 /** Convert OpenRouter's reasoning metadata into Pi model capabilities. */

@@ -12,7 +12,6 @@ import {
 	Text,
 	type WheelScrollLines,
 } from "@lue-labs/pi-tui";
-import type { ExtensionSetting } from "../../../core/extensions/types.ts";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import {
 	CACHE_WARMING_MODES,
@@ -38,14 +37,12 @@ const MODEL_PICKER_LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 
 
 const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
-	adaptive: "Model self-regulates (Claude 4.6+)",
 	minimal: "Very brief reasoning (~1k tokens)",
 	low: "Light reasoning (~2k tokens)",
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
-	max: "Extended reasoning beyond xhigh (GPT-5.6+)",
-	ultra: "Maximum reasoning + orchestration signal (GPT-5.6 Sol/Terra)",
+	xhigh: "Extra-high reasoning (~32k tokens)",
+	max: "Maximum reasoning",
 };
 
 const DEFAULT_PROJECT_TRUST_LABELS: Record<DefaultProjectTrust, string> = {
@@ -94,15 +91,12 @@ export interface SettingsConfig {
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
-	toolOutput: "compact" | "expanded";
-	motion: "full" | "reduced";
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
 	fullscreenWheelScrollLines: WheelScrollLines;
 	warnings: WarningSettings;
-	extensionSettings?: ExtensionSetting[];
 }
 
 export interface SettingsCallbacks {
@@ -136,15 +130,12 @@ export interface SettingsCallbacks {
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
-	onToolOutputChange: (toolOutput: "compact" | "expanded") => void;
-	onMotionChange: (motion: "full" | "reduced") => void;
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
 	onFullscreenWheelScrollLinesChange: (lines: WheelScrollLines) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
-	onExtensionSettingError?: (setting: ExtensionSetting, error: unknown) => void;
 	onCancel: () => void;
 }
 
@@ -478,7 +469,6 @@ export class SettingsSelectorComponent extends Container {
 		const followUpKey = keyDisplayText("app.message.followUp");
 		const cycleThinkingKey = keyDisplayText("app.thinking.cycle");
 		let currentWarnings = { ...config.warnings };
-		const extensionSettingsById = new Map<string, ExtensionSetting>();
 		const currentModelThinkingLevels = { ...config.modelThinkingLevels };
 		const defaultModelByValue = new Map(
 			config.availableDefaultModels.map((model) => [modelSettingKey(model), model]),
@@ -871,40 +861,6 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Tool output and motion preferences stay with other terminal display settings.
-		const terminalProgressIndex = items.findIndex((item) => item.id === "terminal-progress");
-		items.splice(
-			terminalProgressIndex + 1,
-			0,
-			{
-				id: "tool-output",
-				label: "Tool output",
-				description: "Default tool detail level; Ctrl+O toggles this for the current session",
-				currentValue: config.toolOutput,
-				values: ["compact", "expanded"],
-			},
-			{
-				id: "motion",
-				label: "Motion",
-				description: "Use static activity indicators instead of animation",
-				currentValue: config.motion,
-				values: ["full", "reduced"],
-			},
-		);
-
-		for (const setting of config.extensionSettings ?? []) {
-			const id = `extension:${setting.extensionPath}:${setting.id}`;
-			if (extensionSettingsById.has(id)) continue;
-			extensionSettingsById.set(id, setting);
-			items.push({
-				id,
-				label: setting.label,
-				description: setting.description,
-				currentValue: setting.currentValue,
-				values: [...setting.values],
-			});
-		}
-
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -1002,12 +958,6 @@ export class SettingsSelectorComponent extends Container {
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
 						break;
-					case "tool-output":
-						callbacks.onToolOutputChange(newValue as "compact" | "expanded");
-						break;
-					case "motion":
-						callbacks.onMotionChange(newValue as "full" | "reduced");
-						break;
 					case "tui-mode":
 						callbacks.onTuiModeChange(newValue as TuiMode);
 						break;
@@ -1026,17 +976,6 @@ export class SettingsSelectorComponent extends Container {
 					case "theme":
 						callbacks.onThemeChange(newValue);
 						break;
-					default: {
-						const setting = extensionSettingsById.get(id);
-						if (!setting) break;
-						try {
-							setting.onChange(newValue);
-							setting.currentValue = newValue;
-						} catch (error) {
-							callbacks.onExtensionSettingError?.(setting, error);
-						}
-						break;
-					}
 				}
 			},
 			callbacks.onCancel,

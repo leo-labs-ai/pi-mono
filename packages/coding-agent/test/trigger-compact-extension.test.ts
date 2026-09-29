@@ -8,7 +8,6 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		hasUI: false,
 		ui: {} as ExtensionContext["ui"],
 		cwd: process.cwd(),
-		source: "interactive",
 		sessionManager: {} as ExtensionContext["sessionManager"],
 		modelRegistry: {} as ExtensionContext["modelRegistry"],
 		model: undefined,
@@ -17,18 +16,11 @@ function createContext(tokens: number | null, compact = vi.fn()): ExtensionConte
 		isProjectTrusted: () => true,
 		signal: undefined,
 		abort: vi.fn(),
-		requestStopAfterTurn: vi.fn(),
 		hasPendingMessages: () => false,
 		shutdown: vi.fn(),
-		reload: vi.fn(async () => {}),
 		getContextUsage: () => ({ tokens, contextWindow: 200_000, percent: tokens === null ? null : tokens / 2000 }),
 		compact,
 		getSystemPrompt: () => "",
-		getEffectiveSystemPrompt: async () => "",
-		forkAgent: vi.fn(async () => {
-			throw new Error("forkAgent not implemented in test stub");
-		}),
-		transcript: { append: vi.fn() },
 	};
 }
 

@@ -8,9 +8,6 @@
 import type { AgentMessage, ThinkingLevel } from "@lue-labs/pi-agent-core";
 import type { ImageContent, Model } from "@lue-labs/pi-ai";
 import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
-import type { AgentMessage, ThinkingLevel } from "@lue-labs/pi-agent-core";
-import type { ImageContent, Model } from "@lue-labs/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";

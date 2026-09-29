@@ -5,10 +5,8 @@
  * and provides a transformer to convert them to LLM-compatible messages.
  */
 
-import type { AgentMessage, CustomMessage } from "@lue-labs/pi-agent-core";
-import type { ImageContent, Message, TextContent, ToolCall, ToolResultMessage } from "@lue-labs/pi-ai";
-
-export type { CustomMessage };
+import type { AgentMessage } from "@lue-labs/pi-agent-core";
+import type { ImageContent, Message, TextContent } from "@lue-labs/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -39,6 +37,19 @@ export interface BashExecutionMessage {
 	timestamp: number;
 	/** If true, this message is excluded from LLM context (!! prefix) */
 	excludeFromContext?: boolean;
+}
+
+/**
+ * Message type for extension-injected messages via sendMessage().
+ * These are custom messages that extensions can inject into the conversation.
+ */
+export interface CustomMessage<T = unknown> {
+	role: "custom";
+	customType: string;
+	content: string | (TextContent | ImageContent)[];
+	display: boolean;
+	details?: T;
+	timestamp: number;
 }
 
 export interface BranchSummaryMessage {
@@ -115,9 +126,8 @@ export function createCustomMessage(
 	display: boolean,
 	details: unknown | undefined,
 	timestamp: string,
-	modelVisible?: boolean,
 ): CustomMessage {
-	const message: CustomMessage = {
+	return {
 		role: "custom",
 		customType,
 		content,
@@ -125,99 +135,6 @@ export function createCustomMessage(
 		details,
 		timestamp: new Date(timestamp).getTime(),
 	};
-	if (modelVisible !== undefined) message.modelVisible = modelVisible;
-	return message;
-}
-
-export const UNSETTLED_TOOL_CALL_TEXT =
-	"outcome unknown: the session recovered before this tool call settled; the tool may or may not have run";
-
-function unsettledToolResult(toolCall: ToolCall, timestamp: number): ToolResultMessage {
-	return {
-		role: "toolResult",
-		toolCallId: toolCall.id,
-		toolName: toolCall.name,
-		content: [{ type: "text", text: UNSETTLED_TOOL_CALL_TEXT }],
-		isError: true,
-		timestamp,
-	};
-}
-
-/**
- * Settle every tool call the recorded history left without an outcome.
- *
- * A turn that dies between the assistant message and its tool results leaves a
- * `tool_use` with no `tool_result`. Providers reject that history outright
- * (Anthropic 400s), so the resumed session stays wedged on every later request.
- * Repair belongs at session open, before the first turn can run, so the record
- * the agent works from is sound rather than patched per request.
- *
- * A call counts as settled when a result for it exists anywhere later in the
- * history, not only in the adjacent run. A result the record displaced — a
- * custom message persisted mid-batch pushes one down — is still an outcome, and
- * synthesizing a second one for the same `tool_use_id` is itself an Anthropic
- * 400. Restoring adjacency is `transformMessages`' job; this seam only fills
- * outcomes that were never recorded at all.
- *
- * The synthetic result states the outcome is unknown. It does not claim the
- * tool failed or succeeded — the session cannot know which.
- *
- * Returns the input array unchanged when every tool call is already settled.
- */
-/**
- * Whether the recorded history still has a tool call awaiting its result.
- *
- * Callers use this to keep injected content out of an open tool batch: a
- * message appended between a `toolCall` and its `toolResult` is persisted in
- * that position forever, and Anthropic rejects the rebuilt history outright
- * (pi-mono#479).
- */
-export function hasUnsettledToolCalls(messages: AgentMessage[]): boolean {
-	const settled = new Set<string>();
-	for (const message of messages) {
-		if (message.role === "toolResult") settled.add(message.toolCallId);
-	}
-	for (const message of messages) {
-		if (message.role !== "assistant") continue;
-		for (const block of message.content) {
-			if (block.type === "toolCall" && !settled.has(block.id)) return true;
-		}
-	}
-	return false;
-}
-
-export function reconcileUnsettledToolCalls(messages: AgentMessage[]): AgentMessage[] {
-	const settled = new Set<string>();
-	for (const message of messages) {
-		if (message.role === "toolResult") settled.add(message.toolCallId);
-	}
-
-	const reconciled: AgentMessage[] = [];
-	let repaired = false;
-
-	for (let index = 0; index < messages.length; index++) {
-		const message = messages[index]!;
-		reconciled.push(message);
-		if (message.role !== "assistant") continue;
-
-		const unsettled = message.content.filter(
-			(block): block is ToolCall => block.type === "toolCall" && !settled.has(block.id),
-		);
-		if (unsettled.length === 0) continue;
-
-		// Keep the recorded results of this batch ahead of the synthetic ones, so
-		// the settled calls stay adjacent to their assistant turn.
-		while (index + 1 < messages.length && messages[index + 1]!.role === "toolResult") {
-			reconciled.push(messages[++index]!);
-		}
-
-		for (const toolCall of unsettled) {
-			reconciled.push(unsettledToolResult(toolCall, message.timestamp));
-			repaired = true;
-		}
-	}
-
-	return repaired ? reconciled : messages;
 }
 
 /**
@@ -243,7 +160,6 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
-					if (m.modelVisible === false) return undefined;
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",

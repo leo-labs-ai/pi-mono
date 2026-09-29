@@ -1,4 +1,10 @@
-import type { AssistantMessage, AssistantMessageFrame, TextContent, ThinkingContent, ToolCall } from "@lue-labs/pi-ai";
+import type {
+	AssistantMessage,
+	AssistantMessageFrame,
+	TextContent,
+	ThinkingContent,
+	ToolCall,
+} from "@lue-labs/pi-ai";
 
 /**
  * Apply one encoded frame to the tracked output. Same switch as pi-ai's

@@ -425,10 +425,7 @@ export class Theme {
 			case "xhigh":
 				return (str: string) => this.fg("thinkingXhigh", str);
 			case "max":
-			case "ultra":
 				return (str: string) => this.fg("thinkingMax", str);
-			case "adaptive":
-				return (str: string) => this.fg("thinkingHigh", str);
 			default:
 				return (str: string) => this.fg("thinkingOff", str);
 		}

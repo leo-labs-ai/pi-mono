@@ -12,9 +12,8 @@
 
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { completeSimple, getEnvApiKey } from "../src/compat.ts";
+import { completeSimple, getEnvApiKey, getModel } from "../src/compat.ts";
 import type { AssistantMessage, Message, Tool, ToolResultMessage } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve API keys
@@ -46,8 +45,8 @@ describe("Tool Call ID Normalization - Live Handoff", () => {
 	it.skipIf(!copilotToken || !openrouterKey)(
 		"github-copilot -> openrouter should normalize pipe-separated IDs",
 		async () => {
-			const copilotModel = pickModel("github-copilot", (m) => m.api === "openai-responses");
-			const openrouterModel = pickModel("openrouter", (m) => m.id.includes("codex"));
+			const copilotModel = getModel("github-copilot", "gpt-5.5");
+			const openrouterModel = getModel("openrouter", "openai/gpt-5.5");
 
 			// Step 1: Generate tool call with github-copilot
 			const userMessage: Message = {
@@ -116,8 +115,8 @@ describe("Tool Call ID Normalization - Live Handoff", () => {
 	it.skipIf(!copilotToken || !codexToken)(
 		"github-copilot -> openai-codex should normalize pipe-separated IDs",
 		async () => {
-			const copilotModel = pickModel("github-copilot", (m) => m.api === "openai-responses");
-			const codexModel = pickModel("openai-codex");
+			const copilotModel = getModel("github-copilot", "gpt-5.5");
+			const codexModel = getModel("openai-codex", "gpt-5.5");
 
 			// Step 1: Generate tool call with github-copilot
 			const userMessage: Message = {
@@ -240,7 +239,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 	it.skipIf(!openrouterKey)(
 		"openrouter should handle prefilled context with long pipe-separated IDs",
 		async () => {
-			const model = pickModel("openrouter", (m) => m.id.includes("codex"));
+			const model = getModel("openrouter", "openai/gpt-5.5");
 			const messages = buildPrefilledMessages();
 
 			const response = await completeSimple(
@@ -266,7 +265,7 @@ describe("Tool Call ID Normalization - Prefilled Context", () => {
 	it.skipIf(!codexToken)(
 		"openai-codex should handle prefilled context with long pipe-separated IDs",
 		async () => {
-			const model = pickModel("openai-codex");
+			const model = getModel("openai-codex", "gpt-5.5");
 			const messages = buildPrefilledMessages();
 
 			const response = await completeSimple(

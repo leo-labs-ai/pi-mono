@@ -36,8 +36,6 @@ describe("max thinking level", () => {
 			const model = getModel("openai-codex", modelId);
 			expect(model).toBeDefined();
 			expect(model?.thinkingLevelMap).toMatchObject({ xhigh: "xhigh", max: "max" });
-			// sol/terra additionally opt into the fork's "ultra" tier; luna does not.
-			const hasUltra = modelId !== "gpt-5.6-luna";
 			expect(getSupportedThinkingLevels(model!)).toEqual([
 				"off",
 				"minimal",
@@ -46,7 +44,6 @@ describe("max thinking level", () => {
 				"high",
 				"xhigh",
 				"max",
-				...(hasUltra ? ["ultra"] : []),
 			]);
 		},
 	);

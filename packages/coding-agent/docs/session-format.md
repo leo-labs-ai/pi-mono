@@ -38,7 +38,7 @@ Source on GitHub ([pi](https://github.com/earendil-works/pi)):
 - [`packages/ai/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/ai/src/types.ts) - Base message and content-block types
 - [`packages/agent/src/types.ts`](https://github.com/earendil-works/pi/blob/main/packages/agent/src/types.ts) - Extensible `AgentMessage` union
 
-For TypeScript definitions in your project, inspect `node_modules/@lue-labs/pi-coding-agent/dist/` and `node_modules/@lue-labs/pi-ai/dist/`.
+For TypeScript definitions in your project, inspect `node_modules/@earendil-works/pi-coding-agent/dist/` and `node_modules/@earendil-works/pi-ai/dist/`.
 
 ## Messages
 
@@ -175,7 +175,7 @@ Pi stores [virtual model](virtual-models.md) router state as custom entries with
 
 ### CustomMessageEntry
 
-Extension-injected messages that participate in LLM context unless `modelVisible` is `false`.
+Extension-injected messages that DO participate in LLM context.
 
 ```json
 {"type":"custom_message","id":"i9j0k1l2","parentId":"h8i9j0k1","timestamp":"2024-12-03T14:25:00.000Z","customType":"my-extension","content":"Injected context...","display":true}
@@ -184,7 +184,6 @@ Extension-injected messages that participate in LLM context unless `modelVisible
 Fields:
 - `content`: String or `(TextContent | ImageContent)[]` (same as UserMessage)
 - `display`: `true` = show in TUI with distinct styling, `false` = hidden
-- `modelVisible`: Optional boolean; `false` retains the feed entry but omits its content from provider context. Omitted defaults to `true`.
 - `details`: Optional extension-specific metadata (not sent to LLM)
 
 ### LabelEntry

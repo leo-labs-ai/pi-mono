@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
 import type { Model } from "@lue-labs/pi-ai";
-import { getModel, getModels, streamSimple } from "@lue-labs/pi-ai/compat";
+import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
 import { getBuiltinModels, getBuiltinProviders } from "@lue-labs/pi-ai/providers/all";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
@@ -11,8 +11,6 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import {
 	defaultModelPerProvider,
 	findInitialModel,
-	modelTierCandidatesPerProvider,
-	normalizeAutoAliasString,
 	parseModelPattern,
 	resolveCliModel,
 	resolveModelScope,
@@ -147,17 +145,11 @@ describe("parseModelPattern", () => {
 		});
 	});
 
-	describe("models whose ids contain slashes and colons", () => {
-		// Policy: a slash always means `provider/id`. Aggregator-style ids that
-		// embed a vendor (`qwen/qwen3-coder:exacto` under provider `openrouter`,
-		// `mlx-community/...` under `turboquant-local`) must be provider-qualified.
-		// Resolving them bare would let any proxy that happens to expose the id
-		// `openai/gpt-5` answer a request meant for OpenAI — see
-		// agent-model-selection.test.ts "provider-qualified model refs do not
-		// fuzzy-match proxy provider ids".
-		test("a bare vendor-prefixed id does not resolve without its provider", () => {
+	describe("OpenRouter models with colons in IDs", () => {
+		test("qwen3-coder:exacto matches the model with undefined thinking level", () => {
 			const result = parseModelPattern("qwen/qwen3-coder:exacto", allModels);
-			expect(result.model).toBeUndefined();
+			expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+			expect(result.thinkingLevel).toBeUndefined();
 			expect(result.warning).toBeUndefined();
 		});
 
@@ -169,9 +161,11 @@ describe("parseModelPattern", () => {
 			expect(result.warning).toBeUndefined();
 		});
 
-		test("a bare vendor-prefixed id does not resolve even with a valid thinking level", () => {
+		test("qwen3-coder:exacto:high matches model with high thinking level", () => {
 			const result = parseModelPattern("qwen/qwen3-coder:exacto:high", allModels);
-			expect(result.model).toBeUndefined();
+			expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+			expect(result.thinkingLevel).toBe("high");
+			expect(result.warning).toBeUndefined();
 		});
 
 		test("openrouter/qwen/qwen3-coder:exacto:high matches with provider and thinking level", () => {
@@ -182,26 +176,29 @@ describe("parseModelPattern", () => {
 			expect(result.warning).toBeUndefined();
 		});
 
-		test("a provider-qualified reference never degrades into a different model", () => {
-			// `openai/gpt-4o:extended` used to shed its unknown `:extended` suffix and
-			// silently return plain `gpt-4o` — a model the caller never asked for.
+		test("gpt-4o:extended matches the extended model with undefined thinking level", () => {
 			const result = parseModelPattern("openai/gpt-4o:extended", allModels);
-			expect(result.model).toBeUndefined();
+			expect(result.model?.id).toBe("openai/gpt-4o:extended");
+			expect(result.thinkingLevel).toBeUndefined();
+			expect(result.warning).toBeUndefined();
 		});
 	});
 
-	describe("invalid thinking levels on provider-qualified references", () => {
-		test("an unknown suffix on a slashed reference resolves nothing rather than guessing", () => {
+	describe("invalid thinking levels with OpenRouter models", () => {
+		test("qwen3-coder:exacto:random returns model with undefined thinking level and warning", () => {
 			const result = parseModelPattern("qwen/qwen3-coder:exacto:random", allModels);
-			expect(result.model).toBeUndefined();
-			expect(result.warning).toBeUndefined();
+			expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+			expect(result.thinkingLevel).toBeUndefined();
+			expect(result.warning).toContain("Invalid thinking level");
+			expect(result.warning).toContain("random");
 		});
 
-		test("provider-qualified reference with a valid level keeps the level", () => {
-			const result = parseModelPattern("openrouter/qwen/qwen3-coder:exacto:high", allModels);
+		test("qwen3-coder:exacto:high:random returns model with undefined thinking level and warning", () => {
+			const result = parseModelPattern("qwen/qwen3-coder:exacto:high:random", allModels);
 			expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
-			expect(result.model?.provider).toBe("openrouter");
-			expect(result.thinkingLevel).toBe("high");
+			expect(result.thinkingLevel).toBeUndefined();
+			expect(result.warning).toContain("Invalid thinking level");
+			expect(result.warning).toContain("random");
 		});
 	});
 
@@ -708,54 +705,10 @@ describe("resolveCliModel", () => {
 	});
 });
 
-describe("auto alias normalization", () => {
-	test("normalizes settings-default auto aliases for supported providers", () => {
-		expect(normalizeAutoAliasString("pi-fork", "auto")).toBe("clawrouter/auto");
-		expect(normalizeAutoAliasString("claude-bridge", "auto")).toBe("claude-bridge/auto");
-		expect(normalizeAutoAliasString("openai-codex", "auto")).toBe("openai-codex/auto");
-		expect(normalizeAutoAliasString("clawrouter", "auto")).toBe("clawrouter/auto");
-	});
-
-	test("normalizes provider-prefixed auto aliases", () => {
-		expect(normalizeAutoAliasString("openai-codex", "openai-codex/auto")).toBe("openai-codex/auto");
-		expect(normalizeAutoAliasString(undefined, "pi-fork/auto")).toBe("clawrouter/auto");
-		expect(normalizeAutoAliasString(undefined, "claude-bridge/auto")).toBe("claude-bridge/auto");
-		expect(normalizeAutoAliasString("openai-codex", "claude-bridge/auto")).toBe("claude-bridge/auto");
-		expect(normalizeAutoAliasString(undefined, "clawrouter/auto")).toBe("clawrouter/auto");
-	});
-
-	test("rejects non-auto and unsupported auto aliases", () => {
-		expect(normalizeAutoAliasString("openai-codex", "gpt-custom")).toBeUndefined();
-		expect(normalizeAutoAliasString("openai", "auto")).toBeUndefined();
-		expect(normalizeAutoAliasString(undefined, "auto")).toBeUndefined();
-		expect(normalizeAutoAliasString("openai-codex", "openai/gpt-custom")).toBeUndefined();
-	});
-});
-
-describe("tier model aliases", () => {
-	test("retired GPT models are never automatic tier candidates", () => {
-		const candidates = Object.values(modelTierCandidatesPerProvider).flatMap((tiers) => Object.values(tiers).flat());
-		expect(candidates.filter((candidate) => /^gpt-5\.(4|5)(?:-|$)/.test(candidate))).toEqual([]);
-	});
-
-	test("built-in OpenAI-family tier candidates exist in their provider catalogs", () => {
-		const providers = ["openai", "azure-openai-responses", "openai-codex", "github-copilot"] as const;
-		for (const provider of providers) {
-			const catalogIds = new Set(getModels(provider).map((model) => model.id));
-			for (const candidate of Object.values(modelTierCandidatesPerProvider[provider]).flat()) {
-				expect(catalogIds.has(candidate), `${provider}/${candidate}`).toBe(true);
-			}
-		}
-	});
-});
-
 describe("default model selection", () => {
-	test("openai defaults track current catalog-backed models", () => {
-		expect(defaultModelPerProvider.openai).toBe("gpt-5.6-sol");
-		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.3-codex-spark");
-		expect(defaultModelPerProvider["azure-openai-responses"]).toBe("gpt-5.6-sol");
-		expect(defaultModelPerProvider["github-copilot"]).toBe("gpt-5.3-codex");
-		expect(Object.values(defaultModelPerProvider).filter((model) => /^gpt-5\.(4|5)(?:-|$)/.test(model))).toEqual([]);
+	test("openai defaults track current models", () => {
+		expect(defaultModelPerProvider.openai).toBe("gpt-5.5");
+		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.5");
 	});
 
 	test("zai, minimax, cerebras, and ant-ling defaults track current models", () => {
@@ -900,8 +853,7 @@ describe("default model selection", () => {
 			}
 
 			const authStorage = AuthStorage.inMemory({ anthropic: { type: "api_key", key: "test-key" } });
-			const modelRegistry = await createModelRegistry(authStorage, join(tempDir, "models.json"));
-			const modelRuntime = getModelRuntime(modelRegistry);
+			const modelRuntime = getModelRuntime(await createModelRegistry(authStorage, join(tempDir, "models.json")));
 			const agent = new Agent({
 				initialState: {
 					model: sonnet,
@@ -915,7 +867,6 @@ describe("default model selection", () => {
 				sessionManager: SessionManager.inMemory(tempDir),
 				settingsManager,
 				cwd: tempDir,
-				modelRegistry,
 				modelRuntime,
 				resourceLoader: createTestResourceLoader(),
 				scopedModels: options.scoped ? [{ model: sonnet }] : [],

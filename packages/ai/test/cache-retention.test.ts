@@ -5,7 +5,6 @@ import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts"
 import { getModel, normalizeContext, stream } from "../src/compat.ts";
 import { MODELS } from "../src/models.generated.ts";
 import type { Model } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 
 class PayloadCaptured extends Error {
 	constructor() {
@@ -52,9 +51,9 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 	describe("Anthropic Provider", () => {
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)(
-			"should default to 1h cache TTL when PI_CACHE_RETENTION is not set (default long, #147)",
+			"should use default cache TTL (no ttl field) when PI_CACHE_RETENTION is not set",
 			async () => {
-				const model = pickModel("anthropic");
+				const model = getModel("anthropic", "claude-haiku-4-5");
 				let capturedPayload: any = null;
 
 				const s = stream(model, context, {
@@ -69,15 +68,15 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				}
 
 				expect(capturedPayload).not.toBeNull();
-				// Default retention is "long" (#147) -> 1h ttl on models that support it
+				// System prompt should have cache_control without ttl
 				expect(capturedPayload.system).toBeDefined();
-				expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+				expect(capturedPayload.system[0].cache_control).toEqual({ type: "ephemeral" });
 			},
 		);
 
 		it.skipIf(!process.env.ANTHROPIC_API_KEY)("should use 1h cache TTL when PI_CACHE_RETENTION=long", async () => {
 			process.env.PI_CACHE_RETENTION = "long";
-			const model = pickModel("anthropic");
+			const model = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: any = null;
 
 			const s = stream(model, context, {
@@ -101,7 +100,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			process.env.PI_CACHE_RETENTION = "long";
 
 			// Create a model with a different baseUrl (simulating a proxy)
-			const baseModel = pickModel("anthropic");
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			const proxyModel = {
 				...baseModel,
 				baseUrl: "https://my-proxy.example.com/v1",
@@ -137,7 +136,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should omit ttl when supportsLongCacheRetention is false", async () => {
-			const baseModel = pickModel("anthropic");
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			const proxyModel = {
 				...baseModel,
 				baseUrl: "https://my-proxy.example.com/v1",
@@ -166,7 +165,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should omit cache_control when cacheRetention is none", async () => {
-			const baseModel = pickModel("anthropic");
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: any = null;
 
 			try {
@@ -190,7 +189,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should add cache_control to string user messages", async () => {
-			const baseModel = pickModel("anthropic");
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: any = null;
 
 			try {
@@ -212,12 +211,11 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			const lastMessage = capturedPayload.messages[capturedPayload.messages.length - 1];
 			expect(Array.isArray(lastMessage.content)).toBe(true);
 			const lastBlock = lastMessage.content[lastMessage.content.length - 1];
-			// Default retention is "long" (#147) -> 1h ttl on models that support it
-			expect(lastBlock.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+			expect(lastBlock.cache_control).toEqual({ type: "ephemeral" });
 		});
 
 		it("should set 1h cache TTL when cacheRetention is long", async () => {
-			const baseModel = pickModel("anthropic");
+			const baseModel = getModel("anthropic", "claude-haiku-4-5");
 			let capturedPayload: any = null;
 
 			try {
@@ -250,9 +248,9 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		);
 
 		it.skipIf(!process.env.OPENAI_API_KEY)(
-			"should default prompt_cache_retention to 24h when PI_CACHE_RETENTION is not set (default long, #147)",
+			"should not set prompt_cache_retention when PI_CACHE_RETENTION is not set",
 			async () => {
-				const model = pickModel("openai");
+				const model = getModel("openai", "gpt-4o-mini");
 				let capturedPayload: any = null;
 
 				const s = stream(model, context, {
@@ -267,7 +265,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 				}
 
 				expect(capturedPayload).not.toBeNull();
-				expect(capturedPayload.prompt_cache_retention).toBe("24h");
+				expect(capturedPayload.prompt_cache_retention).toBeUndefined();
 			},
 		);
 
@@ -275,7 +273,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			"should set prompt_cache_retention to 24h when PI_CACHE_RETENTION=long",
 			async () => {
 				process.env.PI_CACHE_RETENTION = "long";
-				const model = pickModel("openai");
+				const model = getModel("openai", "gpt-4o-mini");
 				let capturedPayload: any = null;
 
 				const s = stream(model, context, {
@@ -298,7 +296,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			process.env.PI_CACHE_RETENTION = "long";
 
 			// Create a model with a different baseUrl (simulating a proxy)
-			const baseModel = pickModel("openai");
+			const baseModel = getModel("openai", "gpt-4o-mini");
 			const proxyModel = {
 				...baseModel,
 				baseUrl: "https://my-proxy.example.com/v1",
@@ -328,7 +326,7 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 
 		it("should omit prompt_cache_retention when supportsLongCacheRetention is false", async () => {
 			const model = {
-				...pickModel("openai"),
+				...getModel("openai", "gpt-4o-mini"),
 				compat: { supportsLongCacheRetention: false },
 			};
 			let capturedPayload: any = null;
@@ -436,34 +434,6 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload?.prompt_cache_key).toBe("session-2");
 			expect(capturedPayload?.prompt_cache_retention).toBe(retention);
 			expect(capturedPayload?.prompt_cache_options).toEqual(cacheOptions);
-		});
-
-		// Fork regression guard: the v0.80.7 upstream sync briefly dropped cacheAffinityKey
-		// from prompt_cache_key derivation, silently losing cross-session prompt-cache reuse.
-		it("should prefer cacheAffinityKey over sessionId for prompt_cache_key", async () => {
-			const model = pickModel("openai");
-			let capturedPayload: any = null;
-
-			try {
-				const s = streamOpenAIResponses(model, context, {
-					apiKey: "fake-key",
-					cacheRetention: "long",
-					sessionId: "session-3",
-					cacheAffinityKey: "pi:openai:gpt:affinity-1",
-					onPayload: stopAfterPayload((payload) => {
-						capturedPayload = payload;
-					}),
-				});
-
-				for await (const event of s) {
-					if (event.type === "error") break;
-				}
-			} catch {
-				// Expected to fail
-			}
-
-			expect(capturedPayload).not.toBeNull();
-			expect(capturedPayload.prompt_cache_key).toBe("pi:openai:gpt:affinity-1");
 		});
 	});
 

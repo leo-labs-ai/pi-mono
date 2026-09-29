@@ -1,7 +1,6 @@
 import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import { constants as osConstants } from "node:os";
-import { resolve } from "node:path";
 import type { AgentTool } from "@lue-labs/pi-agent-core";
 import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
@@ -14,51 +13,16 @@ import {
 	trackDetachedChildPid,
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
-import {
-	BASH_MAX_OUTPUT_BYTES,
-	type BashBgDetails,
-	disposeBashTimeout,
-	getBashBgJob,
-	spawnBashBackground,
-} from "../bash-bg-jobs.ts";
-import {
-	checkBashPolicy,
-	currentBashPolicy,
-	redundantCdError,
-	redundantCdToCurrentWorkingDirectory,
-	semanticExitForBashCommand,
-} from "../bash-policy.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
-import {
-	GUIDELINE_BASH_SHELL_WORK,
-	GUIDELINE_NATIVE_FILE_TOOLS,
-	GUIDELINE_READ_EDIT_WRITE,
-} from "../prompt-guidelines.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
-import { BASH_UPDATE_THROTTLE_MS, createShellRenderers, formatDuration, resolveBashTimeout } from "./renderers/bash.ts";
+import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult } from "./truncate.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
 /** Output limit of `structuredContent.output`, which programmatic callers such as codemode scripts receive. */
 const STRUCTURED_OUTPUT_MAX_BYTES = 1024 * 1024;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
-
-/**
- * Foreground timeout applied when a bash tool call omits `timeout`.
- *
- * A foreground bash call blocks the whole turn and cannot be interrupted, so the
- * default is a *turn-blocking* budget rather than a work budget: two minutes is
- * long enough for the ordinary interactive command (repo queries, git, targeted
- * tests) and short enough that a runaway command cannot hold a session hostage.
- * Legitimately long work is not meant to rely on this budget — it has four
- * escape hatches that all outrank the default: an explicit `timeout`,
- * `timeout: false`, `run_in_background: true` (unbounded), and raising the
- * default itself via the `bashTimeoutSeconds` setting or PI_BASH_TIMEOUT_SECONDS.
- * The timeout error names all of them, so a command killed at the default can be
- * retried deliberately instead of failing opaquely.
- */
-export const DEFAULT_BASH_TIMEOUT_SECONDS = 120;
 
 function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 	if (timeout === undefined) return undefined;
@@ -74,39 +38,8 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 }
 
 const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
-	workdir: Type.Optional(
-		Type.String({
-			description:
-				'Absolute path (or a path relative to the session working directory) to run the command in. Use this INSTEAD of `cd <dir> && …` whenever the command needs to run in a different directory — e.g. workdir: "/abs/path/to/project". Defaults to the session working directory.',
-		}),
-	),
-	timeout: Type.Optional(
-		Type.Union([
-			Type.Number({
-				description: `Timeout in seconds. Defaults to the harness default — configurable with the bashTimeoutSeconds setting or the PI_BASH_TIMEOUT_SECONDS environment variable (0 disables the default). An explicit value here always wins, up to ${Math.floor(MAX_TIMEOUT_SECONDS)} seconds. When the timeout fires the command is killed by default (a harness timeout policy may adopt it as a background job instead) and any output captured up to that point is still returned. For work likely to exceed the default, prefer run_in_background:true.`,
-			}),
-			Type.Literal(false, { description: "Disable timeout for this command." }),
-		]),
-	),
-	run_in_background: Type.Optional(
-		Type.Boolean({
-			description:
-				"Set to true to spawn the command in the background. Returns immediately with a bgId. Read accumulated output with bash_output(bgId) and stop it with bash_kill(bgId). Use this for any command likely to exceed ~30s when you do not need its stdout immediately. For continuous log streams that should wake the agent on each batch, prefer the Monitor tool (monitor_start) instead.",
-		}),
-	),
-	tui_only: Type.Optional(
-		Type.Boolean({
-			description:
-				"Set to true to stream output live to the TUI but return only an exit/size summary to the model context. Use for long monitoring loops (reboot waits, log tails, progress meters) where the streaming output is for human eyes and would be wasted tokens in context. Incompatible with run_in_background.",
-		}),
-	),
-	full: Type.Optional(
-		Type.Boolean({
-			description:
-				"Return the entire command output with no line/byte truncation (and skip tokenjuice compaction). Use only when you genuinely need the complete output. Defaults to false.",
-		}),
-	),
+	command: Type.String({ description: "Shell command to execute" }),
+	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
 export const bashToolSystemPromptContribution = {
@@ -159,15 +92,14 @@ export interface BashOperations {
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
-			ownerSessionId?: string;
 		},
-	) => Promise<{ exitCode: number | null; backgroundedJobId?: string }>;
+	) => Promise<{ exitCode: number | null }>;
 }
 
 /** Shared process execution used by the built-in shell tools. */
 export function createLocalShellOperations(shellName: string, resolveShellConfig: () => ShellConfig): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env, ownerSessionId }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
@@ -192,13 +124,20 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 				child.stdin?.end(command);
 			}
 			if (child.pid) trackDetachedChildPid(child.pid);
-			let backgroundedJobId: string | undefined;
+			let timedOut = false;
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			const onAbort = () => {
 				if (child.pid) killProcessTree(child.pid);
 			};
 
 			try {
+				// Set timeout if provided.
+				if (timeoutMs !== undefined) {
+					timeoutHandle = setTimeout(() => {
+						timedOut = true;
+						if (child.pid) killProcessTree(child.pid);
+					}, timeoutMs);
+				}
 				// Stream stdout and stderr.
 				child.stdout?.on("data", onData);
 				child.stderr?.on("data", onData);
@@ -207,43 +146,21 @@ export function createLocalShellOperations(shellName: string, resolveShellConfig
 					if (signal.aborted) onAbort();
 					else signal.addEventListener("abort", onAbort, { once: true });
 				}
-				// Race real exit against the timeout. On timeout the disposition seam
-				// decides what happens (core default: kill and fail). Consumers opt into
-				// detach-on-timeout via onBashTimeout() — e.g. Luke's native-tool-overrides
-				// extension adopts the live process into a background job (Claude Code
-				// parity) so long work keeps running and stays readable/killable by bgId.
-				const exitPromise = waitForChildProcess(child).then((code) => ({ kind: "exit" as const, code }));
-				const timeoutPromise =
-					timeoutMs !== undefined
-						? new Promise<{ kind: "timeout" }>((resolveTimeout) => {
-								timeoutHandle = setTimeout(() => resolveTimeout({ kind: "timeout" }), timeoutMs);
-							})
-						: undefined;
-				const outcome = timeoutPromise ? await Promise.race([exitPromise, timeoutPromise]) : await exitPromise;
+				// Handle shell spawn errors and wait for the process to terminate without hanging
+				// on inherited stdio handles held by detached descendants.
+				const exitCode = await waitForChildProcess(child);
 				if (signal?.aborted) {
 					throw new Error("aborted");
 				}
-				if (outcome.kind === "timeout") {
-					// Detach the foreground listeners first so the bg log is the single sink,
-					// then hand off to the configured disposition.
-					child.stdout?.off("data", onData);
-					child.stderr?.off("data", onData);
-					const disposition = disposeBashTimeout(child, command, cwd, timeoutMs ?? 0, ownerSessionId);
-					if ("backgroundedJobId" in disposition) {
-						backgroundedJobId = disposition.backgroundedJobId;
-						return { exitCode: null, backgroundedJobId };
-					}
-					// Failed disposition (the default kills): surface the timeout sentinel so
-					// the tool layer reports "Command timed out after Ns" instead of a bare exit code.
-					throw new Error(`timeout:${timeout ?? 0}`);
+				if (timedOut) {
+					throw new Error(`timeout:${timeout}`);
 				}
 				// A signal-killed shell has no exit code. Use the standard shell convention so
 				// callers do not mistake the termination for a successful command.
 				const signalCode = child.signalCode;
-				return { exitCode: outcome.code ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1) };
+				return { exitCode: exitCode ?? (signalCode ? 128 + (osConstants.signals[signalCode] ?? 0) : 1) };
 			} finally {
-				// Adopted children stay tracked — the background job owns the pid now.
-				if (!backgroundedJobId && child.pid) untrackDetachedChildPid(child.pid);
+				if (child.pid) untrackDetachedChildPid(child.pid);
 				if (timeoutHandle) clearTimeout(timeoutHandle);
 				if (signal) signal.removeEventListener("abort", onAbort);
 			}
@@ -284,13 +201,8 @@ function resolveSpawnContext(
 	delete env.PI_REASONING_LEVEL;
 	if (exposeSessionEnvironment && ctx) {
 		const model = ctx.model;
-		// Session metadata is best-effort decoration for the child process. The typed
-		// contract requires a session manager, but SDK embedders and untyped extension
-		// hosts can hand over a partial context, and a bash command must still run
-		// rather than fail the turn with a TypeError.
-		const sessionId = ctx.sessionManager?.getSessionId?.();
-		if (sessionId) env.PI_SESSION_ID = sessionId;
-		const sessionFile = ctx.sessionManager?.getSessionFile?.();
+		env.PI_SESSION_ID = ctx.sessionManager.getSessionId();
+		const sessionFile = ctx.sessionManager.getSessionFile();
 		if (sessionFile) env.PI_SESSION_FILE = sessionFile;
 		if (model) {
 			env.PI_PROVIDER = model.provider;
@@ -303,60 +215,23 @@ function resolveSpawnContext(
 }
 
 export interface BashToolOptions {
-	toolName?: "bash" | "Bash";
-	label?: string;
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
 	/** Command prefix prepended to every command (for example shell setup commands) */
 	commandPrefix?: string;
 	/** Optional explicit shell path from settings */
 	shellPath?: string;
-	/**
-	 * Default foreground timeout in seconds for calls that omit `timeout` (the
-	 * `bashTimeoutSeconds` setting). `0` disables the default. PI_BASH_TIMEOUT_SECONDS
-	 * overrides this, and an explicit per-call `timeout` overrides both.
-	 * Default: DEFAULT_BASH_TIMEOUT_SECONDS.
-	 */
-	defaultTimeoutSeconds?: number;
 	/** Expose current Pi session metadata as PI_* environment variables. Default: true */
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
 }
 
-/** Environment override for the default foreground timeout (seconds; 0 disables). */
-export const BASH_TIMEOUT_ENV_VAR = "PI_BASH_TIMEOUT_SECONDS";
-
 export type BashRenderState = {
 	startedAt: number | undefined;
 	endedAt: number | undefined;
 	interval: NodeJS.Timeout | undefined;
 };
-
-function isUsableTimeoutSetting(value: number | undefined): value is number {
-	return value !== undefined && Number.isFinite(value) && value >= 0;
-}
-
-/** Resolve the default foreground timeout, honoring environment and settings overrides. */
-export function resolveBashDefaultTimeoutSeconds(configuredSeconds?: number): number | undefined {
-	const raw = process.env[BASH_TIMEOUT_ENV_VAR];
-	if (raw !== undefined && raw.trim() !== "") {
-		const parsed = Number(raw);
-		if (isUsableTimeoutSetting(parsed)) return parsed === 0 ? undefined : parsed;
-	}
-	if (isUsableTimeoutSetting(configuredSeconds)) return configuredSeconds === 0 ? undefined : configuredSeconds;
-	return DEFAULT_BASH_TIMEOUT_SECONDS;
-}
-
-function bashTimeoutStatus(elapsedSeconds: number, limitSeconds: number, hasOutput: boolean): string {
-	return (
-		`Command timed out after ${elapsedSeconds}s and its process tree was killed (foreground limit ${limitSeconds}s).` +
-		(hasOutput ? " Output captured before the timeout is preserved above." : "") +
-		`\nTo allow more time, re-run with an explicit timeout:<seconds> (max ${Math.floor(MAX_TIMEOUT_SECONDS)}), timeout:false for no limit,` +
-		` or run_in_background:true to keep it running unbounded and read it with bash_output(bgId).` +
-		`\nTo change the default for every call, set bashTimeoutSeconds in settings or ${BASH_TIMEOUT_ENV_VAR} (0 disables it).`
-	);
-}
 
 export interface ShellToolConfig {
 	name: string;
@@ -377,145 +252,31 @@ export function createShellToolDefinition(
 	const commandPrefix = options?.commandPrefix;
 	const exposeSessionEnvironment = options?.exposeSessionEnvironment ?? true;
 	const spawnHook = options?.spawnHook;
-	const toolName = options?.toolName ?? config.name;
-	const label = options?.label ?? config.label;
-	const defaultTimeoutSeconds = resolveBashDefaultTimeoutSeconds(options?.defaultTimeoutSeconds);
 	return {
-		name: toolName,
-		label,
-		description:
-			config.name === "bash"
-				? `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${BASH_MAX_OUTPUT_BYTES / 1024}KB (whichever is hit first); if truncated, full output is saved to a temp file (or pass full:true to return the complete output inline when you truly need all of it). Optionally provide a timeout in seconds. IMPORTANT: prefer native file tools for repo exploration (Glob for paths, Grep for content, Read/Edit/Write for files) — avoid running \`grep\`/\`rg\`/\`find\` in Bash for repo work unless explicitly instructed or a dedicated tool cannot accomplish the task; pipeline filters on command output are fine. Pass run_in_background:true to run detached and return immediately with a bgId. Pass tui_only:true to stream output to the TUI but return only an exit/size summary to context.`
-				: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${BASH_MAX_OUTPUT_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet:
-			config.name === "bash"
-				? "Execute bash commands; set run_in_background:true for long-running work and read later with bash_output"
-				: config.promptSnippet,
-		executionMode: "sequential",
-		promptGuidelines:
-			config.name === "bash"
-				? [
-						"Use run_in_background:true for any command likely to exceed ~30s when you don't need the output immediately (builds, installers, kubectl rollouts, long test suites, dev servers).",
-						"A backgrounded bash job notifies you with a task_notification when it finishes. Do not poll it with sleep loops or re-run the command to check.",
-						"Always stop background jobs you started but no longer need with bash_kill(bgId).",
-						GUIDELINE_NATIVE_FILE_TOOLS,
-						GUIDELINE_BASH_SHELL_WORK,
-						GUIDELINE_READ_EDIT_WRITE,
-						...(exposeSessionEnvironment
-							? ["Inspect PI_* environment variables for current model and session details."]
-							: []),
-					]
-				: exposeSessionEnvironment && config.promptGuidelines
-					? [...config.promptGuidelines]
-					: undefined,
+		name: config.name,
+		label: config.label,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		promptSnippet: config.promptSnippet,
+		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
 		outputSchema: bashOutputSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		async execute(
 			_toolCallId,
-			{
-				command,
-				workdir,
-				timeout,
-				run_in_background,
-				tui_only,
-				full,
-			}: {
-				command: string;
-				workdir?: string;
-				timeout?: number | false;
-				run_in_background?: boolean;
-				tui_only?: boolean;
-				full?: boolean;
-			},
+			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
-			const ownerSessionId = ctx?.sessionManager?.getSessionId?.();
-			// Per-call working directory (Codex exec_command parity). Absolute `workdir`
-			// wins; a relative one resolves against the session cwd. A non-existent dir
-			// surfaces downstream as a clear spawn error rather than running in the wrong
-			// place. Omitting `workdir` is byte-identical to the previous behaviour.
-			const sessionCwd = ctx?.cwd || cwd;
-			const effectiveCwd = workdir ? resolve(sessionCwd, workdir) : sessionCwd;
-			const policy = currentBashPolicy();
-			if (config.name === "bash" && policy) {
-				const denied = checkBashPolicy(command, policy);
-				if (denied) {
-					return {
-						isError: true,
-						content: [{ type: "text", text: denied }],
-						details: undefined,
-					};
-				}
-			}
-			if (config.name === "bash" && redundantCdToCurrentWorkingDirectory(command, effectiveCwd)) {
-				return {
-					isError: true,
-					content: [{ type: "text", text: redundantCdError() }],
-					details: undefined,
-				};
-			}
-
-			if (tui_only && run_in_background) {
-				return {
-					isError: true,
-					content: [
-						{
-							type: "text",
-							text: "tui_only is incompatible with run_in_background. Background jobs already keep output out of context in the returned outputPath.",
-						},
-					],
-					details: undefined,
-				};
-			}
-
-			if (run_in_background && config.name !== "bash") {
-				return {
-					isError: true,
-					content: [{ type: "text", text: `run_in_background is not supported by the ${config.name} tool` }],
-					details: undefined,
-				};
-			}
-
-			// Background fast-path: spawn detached, return immediately. No timeout, no output streaming.
-			if (run_in_background) {
-				const job = spawnBashBackground(command, effectiveCwd, options?.shellPath, commandPrefix, ownerSessionId);
-				const text =
-					`Backgrounded bash job ${job.id} (pid=${job.pid ?? "unknown"}).\n` +
-					`Task id: ${job.id}\n` +
-					`Command: ${command}\n` +
-					`Output file: ${job.logPath}\n\n` +
-					`Inspect output with Read(path="${job.logPath}", offset/limit as needed). Stop with TaskStop(task_id="${job.id}").`;
-				return {
-					content: [{ type: "text", text }],
-					details: {
-						bgId: job.id,
-						taskId: job.id,
-						pid: job.pid,
-						logPath: job.logPath,
-						outputPath: job.logPath,
-						command,
-						startedAt: job.startedAt,
-					} as BashBgDetails as any,
-				};
-			}
-			const timeoutSeconds = resolveBashTimeout(timeout, defaultTimeoutSeconds);
-			const startedAt = Date.now();
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,
-				effectiveCwd,
+				ctx?.cwd || cwd,
 				spawnHook,
 				exposeSessionEnvironment,
 				ctx,
 			);
-			const output = new OutputAccumulator({
-				tempFilePrefix: config.tempFilePrefix,
-				maxBytes: full ? Number.POSITIVE_INFINITY : BASH_MAX_OUTPUT_BYTES,
-				maxLines: full ? Number.POSITIVE_INFINITY : undefined,
-			});
+			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -591,7 +352,7 @@ export function createShellToolDefinition(
 					} else if (truncation.truncatedBy === "lines") {
 						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${snapshot.fullOutputPath}]`;
 					} else {
-						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(BASH_MAX_OUTPUT_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
+						text += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${snapshot.fullOutputPath}]`;
 					}
 				}
 				return { text, details };
@@ -602,75 +363,29 @@ export function createShellToolDefinition(
 
 			try {
 				let exitCode: number | null;
-				let backgroundedJobId: string | undefined;
 				try {
 					const result = await ops.exec(spawnContext.command, spawnContext.cwd, {
 						onData: handleData,
 						signal,
-						timeout: timeoutSeconds,
+						timeout,
 						env: spawnContext.env,
-						ownerSessionId,
 					});
 					exitCode = result.exitCode;
-					backgroundedJobId = result.backgroundedJobId;
 				} catch (err) {
 					const snapshot = await finishOutput();
 					const { text } = formatOutput(snapshot, "");
 					if (err instanceof Error && err.message === "aborted") {
 						throw new Error(appendStatus(text, "Command aborted"));
 					}
-					// A timed-out command whose disposition failed (the core default kills)
-					// throws the `timeout:N` sentinel; detach dispositions return a bgId instead.
 					if (err instanceof Error && err.message.startsWith("timeout:")) {
-						const sentinelTimeoutSeconds = Number(err.message.slice("timeout:".length));
-						if (
-							timeoutSeconds === undefined &&
-							(!Number.isFinite(sentinelTimeoutSeconds) || sentinelTimeoutSeconds <= 0)
-						) {
-							throw err;
-						}
-						// Report the measured elapsed time (the kill lands slightly after the
-						// limit) and every way to raise the limit, so a legitimate long command
-						// can be retried deliberately instead of just failing.
-						const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-						throw new Error(
-							appendStatus(
-								text,
-								bashTimeoutStatus(elapsedSeconds, timeoutSeconds ?? sentinelTimeoutSeconds, text.length > 0),
-							),
-						);
+						const timeoutSecs = err.message.split(":")[1];
+						throw new Error(appendStatus(text, `Command timed out after ${timeoutSecs} seconds`));
 					}
 					throw err;
 				}
 
 				const snapshot = await finishOutput();
 				const { text: outputText, details } = formatOutput(snapshot);
-				if (backgroundedJobId) {
-					const job = getBashBgJob(backgroundedJobId);
-					const status =
-						`Command exceeded ${timeoutSeconds}s and is still running — detached into background job bgId=${backgroundedJobId}` +
-						(job?.pid ? ` (pid=${job.pid})` : "") +
-						`. The process was NOT killed. Read live output with bash_output(bgId="${backgroundedJobId}"); stop it with bash_kill(bgId="${backgroundedJobId}").` +
-						` To keep a command like this in the foreground, pass an explicit timeout:<seconds> or raise the default with the bashTimeoutSeconds setting / ${BASH_TIMEOUT_ENV_VAR}.`;
-					return {
-						content: [{ type: "text", text: appendStatus(outputText, status) }],
-						details: job ? ({ ...job, fullOutputPath: job.logPath } as unknown as BashBgDetails) : details,
-					};
-				}
-				if (tui_only) {
-					const durationStr = formatDuration(Date.now() - startedAt);
-					const sizeStr = `${snapshot.truncation.totalLines} lines, ${formatSize(snapshot.truncation.totalBytes)}`;
-					const pathHint = snapshot.fullOutputPath ? ` Saved: ${snapshot.fullOutputPath}` : "";
-					const summary = `[tui_only] Command exited ${exitCode ?? "null"} after ${durationStr} (${sizeStr}). Output streamed to TUI only.${pathHint}`;
-					if (
-						exitCode !== 0 &&
-						exitCode !== null &&
-						(config.name !== "bash" || !semanticExitForBashCommand(command, exitCode))
-					) {
-						throw new Error(summary);
-					}
-					return { content: [{ type: "text", text: summary }], details };
-				}
 				if (exitCode === null) {
 					throw new Error(appendStatus(outputText, "Command terminated without an exit code"));
 				}
@@ -686,25 +401,25 @@ export function createShellToolDefinition(
 					wall_time_seconds: wallTimeSeconds,
 				};
 				if (exitCode !== 0) {
-					const semanticExit = config.name === "bash" ? semanticExitForBashCommand(command, exitCode) : undefined;
-					if (!semanticExit) {
-						throw new Error(appendStatus(outputText, `Command exited with code ${exitCode}`));
-					}
-					const status = `Command exited with code ${exitCode} (${semanticExit.summary}; treated as success).`;
-					return { content: [{ type: "text", text: appendStatus(outputText, status) }], details };
+					return {
+						content: [{ type: "text", text: appendStatus(outputText, `Command exited with code ${exitCode}`) }],
+						details,
+						structuredContent,
+						isError: true,
+					};
 				}
 				return { content: [{ type: "text", text: outputText }], details, structuredContent };
 			} finally {
 				clearUpdateTimer();
 			}
 		},
-		...createShellRenderers(config.prompt, config.name === "bash" ? { label, defaultTimeoutSeconds } : undefined),
+		...createShellRenderers(config.prompt),
 	};
 }
 
 const bashToolConfig: ShellToolConfig = {
 	name: "bash",
-	label: "Bash",
+	label: "bash",
 	shellName: "bash",
 	prompt: "$",
 	promptSnippet: bashToolSystemPromptContribution.snippet,
@@ -728,85 +443,3 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 	});
 	return tool;
 }
-
-export function createUppercaseBashToolDefinition(
-	cwd: string,
-	options?: BashToolOptions,
-): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	return createBashToolDefinition(cwd, { ...options, toolName: "Bash", label: "Bash" });
-}
-
-export function createUppercaseBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	return wrapToolDefinition(createUppercaseBashToolDefinition(cwd, options));
-}
-
-// Fork seam: the background-job registry, bash policy/guards, script segmenter,
-// and bash_output/bash_kill tools were extracted verbatim into fork-owned
-// modules. Re-export the moved public surface so downstream imports (src/index.ts,
-// core/tools/index.ts, tasks, extensions, tests) are unchanged.
-export {
-	assertBashBgCapacity,
-	BASH_BG_DEFAULT_MAX_OUTPUT_BYTES,
-	BASH_BG_LOG_MAX_AGE_MS,
-	BASH_BG_MAX_CONCURRENT,
-	BASH_BG_MAX_LOG_READ_BYTES,
-	BASH_BG_MAX_TERMINAL,
-	BASH_BG_STALL_TAIL_BYTES,
-	BASH_BG_STALL_THRESHOLD_MS,
-	BASH_BG_WATCHDOG_INTERVAL_MS,
-	type BackgroundShellNotification,
-	type BashBgDetails,
-	type BashBgJob,
-	type BashBgJobKind,
-	type BashBgJobOptions,
-	type BashBgJobStore,
-	type BashBgLifecycleState,
-	type BashBgTerminalReason,
-	type BashTimeout,
-	type BashTimeoutOutcome,
-	checkBashBgLifecycle,
-	createBackgroundShellNotification,
-	createBashBgJobStore,
-	getBashBgJob,
-	getRunningBashBgJobsSorted,
-	killAllBashBgJobs,
-	killBashBgJob,
-	killBashBgJobsForSession,
-	listBashBgJobs,
-	looksLikeBashBgPrompt,
-	onBashTimeout,
-	selectTerminalBashBgJobIdsToEvict,
-	spawnBashBackground,
-	subscribeBashBgJobs,
-	subscribeBashBgNotificationForOwner,
-	subscribeBashBgStall,
-	subscribeBashBgStallForOwner,
-	subscribeBashBgTerminal,
-	subscribeBashBgTerminalForOwner,
-	sweepStaleBashBgLogs,
-} from "../bash-bg-jobs.ts";
-export {
-	type BashPolicy,
-	checkBashPolicy,
-	EXPLORE_BASH_POLICY,
-	redundantCdToCurrentWorkingDirectory,
-	runWithBashPolicy,
-	semanticExitForBashCommand,
-} from "../bash-policy.ts";
-export {
-	type BashKillToolInput,
-	createBashKillTool,
-	createBashKillToolDefinition,
-	createKillShellTool,
-	createKillShellToolDefinition,
-} from "./bash-kill.ts";
-export {
-	type BashOutputToolDetails,
-	type BashOutputToolInput,
-	createBashOutputNativeTool,
-	createBashOutputNativeToolDefinition,
-	createBashOutputTool,
-	createBashOutputToolDefinition,
-	renderBashBgOutput,
-	renderOrphanedBashBgOutput,
-} from "./bash-output.ts";

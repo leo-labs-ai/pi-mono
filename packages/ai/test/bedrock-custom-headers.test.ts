@@ -53,9 +53,8 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import type { BedrockOptions } from "../src/api/bedrock-converse-stream.ts";
 import { stream as streamBedrock, streamSimple as streamSimpleBedrock } from "../src/api/bedrock-converse-stream.ts";
-import { normalizeContext } from "../src/compat.ts";
+import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 
 const context = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
@@ -64,7 +63,7 @@ const context = normalizeContext({
 const MIDDLEWARE_NAME = "pi-ai-custom-headers";
 
 function getModelFixture(): Model<"bedrock-converse-stream"> {
-	return pickModel("amazon-bedrock", (m) => m.id.startsWith("us."));
+	return getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
 }
 
 /**

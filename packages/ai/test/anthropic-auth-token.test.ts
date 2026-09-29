@@ -216,20 +216,13 @@ describe("Anthropic-compatible user agents", () => {
 		expect(headers["User-Agent"]).toBe("custom-client");
 	});
 
-	// Fork divergence from upstream, which lets a configured `anthropic-beta`
-	// header replace the computed set outright. The fork's required betas carry
-	// two features upstream does not have — deferred tools (tool search) and
-	// extended cache TTL — so replacement would silently disable them for any
-	// caller or gateway that sets a beta header of its own.
-	it("unions explicit Anthropic beta headers with the betas the request requires", async () => {
+	it("preserves explicit Anthropic beta header replacement", async () => {
 		await streamAnthropic(anthropicModel, context, {
 			apiKey: "anthropic-key",
 			headers: { "anthropic-beta": "custom-beta" },
 		}).result();
 
-		const betas = mockState.createParams?.betas as string[] | undefined;
-		expect(betas).toContain("custom-beta");
-		expect(betas).toContain("extended-cache-ttl-2025-04-11");
+		expect(mockState.createParams?.betas).toEqual(["custom-beta"]);
 	});
 
 	it("preserves explicit Anthropic beta header suppression", async () => {

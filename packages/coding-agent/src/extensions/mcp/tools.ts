@@ -14,8 +14,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonValue, TextContent } from "@earendil-works/pi-ai";
+import type { AgentToolResult } from "@lue-labs/pi-agent-core";
+import type { ImageContent, JsonValue, TextContent } from "@lue-labs/pi-ai";
 import {
 	type CallToolResult,
 	type ContentBlock,
@@ -23,7 +23,7 @@ import {
 	type Tool as McpTool,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
-import { Text } from "@earendil-works/pi-tui";
+import { Text } from "@lue-labs/pi-tui";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition, ToolExposure, ToolNamespace } from "../../core/extensions/types.ts";
 import { formatToolCallWithArgs, getTextOutput, replaceTabs } from "../../core/tools/render-utils.ts";

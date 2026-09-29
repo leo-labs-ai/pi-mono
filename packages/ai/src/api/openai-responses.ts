@@ -7,6 +7,7 @@ import type {
 	CacheRetention,
 	Model,
 	OpenAIResponsesCompat,
+	ProviderEnv,
 	ProviderHeaders,
 	SimpleStreamOptions,
 	StreamFunction,
@@ -14,25 +15,17 @@ import type {
 	TranscriptContext,
 	Usage,
 } from "../types.ts";
-import { resolveCacheRetention } from "../utils/cache-retention.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import {
-	convertResponsesMessages,
-	convertResponsesTools,
-	effectiveRequestEffort,
-	insertConfigurationUpdates,
-	processResponsesStream,
-	resolveMidConvoEffort,
-} from "./openai-responses-shared.ts";
+import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -72,6 +65,20 @@ function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "pro
 	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
 }
 
+/**
+ * Resolve cache retention preference.
+ * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
+ */
+function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
+	if (cacheRetention) {
+		return cacheRetention;
+	}
+	if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
+		return "long";
+	}
+	return "short";
+}
+
 function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
@@ -82,14 +89,8 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsOpenAIGrammarTools: model.compat?.supportsOpenAIGrammarTools ?? false,
 		supportsAdditionalTools: model.compat?.supportsAdditionalTools ?? false,
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
-		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
-		promptCacheApi: model.compat?.promptCacheApi ?? "legacy",
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
-		// Fork: Codex Responses transport flags share the compat type; default on.
-		sendChatgptAccountId: model.compat?.sendChatgptAccountId ?? true,
-		supportsWebSocketTransport: model.compat?.supportsWebSocketTransport ?? true,
-		supportsZstdRequestCompression: model.compat?.supportsZstdRequestCompression ?? true,
 	};
 }
 
@@ -97,9 +98,6 @@ function getPromptCacheRetention(
 	compat: Required<OpenAIResponsesCompat>,
 	cacheRetention: CacheRetention,
 ): "24h" | undefined {
-	// GPT-5.6+ deprecates prompt_cache_retention in favor of prompt_cache_options.ttl;
-	// omit it entirely on breakpoint-capable and explicit-cache-mode models.
-	if (compat.promptCacheApi === "breakpoints") return undefined;
 	return cacheRetention === "long" && compat.supportsLongCacheRetention && !compat.supportsExplicitPromptCacheMode
 		? "24h"
 		: undefined;
@@ -117,7 +115,7 @@ function getPromptCacheOptions(
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
-	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	toolChoice?: ResponseCreateParamsStreaming["tool_choice"];
@@ -175,13 +173,8 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
-				params = nextParams as ResponseCreateParamsStreaming & {
-					prompt_cache_options?: { mode?: "explicit"; ttl?: "30m" };
-				};
+				params = nextParams as ResponseCreateParamsStreaming;
 			}
-			// Recorded after onPayload so a hook that rewrites effort cannot desync replay from the wire.
-			const providerThinkingLevel = effectiveRequestEffort(model, params);
-			if (providerThinkingLevel !== undefined) output.providerThinkingLevel = providerThinkingLevel;
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -254,8 +247,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 		toolChoice: options?.toolChoice,
 	} satisfies OpenAIResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	// "adaptive" is Anthropic-only; OpenAI Responses has no equivalent. Drop it here.
-	const reasoningEffort = clampedReasoning === "off" || clampedReasoning === "adaptive" ? undefined : clampedReasoning;
+	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
 	return stream(model, context, {
 		...base,
@@ -307,17 +299,6 @@ function createClient(
 	});
 }
 
-/** Wire `reasoning.effort` for the requested level; `undefined` when no level or summary was requested. */
-function resolveReasoningEffort(
-	model: Model<"openai-responses">,
-	options: OpenAIResponsesOptions | undefined,
-): string | null | undefined {
-	if (!options?.reasoningEffort && !options?.reasoningSummary) return undefined;
-	const requestedEffort = options.reasoningEffort === "ultra" ? "max" : options.reasoningEffort;
-	const configuredEffort = requestedEffort ? (model.thinkingLevelMap?.[requestedEffort] ?? requestedEffort) : "medium";
-	return configuredEffort === "ultra" ? "max" : configuredEffort;
-}
-
 function buildParams(
 	model: Model<"openai-responses">,
 	context: TranscriptContext,
@@ -328,32 +309,15 @@ function buildParams(
 		compat.supportsOpenAIGrammarTools,
 	),
 ) {
-	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	const promptCacheBreakpoints = compat.promptCacheApi === "breakpoints" && cacheRetention !== "none";
 	const transcriptTools = resolveTranscriptTools(
 		context.messages,
 		compat.supportsAdditionalTools || compat.supportsToolSearch,
 	);
-	const deferredToolsMode = compat.supportsAdditionalTools
-		? "additional-tools"
-		: compat.supportsToolSearch
-			? "tool-search"
-			: undefined;
-	const toolPlacement = splitDeferredTools(
-		{ messages: context.messages, tools: transcriptTools.requestTools },
-		deferredToolsMode !== undefined,
-	);
-	const effort = resolveReasoningEffort(model, options);
-	const midConvoEffort = resolveMidConvoEffort(model, effort);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
-		midConvoEffort: midConvoEffort !== undefined,
 		grammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
 		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
 		supportsToolSearch: compat.supportsToolSearch,
-		promptCacheBreakpoints,
 		toolOptions: {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
@@ -385,12 +349,11 @@ function buildParams(
 		params.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		params.tools = convertResponsesTools(toolPlacement.immediate, {
+	if (transcriptTools.requestTools.length > 0) {
+		params.tools = convertResponsesTools(transcriptTools.requestTools, {
 			supportsStrictMode: compat.supportsStrictMode,
 			supportsOpenAIGrammarTools: compat.supportsOpenAIGrammarTools,
 		});
-		params.parallel_tool_calls = true;
 	}
 
 	if (options?.toolChoice !== undefined) {
@@ -398,15 +361,10 @@ function buildParams(
 	}
 
 	if (model.reasoning) {
-		if (midConvoEffort !== undefined) {
-			const plan = insertConfigurationUpdates(messages, midConvoEffort);
-			params.input = plan.input;
-			params.reasoning = {
-				effort: plan.requestEffort,
-				summary: options?.reasoningSummary || "auto",
-			};
-			params.include = ["reasoning.encrypted_content"];
-		} else if (effort !== undefined) {
+		if (options?.reasoningEffort || options?.reasoningSummary) {
+			const effort = options?.reasoningEffort
+				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
+				: "medium";
 			params.reasoning = {
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",

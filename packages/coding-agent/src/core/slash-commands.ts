@@ -18,9 +18,6 @@ export interface BuiltinSlashCommand {
 
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
-	{ name: "agents", description: "List native child agents, run native agent workflows, or open selector" },
-	{ name: "agents-doctor", description: "Diagnose native agent configuration and runtime availability" },
-	{ name: "agents-status", description: "Show native child-agent runs and background controls" },
 	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
 	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>" },

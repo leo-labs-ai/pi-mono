@@ -32,7 +32,7 @@ export const isBundledNode = typeof PI_BUNDLED_NODE !== "undefined" && PI_BUNDLE
 // Install Method Detection
 // =============================================================================
 
-export type InstallMethod = "bun-binary" | "source-checkout" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
 interface SelfUpdateCommandStep {
 	command: string;
@@ -76,32 +76,6 @@ function makeSelfUpdateCommandStep(command: string, args: string[]): SelfUpdateC
 	};
 }
 
-function findSourceCheckoutRoot(): string | undefined {
-	let dir = getPackageDir();
-	while (dir !== dirname(dir)) {
-		if (existsSync(join(dir, ".git")) && existsSync(join(dir, "packages", "coding-agent", "package.json"))) {
-			return dir;
-		}
-		dir = dirname(dir);
-	}
-	return undefined;
-}
-
-function getSourceUpdateCommand(configuredCommand?: string[]): SelfUpdateCommand | undefined {
-	const envCommand = process.env.PI_SOURCE_UPDATE_COMMAND?.trim();
-	if (envCommand) {
-		const command = process.env.SHELL || (process.platform === "win32" ? "cmd" : "sh");
-		const args = process.platform === "win32" ? ["/d", "/s", "/c", envCommand] : ["-lc", envCommand];
-		return { command, args, display: envCommand };
-	}
-
-	if (!configuredCommand?.length) {
-		return undefined;
-	}
-	const [command, ...args] = configuredCommand;
-	return makeSelfUpdateCommandStep(command, args);
-}
-
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
@@ -120,9 +94,6 @@ export function detectInstallMethod(): InstallMethod {
 	}
 	if (resolvedPath.includes("/npm/") || resolvedPath.includes("/node_modules/")) {
 		return "npm";
-	}
-	if (findSourceCheckoutRoot()) {
-		return "source-checkout";
 	}
 
 	return "unknown";
@@ -152,14 +123,11 @@ function getSelfUpdateCommandForMethod(
 	installedPackageName: string,
 	updatePackageTarget: SelfUpdatePackageTarget = installedPackageName,
 	npmCommand?: string[],
-	sourceUpdateCommand?: string[],
 ): SelfUpdateCommand | undefined {
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	switch (method) {
 		case "bun-binary":
 			return undefined;
-		case "source-checkout":
-			return getSourceUpdateCommand(sourceUpdateCommand);
 		case "pnpm": {
 			const match = readCommandOutput("pnpm", ["root", "-g"])
 				? undefined
@@ -281,7 +249,6 @@ function getGlobalPackageRoots(method: InstallMethod, _packageName: string, npmC
 			return roots;
 		}
 		case "bun-binary":
-		case "source-checkout":
 		case "unknown":
 			return [];
 	}
@@ -355,19 +322,9 @@ export function getSelfUpdateCommand(
 	packageName: string,
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = packageName,
-	sourceUpdateCommand?: string[],
 ): SelfUpdateCommand | undefined {
 	const method = detectInstallMethod();
-	const command = getSelfUpdateCommandForMethod(
-		method,
-		packageName,
-		updatePackageTarget,
-		npmCommand,
-		sourceUpdateCommand,
-	);
-	if (method === "source-checkout") {
-		return command;
-	}
+	const command = getSelfUpdateCommandForMethod(method, packageName, updatePackageTarget, npmCommand);
 	if (!command || !isManagedByGlobalPackageManager(method, packageName, npmCommand) || !isSelfUpdatePathWritable()) {
 		return undefined;
 	}
@@ -378,23 +335,13 @@ export function getSelfUpdateUnavailableInstruction(
 	packageName: string,
 	npmCommand?: string[],
 	updatePackageTarget: SelfUpdatePackageTarget = packageName,
-	sourceUpdateCommand?: string[],
 ): string {
 	const method = detectInstallMethod();
 	const target = normalizeSelfUpdatePackageTarget(updatePackageTarget);
 	if (method === "bun-binary") {
 		return `Download from: https://github.com/earendil-works/pi/releases/latest`;
 	}
-	if (method === "source-checkout") {
-		return `This installation is a source checkout. Configure a source update command with PI_SOURCE_UPDATE_COMMAND or settings.sourceUpdateCommand.`;
-	}
-	const command = getSelfUpdateCommandForMethod(
-		method,
-		packageName,
-		updatePackageTarget,
-		npmCommand,
-		sourceUpdateCommand,
-	);
+	const command = getSelfUpdateCommandForMethod(method, packageName, target, npmCommand);
 	if (command) {
 		if (isManagedByGlobalPackageManager(method, packageName, npmCommand) && !isSelfUpdatePathWritable()) {
 			return `This installation is managed by a global ${method} install, but the install path is not writable. Update it yourself with: ${command.display}`;
@@ -464,13 +411,8 @@ export function getThemesDir(): string {
 	if (isBunBinary) {
 		return join(getPackageDir(), "theme");
 	}
-	// Theme is in modes/interactive/theme/ relative to src/ or dist/.
-	// getPackageDir() may return the dist/ dir itself (when package.json is
-	// copied into dist/ by copy-assets), so skip the subdir in that case.
+	// Theme is in modes/interactive/theme/ relative to src/ or dist/
 	const packageDir = getPackageDir();
-	if (existsSync(join(packageDir, "modes", "interactive", "theme"))) {
-		return join(packageDir, "modes", "interactive", "theme");
-	}
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
 	return join(packageDir, srcOrDist, "modes", "interactive", "theme");
 }
@@ -486,9 +428,6 @@ export function getExportTemplateDir(): string {
 		return join(getPackageDir(), "export-html");
 	}
 	const packageDir = getPackageDir();
-	if (existsSync(join(packageDir, "core", "export-html"))) {
-		return join(packageDir, "core", "export-html");
-	}
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
 	return join(packageDir, srcOrDist, "core", "export-html");
 }
@@ -529,9 +468,6 @@ export function getInteractiveAssetsDir(): string {
 		return join(getPackageDir(), "assets");
 	}
 	const packageDir = getPackageDir();
-	if (existsSync(join(packageDir, "modes", "interactive", "assets"))) {
-		return join(packageDir, "modes", "interactive", "assets");
-	}
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
 	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
 }
@@ -599,15 +535,6 @@ export const VERSION: string = pkg.version || "0.0.0";
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
-// e.g. PI_COMMAND_NAME=pii. A launcher wrapper sets this so user-facing hints
-// ("To resume this session: …", "Run … update") name the command the user
-// actually typed. APP_NAME stays the identity behind env vars and config dirs.
-export const ENV_COMMAND_NAME = `${APP_NAME.toUpperCase()}_COMMAND_NAME`;
-
-export function getCommandName(): string {
-	const name = process.env[ENV_COMMAND_NAME]?.trim();
-	return name && /^[\w.-]+$/.test(name) ? name : APP_NAME;
-}
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);

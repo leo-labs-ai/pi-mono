@@ -12,15 +12,13 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
-import { streamSimple } from "@lue-labs/pi-ai/compat";
+import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createCodingTools } from "../src/index.ts";
-import { pickModel } from "./helpers/models.ts";
-import { fixtureSessionDir } from "./helpers/session-storage.ts";
 import { API_KEY, createTestResourceLoader } from "./utilities.ts";
 
 describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
@@ -48,7 +46,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 	});
 
 	async function createSession(inMemory = false) {
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => API_KEY,
 			streamFn: streamSimple,
@@ -59,9 +57,7 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 			},
 		});
 
-		sessionManager = inMemory
-			? SessionManager.inMemory()
-			: SessionManager.create(tempDir, fixtureSessionDir(tempDir));
+		sessionManager = inMemory ? SessionManager.inMemory() : SessionManager.create(tempDir);
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		// Use minimal keepRecentTokens so small test conversations have something to summarize
 		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
@@ -73,7 +69,6 @@ describe.skipIf(!API_KEY)("AgentSession compaction e2e", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});

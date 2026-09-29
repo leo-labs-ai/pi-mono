@@ -3,216 +3,33 @@
  */
 
 import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import { type Api, type AuthOperationOptions, type KnownProvider, type Model, modelsAreEqual } from "@lue-labs/pi-ai";
+import {
+	type Api,
+	type AuthOperationOptions,
+	type KnownProvider,
+	type Model,
+	modelsAreEqual,
+} from "@lue-labs/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
 
-export const AUTO_MODEL_ALIAS_PROVIDERS = new Set(["clawrouter", "claude-bridge", "openai-codex"]);
-
-const AUTO_MODEL_ALIAS_PROVIDER_RENAMES = new Map([["pi-fork", "clawrouter"]]);
-
-function normalizeAutoAliasProvider(provider: string | undefined): string | undefined {
-	const normalizedProvider = provider?.trim().toLowerCase();
-	if (!normalizedProvider) return undefined;
-	const canonicalProvider = AUTO_MODEL_ALIAS_PROVIDER_RENAMES.get(normalizedProvider) ?? normalizedProvider;
-	return AUTO_MODEL_ALIAS_PROVIDERS.has(canonicalProvider) ? canonicalProvider : undefined;
-}
-
-export function normalizeAutoAliasString(
-	provider: string | undefined,
-	modelId: string | undefined,
-): string | undefined {
-	const normalizedModelId = modelId?.trim().toLowerCase();
-	if (!normalizedModelId) return undefined;
-
-	const modelReferenceParts = normalizedModelId.split("/");
-	if (modelReferenceParts.length === 2) {
-		const [referenceProvider, referenceModelId] = modelReferenceParts;
-		const canonicalProvider = normalizeAutoAliasProvider(referenceProvider);
-		return referenceModelId === "auto" && canonicalProvider ? `${canonicalProvider}/auto` : undefined;
-	}
-
-	const canonicalProvider = normalizeAutoAliasProvider(provider);
-	return normalizedModelId === "auto" && canonicalProvider ? `${canonicalProvider}/auto` : undefined;
-}
-
-/**
- * Fast/cheap model id per provider, used to resolve the `"fast"` model alias
- * (e.g. for the read-only `explore` agent).
- *
- * Only providers with a clear cheap variant are listed. When the parent's
- * provider has no entry here, `"fast"` falls back to the parent model.
- * Custom-provider users can override per-agent via an explicit `model:` value.
- */
-type TierModelAlias = "fast" | "medium" | "frontier" | "ultra";
-
-type TierCandidateMap = Record<TierModelAlias, string[]>;
-
-export const modelTierCandidatesPerProvider: Record<string, TierCandidateMap> = {
-	anthropic: {
-		fast: ["claude-haiku-4-5"],
-		medium: ["claude-sonnet-4-6"],
-		frontier: ["claude-opus-5-5", "claude-opus-5"],
-		ultra: ["claude-fable-5-200k", "claude-fable-5"],
-	},
-	"amazon-bedrock": {
-		fast: ["us.anthropic.claude-haiku-4-5-20251001-v1:0"],
-		medium: ["us.anthropic.claude-sonnet-4-6-20251001-v1:0"],
-		frontier: ["us.anthropic.claude-opus-4-8-v1:0"],
-		ultra: [],
-	},
-	openai: {
-		fast: ["gpt-5.6-luna"],
-		medium: ["gpt-5.6-terra"],
-		frontier: ["gpt-5.6-sol"],
-		// No ultra tier: OpenAI ships the 5.6 family as luna/terra/sol only, and a
-		// bare "gpt-5.6" has never existed in the catalog (left behind by 65eb88a7e
-		// when 5.4/5.5 were retired). Empty means "fall back to the parent model",
-		// as with google/xai/bedrock; aliasing ultra to sol would quietly make ultra
-		// a synonym for frontier.
-		ultra: [],
-	},
-	// Direct Codex does not yet advertise GPT-5.6 in its built-in catalog.
-	"openai-codex": {
-		fast: ["gpt-5.3-codex-spark"],
-		medium: ["gpt-5.3-codex-spark"],
-		frontier: ["gpt-5.3-codex-spark"],
-		ultra: ["gpt-5.3-codex-spark"],
-	},
-	"azure-openai-responses": {
-		fast: ["gpt-5.6-luna"],
-		medium: ["gpt-5.6-terra"],
-		frontier: ["gpt-5.6-sol"],
-		// Same as `openai` above: no bare "gpt-5.6" in the Azure catalog either.
-		ultra: [],
-	},
-	// Copilot likewise needs a catalog-backed, non-retired fallback.
-	"github-copilot": {
-		fast: ["gpt-5.3-codex"],
-		medium: ["gpt-5.3-codex"],
-		frontier: ["gpt-5.3-codex"],
-		ultra: ["gpt-5.3-codex"],
-	},
-	google: {
-		fast: ["gemini-3.1-flash-lite"],
-		medium: ["gemini-3.1-flash"],
-		frontier: ["gemini-3.1-pro-preview"],
-		ultra: [],
-	},
-	"google-vertex": {
-		fast: ["gemini-3.1-flash-lite"],
-		medium: ["gemini-3.1-flash"],
-		frontier: ["gemini-3.1-pro-preview"],
-		ultra: [],
-	},
-	groq: {
-		fast: ["openai/gpt-oss-20b"],
-		medium: ["openai/gpt-oss-120b"],
-		frontier: [],
-		ultra: [],
-	},
-	xai: {
-		fast: ["grok-4-fast"],
-		medium: ["grok-4.20-0309-reasoning"],
-		frontier: ["grok-4.20-0309-reasoning"],
-		ultra: [],
-	},
-	// Custom proxy providers (Luke's fork). `clawrouter` fronts both Claude and
-	// OpenAI accounts, so the generic provider order is only the no-family fallback;
-	// parent model family gets first pick via modelFamilyTierCandidatesByProvider.
-	"claude-bridge": {
-		fast: ["claude-haiku-4-5"],
-		medium: ["claude-sonnet-5", "claude-sonnet-4-6"],
-		frontier: ["claude-opus-5-5-200k", "claude-opus-5-5", "claude-opus-5-200k", "claude-opus-5"],
-		ultra: ["claude-fable-5-200k", "claude-fable-5"],
-	},
-	clawrouter: {
-		fast: ["gpt-6-luna-200k", "gpt-5.6-luna", "claude-haiku-4-5"],
-		medium: ["gpt-6-luna-200k", "gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5", "claude-sonnet-4-6"],
-		frontier: [
-			"claude-opus-5-5-200k",
-			"claude-opus-5-5",
-			"claude-opus-5-200k",
-			"claude-opus-5",
-			"gpt-6-sol-200k",
-			"gpt-5.6-sol",
-		],
-		ultra: ["gpt-5.6", "claude-fable-5-200k", "claude-fable-5"],
-	},
-};
-
-const modelFamilyTierCandidatesByProvider: Record<
-	string,
-	Array<{ prefix: string; candidates: Partial<TierCandidateMap> }>
-> = {
-	clawrouter: [
-		{
-			prefix: "gpt-",
-			candidates: {
-				fast: ["gpt-6-luna-200k", "gpt-5.6-luna"],
-				medium: ["gpt-6-luna-200k", "gpt-5.6-terra", "gpt-5.3-codex-spark"],
-				frontier: ["gpt-6-sol-200k", "gpt-5.6-sol"],
-				ultra: ["gpt-5.6"],
-			},
-		},
-		{
-			prefix: "claude-",
-			candidates: {
-				fast: ["claude-haiku-4-5"],
-				medium: ["claude-sonnet-5", "claude-sonnet-4-6"],
-				frontier: ["claude-opus-5-5-200k", "claude-opus-5-5", "claude-opus-5-200k", "claude-opus-5"],
-				ultra: ["claude-fable-5-200k", "claude-fable-5"],
-			},
-		},
-	],
-};
-
-export function tierModelCandidatesForParent(options: {
-	reference: TierModelAlias;
-	parentProvider?: string;
-	parentModelId?: string;
-}): string[] {
-	if (!options.parentProvider) return [];
-	const providerCandidates = modelTierCandidatesPerProvider[options.parentProvider]?.[options.reference] ?? [];
-	const normalizedParentModelId = options.parentModelId?.toLowerCase().replace(/^(?:anthropic|openai)\//, "");
-	const familyCandidates = modelFamilyTierCandidatesByProvider[options.parentProvider]?.find((family) =>
-		normalizedParentModelId?.startsWith(family.prefix),
-	)?.candidates[options.reference];
-	return [...new Set([...(familyCandidates ?? []), ...providerCandidates])];
-}
-
-function firstCandidatePerProvider(reference: TierModelAlias): Record<string, string> {
-	return Object.fromEntries(
-		Object.entries(modelTierCandidatesPerProvider)
-			.map(([provider, tiers]) => [provider, tiers[reference][0]])
-			.filter((entry): entry is [string, string] => typeof entry[1] === "string"),
-	);
-}
-
-/** Compatibility exports for callers/tests that only need the preferred single model. */
-export const fastModelPerProvider: Record<string, string> = firstCandidatePerProvider("fast");
-export const mediumModelPerProvider: Record<string, string> = firstCandidatePerProvider("medium");
-
-/** Default model IDs for each known provider */
-export const defaultModelPerProvider: Record<KnownProvider, string> = {
-
 /** Default chat model IDs for providers with built-in chat models. */
 export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 	"ant-ling": "Ring-2.6-1T",
 	anthropic: "claude-opus-4-8",
-	openai: "gpt-5.6-sol",
-	"azure-openai-responses": "gpt-5.6-sol",
-	"openai-codex": "gpt-5.3-codex-spark",
+	openai: "gpt-5.5",
+	"azure-openai-responses": "gpt-5.4",
+	"openai-codex": "gpt-5.5",
 	radius: "balanced",
 	nvidia: "nvidia/nemotron-3-super-120b-a12b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",
-	"github-copilot": "gpt-5.3-codex",
+	"github-copilot": "gpt-5.4",
 	openrouter: "moonshotai/kimi-k2.6",
 	"vercel-ai-gateway": "zai/glm-5.1",
 	xai: "grok-4.7",
@@ -306,7 +123,6 @@ export function findExactModelReferenceMatch(
 				return undefined;
 			}
 		}
-		return undefined;
 	}
 
 	const idMatches = availableModels.filter((model) => model.id.toLowerCase() === normalizedReference);
@@ -321,13 +137,6 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
 		return exactMatch;
-	}
-
-	// Provider-qualified references are intentional. If `openai/gpt-...` or
-	// `openai-codex/gpt-...` is unavailable, do not fuzzy-match a proxy provider
-	// model whose id merely contains that string (e.g. `kilo/openai/gpt-...`).
-	if (modelPattern.includes("/")) {
-		return undefined;
 	}
 
 	// No exact match - fall back to partial matching
@@ -379,11 +188,6 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	};
 }
 
-function stripProviderPrefix(provider: string, modelId: string): string {
-	const prefix = `${provider}/`;
-	return modelId.toLowerCase().startsWith(prefix.toLowerCase()) ? modelId.substring(prefix.length) : modelId;
-}
-
 /**
  * Parse a pattern to extract model and thinking level.
  * Handles models with colons in their IDs (e.g., OpenRouter's :exacto suffix).
@@ -432,12 +236,6 @@ export function parseModelPattern(
 		return result;
 	} else {
 		// Invalid suffix
-		// A provider-qualified reference must never degrade into a *different*
-		// model by shedding its suffix: `openai/gpt-4o:extended` resolving to
-		// `gpt-4o` silently answers with a model the caller did not ask for.
-		if (pattern.includes("/")) {
-			return { model: undefined, thinkingLevel: undefined, warning: undefined };
-		}
 		const allowFallback = options?.allowInvalidThinkingLevelFallback ?? true;
 		if (!allowFallback) {
 			// In strict mode (CLI --model parsing), treat it as part of the model id and fail.
@@ -876,8 +674,7 @@ export async function findInitialModel(options: {
 
 	// 3. Try saved default from settings if auth is configured.
 	if (defaultProvider && defaultModelId) {
-		const normalizedDefaultModelId = stripProviderPrefix(defaultProvider, defaultModelId);
-		const found = modelRuntime.getModel(defaultProvider, normalizedDefaultModelId);
+		const found = modelRuntime.getModel(defaultProvider, defaultModelId);
 		if (found && modelRuntime.hasConfiguredAuth(found.provider)) {
 			model = found;
 			const perModel = modelThinkingLevels?.[`${defaultProvider}/${defaultModelId}`];

@@ -23,10 +23,8 @@ import { convertToLlm } from "../../src/core/messages.ts";
 import { SessionManager } from "../../src/core/session-manager.ts";
 import type { Settings } from "../../src/core/settings-manager.ts";
 import { SettingsManager } from "../../src/core/settings-manager.ts";
-import { boundModelFacingContextImages } from "../../src/core/tool-artifacts.ts";
 import type { InlineExtension, ResourceLoader } from "../../src/index.ts";
 import { theme } from "../../src/modes/interactive/theme/theme.ts";
-import { redirectOmittedSessionCreates } from "../helpers/session-storage.ts";
 import {
 	type CreateTestExtensionsResultInput,
 	createTestExtensionsResult,
@@ -120,10 +118,6 @@ export interface HarnessOptions {
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<InlineExtension | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
-	provider?: string;
-	systemPrompt?: string;
-	/** Identity of the agent run this session represents (for telemetry-identity tests). */
-	agentRunIdentity?: AgentRunIdentity;
 	modelsJson?: Record<string, unknown>;
 }
 
@@ -153,25 +147,7 @@ function createTempDir(): string {
 
 export async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 	const tempDir = createTempDir();
-	const restoreOmittedSessionCreates = redirectOmittedSessionCreates(tempDir);
-	try {
-		return await createHarnessWithTempDir(tempDir, restoreOmittedSessionCreates, options);
-	} catch (error) {
-		restoreOmittedSessionCreates();
-		if (existsSync(tempDir)) {
-			rmSync(tempDir, { recursive: true });
-		}
-		throw error;
-	}
-}
-
-async function createHarnessWithTempDir(
-	tempDir: string,
-	restoreOmittedSessionCreates: () => void,
-	options: HarnessOptions,
-): Promise<Harness> {
 	const fauxProvider: FauxProviderRegistration = registerFauxProvider({
-		provider: options.provider,
 		models: options.models,
 	});
 	fauxProvider.setResponses([]);
@@ -217,7 +193,7 @@ async function createHarnessWithTempDir(
 		streamFn: streamSimple,
 		initialState: {
 			model,
-			systemPrompt: options.systemPrompt ?? "",
+			systemPrompt: "",
 			tools: [],
 		},
 		convertToLlm,
@@ -241,8 +217,8 @@ async function createHarnessWithTempDir(
 		},
 		transformContext: async (messages: AgentMessage[]) => {
 			const runner = extensionRunnerRef.current;
-			const extensionMessages = runner ? await runner.emitContext(messages) : messages;
-			return boundModelFacingContextImages<AgentMessage>(extensionMessages);
+			if (!runner) return messages;
+			return runner.emitContext(messages);
 		},
 	});
 	const extensionsResult = options.extensionFactories
@@ -256,7 +232,6 @@ async function createHarnessWithTempDir(
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader,
 		baseToolsOverride: toolMap,
@@ -264,11 +239,7 @@ async function createHarnessWithTempDir(
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
-		agentRunIdentity: options.agentRunIdentity,
 	});
-	if (options.systemPrompt !== undefined) {
-		session.overrideBaseSystemPrompt(options.systemPrompt);
-	}
 
 	const events: AgentSessionEvent[] = [];
 	session.subscribe((event) => {
@@ -294,7 +265,6 @@ async function createHarnessWithTempDir(
 		cleanup() {
 			session.dispose();
 			fauxProvider.unregister();
-			restoreOmittedSessionCreates();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true });
 			}

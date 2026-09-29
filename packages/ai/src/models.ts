@@ -1212,21 +1212,7 @@ export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	return usage.cost;
 }
 
-const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = [
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-	"max",
-	"ultra",
-	"adaptive",
-];
-
-// Levels that must be explicitly opted in via thinkingLevelMap (model declares support).
-// Everything else is supported by default unless mapped to null.
-const OPT_IN_THINKING_LEVELS: ReadonlySet<ModelThinkingLevel> = new Set(["xhigh", "max", "ultra", "adaptive"]);
+const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
 	if (!model.reasoning) return ["off"];
@@ -1234,7 +1220,7 @@ export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>)
 	return EXTENDED_THINKING_LEVELS.filter((level) => {
 		const mapped = model.thinkingLevelMap?.[level];
 		if (mapped === null) return false;
-		if (OPT_IN_THINKING_LEVELS.has(level)) return mapped !== undefined;
+		if (level === "xhigh" || level === "max") return mapped !== undefined;
 		return true;
 	});
 }

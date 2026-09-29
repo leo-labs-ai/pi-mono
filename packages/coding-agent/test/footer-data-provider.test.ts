@@ -83,10 +83,7 @@ function emitReftableChange(provider: FooterDataProvider): void {
 	reftableWatcher?.emit("change", "change", "tables.list");
 }
 
-// fs.watch can take longer than 3s to fire under parallel-test contention (the
-// macOS/Linux watcher is shared across tempdirs). Bump default to 8s to absorb
-// the contention window without slowing the happy path.
-async function waitFor(condition: () => boolean, timeoutMs = 8000): Promise<void> {
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
 	const startedAt = Date.now();
 	while (!condition()) {
 		if (Date.now() - startedAt > timeoutMs) {

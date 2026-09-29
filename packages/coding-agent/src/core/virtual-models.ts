@@ -9,7 +9,7 @@
  * separately and adds them to the provider's catalog with `withVirtualModels()`, so any provider,
  * including one with physical models, can list several virtual models.
  */
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@lue-labs/pi-agent-core";
 import {
 	type AnyModel,
 	type Api,
@@ -22,7 +22,7 @@ import {
 	type ModelThinkingLevel,
 	type Provider,
 	type ThinkingLevelMap,
-} from "@earendil-works/pi-ai";
+} from "@lue-labs/pi-ai";
 import type { SessionEntry } from "./session-manager.ts";
 
 /** API id of virtual catalog entries. Requests for it fail unless routed first. */

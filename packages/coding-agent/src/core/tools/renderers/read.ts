@@ -7,7 +7,7 @@
  */
 
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
-import type { ImageContent, TextContent, ToolReferenceContent } from "@lue-labs/pi-ai";
+import type { ImageContent, TextContent } from "@lue-labs/pi-ai";
 import { Text } from "@lue-labs/pi-tui";
 import { getReadmePath } from "../../../config.ts";
 import { keyHint, keyText } from "../../../modes/interactive/components/keybinding-hints.ts";
@@ -32,9 +32,9 @@ function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): st
 	const endLine = args.limit != null ? startLine + args.limit - 1 : "";
 	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 }
-function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, label: string, cwd: string): string {
+function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold(label))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
+	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
 	let end = lines.length;
@@ -90,7 +90,6 @@ function formatCompactReadCall(
 	classification: CompactReadClassification,
 	args: ReadRenderArgs | undefined,
 	theme: Theme,
-	label: string,
 ): string {
 	const expandHint = theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
 	if (classification.kind === "skill") {
@@ -103,7 +102,7 @@ function formatCompactReadCall(
 	}
 
 	return (
-		theme.fg("toolTitle", theme.bold(`${label} ${classification.kind}`)) +
+		theme.fg("toolTitle", theme.bold(`read ${classification.kind}`)) +
 		" " +
 		theme.fg("accent", classification.label) +
 		formatReadLineRange(args, theme) +
@@ -112,7 +111,7 @@ function formatCompactReadCall(
 }
 function formatReadResult(
 	args: ReadRenderArgs | undefined,
-	result: { content: (TextContent | ImageContent | ToolReferenceContent)[]; details?: ReadToolDetails },
+	result: { content: (TextContent | ImageContent)[]; details?: ReadToolDetails },
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
@@ -149,41 +148,29 @@ function formatReadResult(
 	return text;
 }
 
-export type ReadRenderers = Pick<ToolDefinition<any, ReadToolDetails | undefined>, "renderCall" | "renderResult">;
-
-/**
- * The read tool is registered under more than one label (`read` and the native-style `Read`), so the
- * title the renderer prints has to follow the definition rather than be hardcoded.
- */
-export function createReadRenderers(label = "Read"): ReadRenderers {
-	return {
-		renderCall(rawArgs, theme, context) {
-			const args = rawArgs as ReadRenderArgs | undefined;
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
-			text.setText(
-				classification
-					? formatCompactReadCall(classification, args, theme, label)
-					: formatReadCall(args, theme, label, context.cwd),
-			);
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(
-				formatReadResult(
-					context.args as ReadRenderArgs | undefined,
-					result,
-					options,
-					theme,
-					context.showImages,
-					context.cwd,
-					context.isError,
-				),
-			);
-			return text;
-		},
-	};
-}
-
-export const readRenderers: ReadRenderers = createReadRenderers();
+export const readRenderers: Pick<ToolDefinition<any, ReadToolDetails | undefined>, "renderCall" | "renderResult"> = {
+	renderCall(rawArgs, theme, context) {
+		const args = rawArgs as ReadRenderArgs | undefined;
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
+		text.setText(
+			classification ? formatCompactReadCall(classification, args, theme) : formatReadCall(args, theme, context.cwd),
+		);
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(
+			formatReadResult(
+				context.args as ReadRenderArgs | undefined,
+				result,
+				options,
+				theme,
+				context.showImages,
+				context.cwd,
+				context.isError,
+			),
+		);
+		return text;
+	},
+};

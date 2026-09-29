@@ -274,9 +274,8 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 const ANTHROPIC_ALLOWED_FALLBACK_MODELS = {
-	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5", "claude-opus-5-5"],
+	"claude-fable-5": ["claude-opus-4-8", "claude-opus-5"],
 	"claude-opus-5": ["claude-opus-4-8"],
-	"claude-opus-5-5": ["claude-opus-5"],
 } satisfies Record<string, string[]>;
 
 const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
@@ -450,7 +449,6 @@ const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.4-mini",
 	"gpt-5.4-nano",
 	"gpt-5.5",
-	"gpt-5.6",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
@@ -577,7 +575,6 @@ function supportsOpenAiXhigh(modelId: string): boolean {
 	);
 }
 
-// GPT-5.6+ adds a `max` reasoning effort above `xhigh`.
 function supportsOpenAiMax(model: Model<Api>): boolean {
 	return (
 		(model.id.includes("gpt-5.6") || model.id.includes("gpt-6")) &&
@@ -585,16 +582,6 @@ function supportsOpenAiMax(model: Model<Api>): boolean {
 			model.api === "azure-openai-responses" ||
 			model.api === "openai-codex-responses" ||
 			model.api === "openai-completions")
-	);
-}
-
-// Ultra is a Pi-side orchestration mode limited to GPT-5.6 Sol and Terra. It
-// maps to native `max` across the OpenAI, Codex, Azure, and OpenRouter catalogs.
-function supportsOpenAiUltra(model: Model<any>): boolean {
-	const modelId = model.id.startsWith("openai/") ? model.id.slice("openai/".length) : model.id;
-	return (
-		["openai", "openai-codex", "azure-openai-responses", "openrouter"].includes(model.provider) &&
-		(modelId === "gpt-5.6-sol" || modelId === "gpt-5.6-terra")
 	);
 }
 
@@ -692,10 +679,6 @@ type OpenAICompletionsResolvedCompat = typeof OPENAI_COMPLETIONS_DEFAULT_COMPAT 
 
 function mergeAnthropicMessagesCompat(model: Model<Api>, compat: AnthropicMessagesCompat): void {
 	model.compat = { ...(model.compat as AnthropicMessagesCompat | undefined), ...compat };
-}
-
-function mergeOpenAIResponsesCompat(model: Model<Api>, compat: OpenAIResponsesCompat): void {
-	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), ...compat };
 }
 
 function detectOpenAICompletionsCompat(model: Model<"openai-completions">): OpenAICompletionsResolvedCompat {
@@ -913,18 +896,6 @@ function applyOpenAIToolSearchMetadata(model: Model<Api>): void {
 	};
 }
 
-// GPT-6 Astra (standard mode only, not -pro) accepts positional `configuration_update`
-// input items, letting the reasoning effort change mid-conversation while the cached
-// prefix stays valid. Verified on the OpenAI Responses and ChatGPT Codex transports.
-const OPENAI_MID_CONVO_EFFORT_MODEL_IDS = new Set(["gpt-6-astra"]);
-
-function applyOpenAIMidConvoEffortMetadata(model: Model<Api>): void {
-	const isOpenAIResponses = model.provider === "openai" && model.api === "openai-responses";
-	const isOpenAICodex = model.provider === "openai-codex" && model.api === "openai-codex-responses";
-	if (!(isOpenAIResponses || isOpenAICodex) || !OPENAI_MID_CONVO_EFFORT_MODEL_IDS.has(model.id)) return;
-	model.compat = { ...(model.compat as OpenAIResponsesCompat | undefined), supportsMidConvoEffort: true };
-}
-
 // Moonshot Kimi K2.6/K2.7 accept system text after the conversation starts but reject
 // tool-bearing system messages. Kimi K3 accepts both forms; Fireworks and OpenCode pass
 // its tool-bearing form through. GitHub Copilot forwards K3 text but silently drops its
@@ -1006,7 +977,6 @@ function applyPromptCacheMetadata(model: Model<Api>): void {
 }
 
 function applyImageInputMetadata(model: AnyModel): void {
-function applyImageInputMetadata(model: Model<Api>): void {
 	if (!model.input.includes("image")) return;
 
 	const providerLimits: AnyModel["inputLimits"] =
@@ -1094,19 +1064,8 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (supportsOpenAiMax(model)) {
 		mergeThinkingLevelMap(model, { max: "max" });
 	}
-	if (supportsOpenAiUltra(model)) {
-		mergeThinkingLevelMap(model, { ultra: "max" });
-	}
 	if (model.provider === "openai" && model.id === "gpt-5.5") {
 		mergeThinkingLevelMap(model, { minimal: null });
-	}
-	if (model.provider === "openai" && model.id.startsWith("gpt-5.6")) {
-		// GPT-5.6 exposes efforts none/low/medium/high/xhigh/max — no minimal.
-		mergeThinkingLevelMap(model, { minimal: null });
-	}
-	if (model.api === "openai-responses" && model.provider === "openai" && model.id.startsWith("gpt-5.6")) {
-		// GPT-5.6+ prompt-cache API: explicit breakpoints, deprecated prompt_cache_retention.
-		mergeOpenAIResponsesCompat(model, { promptCacheApi: "breakpoints" });
 	}
 	if (model.id.endsWith("gpt-5.5-pro")) {
 		mergeThinkingLevelMap(model, { off: null, minimal: null, low: null });
@@ -1948,34 +1907,29 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		const cloudflareWorkersAiModels = data["cloudflare-workers-ai"]?.models;
-		const cloudflareWorkersAiModel = (id: string, source: ModelsDevModel) => ({
-			id,
-			name: source.name || id,
-			api: "openai-completions" as const,
-			reasoning: source.reasoning === true,
-			input: source.modalities?.input?.includes("image") ? (["text", "image"] as const) : (["text"] as const),
-			cost: {
-				input: source.cost?.input || 0,
-				output: source.cost?.output || 0,
-				cacheRead: source.cost?.cache_read || 0,
-				cacheWrite: source.cost?.cache_write || 0,
-			},
-			contextWindow: source.limit?.context || 4096,
-			maxTokens: source.limit?.output || 4096,
-			compat: { sendSessionAffinityHeaders: true },
-		});
-
 		// Process Cloudflare Workers AI models
-		if (cloudflareWorkersAiModels) {
-			for (const [modelId, model] of Object.entries(cloudflareWorkersAiModels)) {
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 
 				models.push({
-					...cloudflareWorkersAiModel(modelId, m),
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
 					provider: "cloudflare-workers-ai",
 					baseUrl: CLOUDFLARE_WORKERS_AI_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
 				});
 				recordModelsDevReasoningOptions("cloudflare-workers-ai", modelId, m);
 			}
@@ -1983,19 +1937,15 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		// Process Cloudflare AI Gateway models
 		const cloudflareAIGatewayModelIds = new Set<string>();
-		const gatewayClaimedWorkersAiIds = new Set<string>();
 		if (data["cloudflare-ai-gateway"]?.models) {
 			for (const [prefixedId, model] of Object.entries(data["cloudflare-ai-gateway"].models)) {
 				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
 				const slashIdx = prefixedId.indexOf("/");
 				if (slashIdx === -1) continue;
 				const upstream = prefixedId.slice(0, slashIdx);
 				const nativeId = prefixedId.slice(slashIdx + 1);
-
-				// An explicit gateway entry remains authoritative even when it is not tool-capable.
-				// Do not revive it from the broader Workers AI catalog below.
-				if (upstream === "workers-ai") gatewayClaimedWorkersAiIds.add(prefixedId);
-				if (m.tool_call !== true) continue;
 
 				let api: "anthropic-messages" | "openai-completions" | "openai-responses";
 				let baseUrl: string;
@@ -2048,19 +1998,32 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		// but models.dev may omit or intermittently drop those `workers-ai/*` entries
 		// from the AI Gateway catalog. Mirror the Workers AI catalog under the documented
 		// prefix so the gateway keeps its OpenAI-compatible models stable.
-		if (cloudflareWorkersAiModels) {
-			for (const [modelId, model] of Object.entries(cloudflareWorkersAiModels)) {
+		if (data["cloudflare-workers-ai"]?.models) {
+			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 
 				const id = `workers-ai/${modelId}`;
-				if (gatewayClaimedWorkersAiIds.has(id)) continue;
-				gatewayClaimedWorkersAiIds.add(id);
+				if (cloudflareAIGatewayModelIds.has(id)) continue;
+				cloudflareAIGatewayModelIds.add(id);
 
 				models.push({
-					...cloudflareWorkersAiModel(id, m),
+					id,
+					name: m.name || id,
+					api: "openai-completions",
 					provider: "cloudflare-ai-gateway",
 					baseUrl: CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					compat: { sendSessionAffinityHeaders: true },
 				});
 				recordModelsDevReasoningOptions("cloudflare-ai-gateway", id, m);
 			}
@@ -2456,14 +2419,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process Kimi For Coding models
-		const KIMI_CODING_MODELS_DEV_KEYS = [
-			"kimi-code-plan-global",
-			"kimi-for-coding",
-			"kimi-code-plan-cn",
-		] as const;
-		const kimiCodingSourceKey = KIMI_CODING_MODELS_DEV_KEYS.find((key) => data[key]?.models);
-		if (kimiCodingSourceKey) {
-			const kimiModels = data[kimiCodingSourceKey].models as Record<string, ModelsDevModel>;
+		if (data["kimi-code-plan-global"]?.models) {
+			const kimiModels = data["kimi-code-plan-global"].models as Record<string, ModelsDevModel>;
 			const hasCanonicalModel = Object.prototype.hasOwnProperty.call(kimiModels, "kimi-for-coding");
 
 			const kimiAliases = new Set(["k2p5", "k2p6", "k2p7"]);
@@ -2992,175 +2949,6 @@ async function generateModels() {
 		}
 	}
 
-
-	// Add missing EU Opus 4.6 profile
-	if (!allModels.some((m) => m.provider === "amazon-bedrock" && m.id === "eu.anthropic.claude-opus-4-6-v1")) {
-		allModels.push({
-			id: "eu.anthropic.claude-opus-4-6-v1",
-			name: "Claude Opus 4.6 (EU)",
-			api: "bedrock-converse-stream",
-			provider: "amazon-bedrock",
-			baseUrl: getBedrockBaseUrl("eu.anthropic.claude-opus-4-6-v1"),
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 200000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Opus 4.6
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-4-6")) {
-		allModels.push({
-			id: "claude-opus-4-6",
-			name: "Claude Opus 4.6",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Opus 4.7
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-4-7")) {
-		allModels.push({
-			id: "claude-opus-4-7",
-			name: "Claude Opus 4.7",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Opus 4.8 (mirror 4.7 surface until models.dev publishes)
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-4-8")) {
-		allModels.push({
-			id: "claude-opus-4-8",
-			name: "Claude Opus 4.8",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Opus 5 until models.dev publishes it.
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-5")) {
-		allModels.push({
-			id: "claude-opus-5",
-			name: "Claude Opus 5",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 25,
-				cacheRead: 0.5,
-				cacheWrite: 6.25,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Opus 5.5 until models.dev publishes it.
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-opus-5-5")) {
-		allModels.push({
-			id: "claude-opus-5-5",
-			name: "Claude Opus 5.5",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 4,
-				output: 20,
-				cacheRead: 0.2,
-				cacheWrite: 5,
-			},
-			contextWindow: 1000000,
-			maxTokens: 128000,
-		});
-	}
-
-	// Add missing Claude Sonnet 4.6
-	if (!allModels.some(m => m.provider === "anthropic" && m.id === "claude-sonnet-4-6")) {
-		allModels.push({
-			id: "claude-sonnet-4-6",
-			name: "Claude Sonnet 4.6",
-			api: "anthropic-messages",
-			baseUrl: "https://api.anthropic.com",
-			provider: "anthropic",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 3,
-				output: 15,
-				cacheRead: 0.3,
-				cacheWrite: 3.75,
-			},
-			contextWindow: 1000000,
-			maxTokens: 64000,
-		});
-	}
-
-	// Add missing Gemini 3.1 Flash Lite Preview until models.dev includes it.
-	if (!allModels.some((m) => m.provider === "google" && m.id === "gemini-3.1-flash-lite-preview")) {
-		allModels.push({
-			id: "gemini-3.1-flash-lite-preview",
-			name: "Gemini 3.1 Flash Lite Preview",
-			api: "google-generative-ai",
-			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-			provider: "google",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 1048576,
-			maxTokens: 65536,
-		});
-	}
-
 	// Add missing gpt models
 	const missingOpenAiModels: Model<"openai-responses">[] = [
 		{
@@ -3600,7 +3388,6 @@ async function generateModels() {
 		applyStrictToolCompatMetadata(model);
 		applyOpenAIGrammarToolCompatMetadata(model);
 		applyOpenAIToolSearchMetadata(model);
-		applyOpenAIMidConvoEffortMetadata(model);
 		applyOpenAICompletionsTranscriptMetadata(model);
 		applyOpenAIResponsesTranscriptMetadata(model);
 		applyOpenAIExplicitPromptCacheMetadata(model);

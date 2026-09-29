@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import { type Settings, SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -20,51 +20,9 @@ describe("SettingsManager", () => {
 	});
 
 	afterEach(() => {
-		vi.unstubAllEnvs();
 		if (existsSync(testDir)) {
 			rmSync(testDir, { recursive: true });
 		}
-	});
-
-	describe("extension configuration", () => {
-		it("persists one extension key without dropping sibling keys", async () => {
-			const settingsPath = join(agentDir, "settings.json");
-			writeFileSync(
-				settingsPath,
-				JSON.stringify({
-					theme: "dark",
-					extensionConfig: {
-						"prompt-suggestions": { maxMs: 4000 },
-						other: { enabled: true },
-					},
-				}),
-			);
-
-			const manager = SettingsManager.create(projectDir, agentDir);
-			manager.setExtensionConfigValue("prompt-suggestions", "enabled", true);
-			await manager.flush();
-
-			const savedSettings = JSON.parse(readFileSync(settingsPath, "utf-8"));
-			expect(savedSettings.extensionConfig["prompt-suggestions"]).toEqual({ maxMs: 4000, enabled: true });
-			expect(savedSettings.extensionConfig.other).toEqual({ enabled: true });
-		});
-
-		it("returns the merged namespace when project settings add sibling keys", () => {
-			writeFileSync(
-				join(agentDir, "settings.json"),
-				JSON.stringify({ extensionConfig: { "prompt-suggestions": { maxMs: 4000 } } }),
-			);
-			writeFileSync(
-				join(projectDir, ".pi", "settings.json"),
-				JSON.stringify({ extensionConfig: { "prompt-suggestions": { projectOnly: true } } }),
-			);
-
-			const manager = SettingsManager.create(projectDir, agentDir);
-			const returned = manager.setExtensionConfigValue("prompt-suggestions", "enabled", true);
-
-			expect(returned).toEqual({ maxMs: 4000, projectOnly: true, enabled: true });
-			expect(manager.getExtensionConfig()["prompt-suggestions"]).toEqual(returned);
-		});
 	});
 
 	describe("preserves externally added settings", () => {
@@ -391,43 +349,6 @@ describe("SettingsManager", () => {
 
 			// And settings file should be created
 			expect(existsSync(join(projectDir, ".pi", "settings.json"))).toBe(true);
-		});
-	});
-
-	describe("compaction residentPrune", () => {
-		it("defaults to enabled", () => {
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be disabled with an explicit false setting", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: false } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(false);
-		});
-
-		it("can be explicitly enabled from settings", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: true } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be force-enabled with PI_RESIDENT_SESSION_PRUNE=1 over an explicit false", () => {
-			vi.stubEnv("PI_RESIDENT_SESSION_PRUNE", "1");
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ compaction: { residentPrune: false } }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(true);
-		});
-
-		it("can be force-disabled with PI_RESIDENT_SESSION_PRUNE=0 over the default", () => {
-			vi.stubEnv("PI_RESIDENT_SESSION_PRUNE", "0");
-			const manager = SettingsManager.create(projectDir, agentDir);
-
-			expect(manager.getCompactionSettings().residentPrune).toBe(false);
 		});
 	});
 
@@ -793,45 +714,6 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "~/sessions" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
-		});
-	});
-
-	describe("getBashTimeoutSeconds", () => {
-		it("should return undefined when not set, leaving the built-in default in place", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-		});
-
-		it("should return a configured timeout", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: 900 }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBe(900);
-		});
-
-		it("should return 0 so callers can disable the default timeout", () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: 0 }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBe(0);
-		});
-
-		it.each([[-5], ["600"], [Number.NaN]])("should ignore the unusable value %p", (value) => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ bashTimeoutSeconds: value }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-		});
-
-		it("should round-trip through the setter", async () => {
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
-			const manager = SettingsManager.create(projectDir, agentDir);
-			manager.setBashTimeoutSeconds(240);
-			await manager.flush();
-			expect(manager.getBashTimeoutSeconds()).toBe(240);
-			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).bashTimeoutSeconds).toBe(240);
-
-			manager.setBashTimeoutSeconds(undefined);
-			expect(manager.getBashTimeoutSeconds()).toBeUndefined();
-			expect(() => manager.setBashTimeoutSeconds(-1)).toThrow(/Invalid bashTimeoutSeconds setting/);
 		});
 	});
 

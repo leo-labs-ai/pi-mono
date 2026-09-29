@@ -2,10 +2,8 @@
  * Extension system for lifecycle events and custom tools.
  */
 
-export { AGENTS_ENGINE_SERVICE_ID, type AgentEngine, type AgentParentSnapshot } from "../agents/engine.ts";
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
-export { BASH_BG_JOBS_SERVICE_ID } from "./bash-bg-jobs.ts";
 export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
@@ -14,7 +12,6 @@ export {
 } from "./loader.ts";
 export type {
 	ExtensionErrorListener,
-	ExtensionSlotUIActions,
 	ForkHandler,
 	NavigateTreeHandler,
 	NewSessionHandler,
@@ -28,10 +25,8 @@ export type {
 	AgentBeforeSettleEvent,
 	AgentBeforeSettleEventResult,
 	AgentEndEvent,
-	AgentHandle,
 	AgentSettledEvent,
 	AgentStartEvent,
-	AgentTelemetry,
 	// Re-exports
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -89,32 +84,22 @@ export type {
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionFlag,
-	ExtensionFooterSpec,
 	ExtensionHandler,
-	ExtensionLoadError,
-	ExtensionMainPaneAPI,
-	ExtensionMainPaneFactory,
 	ExtensionMode,
-	ExtensionOverlayAPI,
-	ExtensionOverlayFactory,
 	// Runtime
 	ExtensionRuntime,
-	ExtensionSetting,
 	ExtensionShortcut,
 	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
-	ForkAgentOptions,
-	ForkAgentResult,
-	ForkSystemPromptTransform,
+	FindToolCallEvent,
+	FindToolResultEvent,
 	GetActiveToolsHandler,
 	GetAllToolsHandler,
 	GetCommandsHandler,
 	GetThinkingLevelHandler,
-	GlobToolCallEvent,
-	GlobToolResultEvent,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
 	InlineExtension,
@@ -180,11 +165,9 @@ export type {
 	SessionStartEvent,
 	SessionTreeEvent,
 	SetActiveToolsHandler,
-	SetExtensionConfigValueHandler,
 	SetLabelHandler,
 	SetModelHandler,
 	SetThinkingLevelHandler,
-	TelemetryEvent,
 	TerminalInputHandler,
 	ThinkingLevelSelectEvent,
 	ToolAnnotations,
@@ -207,8 +190,6 @@ export type {
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
-	TranscriptApi,
-	TranscriptEntry,
 	TreePreparation,
 	TurnEndEvent,
 	TurnEndEventResult,
@@ -229,7 +210,7 @@ export {
 	defineTool,
 	isBashToolResult,
 	isEditToolResult,
-	isGlobToolResult,
+	isFindToolResult,
 	isGrepToolResult,
 	isLsToolResult,
 	isPowerShellToolResult,

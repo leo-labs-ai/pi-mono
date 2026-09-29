@@ -32,10 +32,9 @@ afterEach(() => {
 });
 
 function createTempDir(): string {
-	// realpathSync resolves the macOS /var -> /private/var symlink so the session
-	// cwd we persist matches the spawned CLI's process.cwd() (which is realpath'd).
-	// Without this the cwd filter in SessionManager.list drops the fixture sessions
-	// on macOS. No-op on Linux where the temp dir is not a symlink.
+	// realpath: on macOS tmpdir() is a symlink (/var -> /private/var), but the
+	// spawned CLI sees the physical path via process.cwd(). Session cwd
+	// filtering compares paths textually, so the fixture must use physical paths.
 	const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-session-id-readonly-")));
 	tempDirs.push(dir);
 	return dir;

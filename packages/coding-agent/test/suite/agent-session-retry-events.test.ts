@@ -1,7 +1,7 @@
 import type { AgentTool } from "@lue-labs/pi-agent-core";
 import { fauxAssistantMessage, fauxThinking, fauxToolCall } from "@lue-labs/pi-ai";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
 function normalizeEventOrder(events: Harness["events"]): string[] {
@@ -50,36 +50,6 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.session.isRetrying).toBe(false);
-	});
-
-	it("retries a stream that drops after partial output and replaces the partial turn", async () => {
-		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
-		harnesses.push(harness);
-		const retryContextRoles: string[] = [];
-		harness.setResponses([
-			fauxAssistantMessage([fauxThinking("partial reasoning"), fauxToolCall("write", { path: "result.txt" })], {
-				stopReason: "error",
-				errorMessage: "Anthropic stream ended before message_stop",
-			}),
-			(context) => {
-				retryContextRoles.push(...context.messages.map((message) => message.role));
-				return fauxAssistantMessage("recovered");
-			},
-		]);
-
-		await harness.session.prompt("test");
-
-		expect(harness.faux.state.callCount).toBe(2);
-		// The retry request carries the transcript system state and user prompt only;
-		// the partial turn is not replayed to the provider.
-		expect(retryContextRoles).toEqual(["system", "user"]);
-		expect(harness.eventsOfType("auto_retry_start").map((event) => event.attempt)).toEqual([1]);
-		expect(harness.eventsOfType("agent_end").map((event) => event.willRetry)).toEqual([true, false]);
-		// The dropped partial turn never ran its tool call and is not replayed into context.
-		expect(harness.eventsOfType("tool_execution_start")).toEqual([]);
-		const assistantMessages = harness.session.messages.filter((message) => message.role === "assistant");
-		expect(assistantMessages).toHaveLength(1);
-		expect(assistantMessages[0]?.stopReason).toBe("stop");
 	});
 
 	it("retries multiple transient failures and succeeds on the final attempt", async () => {
@@ -317,32 +287,6 @@ describe("AgentSession retry and event characterization", () => {
 			"agent_end",
 			"agent_settled",
 		]);
-	});
-
-	it("keeps agent runs alive when a session listener throws", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		const observedEvents: string[] = [];
-		const loggedErrors: unknown[][] = [];
-		const consoleError = vi.spyOn(console, "error").mockImplementation((...args) => {
-			loggedErrors.push(args);
-		});
-		harness.session.subscribe(() => {
-			throw new Error("listener failed");
-		});
-		harness.session.subscribe((event) => {
-			observedEvents.push(event.type);
-		});
-		harness.setResponses([fauxAssistantMessage("hello")]);
-
-		try {
-			await harness.session.prompt("hi");
-			expect(loggedErrors).toContainEqual(["AgentSession event listener failed", expect.any(Error)]);
-			expect(observedEvents).toContain("agent_end");
-			expect(harness.faux.state.callCount).toBe(1);
-		} finally {
-			consoleError.mockRestore();
-		}
 	});
 
 	it("emits the expected event order for a tool call turn", async () => {

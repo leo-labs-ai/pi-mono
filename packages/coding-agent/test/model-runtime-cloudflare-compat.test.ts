@@ -1,7 +1,5 @@
 import { complete, resetApiProviders } from "@lue-labs/pi-ai/compat";
 import { describe, expect, it } from "vitest";
-import { complete, resetApiProviders } from "@lue-labs/pi-ai/compat";
-import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
@@ -46,23 +44,12 @@ async function createCloudflareRuntime(): Promise<{ modelRuntime: ModelRuntime; 
 	return { modelRuntime, modelRegistry: new ModelRegistry(modelRuntime) };
 }
 
-// Pick by capability, never by literal id: the generated catalog is rebuilt from
-// live provider data at build time, so a pinned id (this test used to hardcode
-// workers-ai/@cf/moonshotai/kimi-k2.5) silently disappears when the provider
-// retires the model. What matters here is only that the endpoint routes through
-// the openai-completions compat path that the `openai` mock above intercepts.
-function pickCompatModelId(modelRuntime: ModelRuntime): string {
-	const model = modelRuntime.getModels("cloudflare-ai-gateway").find((m) => m.api === "openai-completions");
-	if (!model) {
-		throw new Error("no cloudflare-ai-gateway model with api=openai-completions in the generated catalog");
-	}
-	return model.id;
-}
+const CLOUDFLARE_COMPAT_URL = "https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/compat/chat/completions";
 
 describe("ModelRegistry Cloudflare compat streaming", () => {
 	it("materializes the Cloudflare endpoint through ModelRuntime streaming", async () => {
 		const { modelRuntime } = await createCloudflareRuntime();
-		const model = modelRuntime.getModel("cloudflare-ai-gateway", pickCompatModelId(modelRuntime));
+		const model = modelRuntime.getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
 
 		resetApiProviders();
@@ -76,8 +63,8 @@ describe("ModelRegistry Cloudflare compat streaming", () => {
 	});
 
 	it("materializes the Cloudflare endpoint after extension-style auth resolution", async () => {
-		const { modelRuntime, modelRegistry } = await createCloudflareRuntime();
-		const model = modelRegistry.find("cloudflare-ai-gateway", pickCompatModelId(modelRuntime));
+		const { modelRegistry } = await createCloudflareRuntime();
+		const model = modelRegistry.find("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
 		expect(model).toBeDefined();
 
 		resetApiProviders();

@@ -3,13 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
 import { type AssistantMessage, createAssistantMessageEventStream, fauxAssistantMessage } from "@lue-labs/pi-ai";
-import { streamSimple } from "@lue-labs/pi-ai/compat";
+import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
@@ -23,9 +22,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		tempDir = join(tmpdir(), `pi-auto-compaction-queue-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
-		// Usage numbers below assume a 200k context window; pick by capability so
-		// catalog regeneration (which reorders/removes models) cannot break the math.
-		const model = pickModel("anthropic", (m) => m.contextWindow === 200_000);
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			streamFn: streamSimple,
 			initialState: {
@@ -43,7 +40,6 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		session = new AgentSession({
 			agent,
-			modelRegistry,
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
@@ -58,69 +54,6 @@ describe("AgentSession auto-compaction queue resume", () => {
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
-	});
-
-	it("routes sendCustomMessage through the steering queue while isCompacting (so post-compaction continue() picks it up)", async () => {
-		// Regression: extensions like the monitor extension call pi.sendMessage()
-		// (which routes to AgentSession.sendCustomMessage) to deliver background
-		// process exit notifications. If a notification arrives while compaction
-		// is running, isStreaming is false (compaction does not go through
-		// agent.runWithLifecycle()) but isCompacting is true. Before the fix the
-		// message was pushed straight to messages[], bypassing the steering queue,
-		// so the post-compaction recovery in _runAutoCompaction (which checks
-		// hasQueuedMessages()) would not fire continue() and the agent would sit
-		// idle until the next user prompt — silently dropping monitor failures.
-		const privateSession = session as unknown as {
-			_autoCompactionAbortController: AbortController | undefined;
-			sendCustomMessage: (
-				message: {
-					customType: string;
-					content: { type: "text"; text: string }[];
-					display: boolean;
-					details?: unknown;
-				},
-				options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
-			) => Promise<void>;
-		};
-
-		privateSession._autoCompactionAbortController = new AbortController();
-		expect(session.isStreaming).toBe(false);
-		expect(session.isCompacting).toBe(true);
-
-		const steerSpy = vi.spyOn(session.agent, "steer");
-		const followUpSpy = vi.spyOn(session.agent, "followUp");
-		const messagesBefore = session.agent.state.messages.length;
-
-		await privateSession.sendCustomMessage(
-			{
-				customType: "monitor-event",
-				content: [{ type: "text", text: "[monitor build] failed (code 1)" }],
-				display: true,
-			},
-			{ deliverAs: "steer" },
-		);
-
-		expect(steerSpy).toHaveBeenCalledTimes(1);
-		expect(followUpSpy).not.toHaveBeenCalled();
-		expect(session.agent.hasQueuedMessages()).toBe(true);
-		// Critically, the message must NOT have been pushed raw onto messages[].
-		// If it had, hasQueuedMessages() would return false and the post-compaction
-		// continue() would never fire.
-		expect(session.agent.state.messages.length).toBe(messagesBefore);
-
-		// followUp delivery during compaction routes through the followUp queue.
-		await privateSession.sendCustomMessage(
-			{
-				customType: "monitor-event",
-				content: [{ type: "text", text: "[monitor deploy] failed (code 2)" }],
-				display: true,
-			},
-			{ deliverAs: "followUp" },
-		);
-
-		expect(followUpSpy).toHaveBeenCalledTimes(1);
-
-		privateSession._autoCompactionAbortController = undefined;
 	});
 
 	it("should resume after threshold compaction when only agent-level queued messages exist", async () => {

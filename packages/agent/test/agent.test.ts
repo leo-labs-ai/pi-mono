@@ -3,6 +3,7 @@ import {
 	type AssistantMessageEvent,
 	EventStream,
 	getCurrentSystemMessage,
+	getModel,
 	toToolDeclaration,
 	type UserMessage,
 } from "@lue-labs/pi-ai/compat";
@@ -16,7 +17,6 @@ import {
 	type StreamFn,
 	setDefaultStreamFn,
 } from "../src/index.ts";
-import { pickModel } from "./helpers/models.ts";
 
 // Mock stream that mimics AssistantMessageEventStream
 class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
@@ -140,7 +140,7 @@ describe("Agent", () => {
 	});
 
 	it("should create an agent instance with custom initial state", () => {
-		const customModel = pickModel("openai");
+		const customModel = getModel("openai", "gpt-4o-mini");
 		const agent = new Agent({
 			streamFn: unusedStreamFunction,
 			initialState: {
@@ -629,7 +629,7 @@ describe("Agent", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 
 		// Test setModel
-		const newModel = pickModel("google");
+		const newModel = getModel("google", "gemini-2.5-flash");
 		agent.state.model = newModel;
 		expect(agent.state.model).toBe(newModel);
 
@@ -869,77 +869,6 @@ describe("Agent", () => {
 		} else {
 			expect(requests[0]).toContain("Steering 2");
 		}
-	});
-
-	it("continueQueuedMessage restores the delivery unit when the run fails before it is accepted", async () => {
-		const agent = new Agent({ streamFn: unusedStreamFunction });
-		agent.steer({
-			role: "user",
-			content: [{ type: "text", text: "Queued steering" }],
-			timestamp: Date.now(),
-		});
-
-		await expect(agent.continueQueuedMessage()).rejects.toThrow("No messages to continue from");
-		expect(agent.hasQueuedMessages()).toBe(true);
-
-		agent.state.messages = [
-			{
-				role: "user",
-				content: [{ type: "text", text: "Initial" }],
-				timestamp: Date.now() - 10,
-			},
-			createAssistantMessage("Initial response"),
-		];
-
-		const delivered: string[] = [];
-		(agent as unknown as { streamFunction: StreamFn }).streamFunction = (_model, context) => {
-			const stream = new MockAssistantStream();
-			const lastUser = [...context.messages].reverse().find((message) => message.role === "user");
-			if (lastUser?.role === "user" && Array.isArray(lastUser.content)) {
-				delivered.push(
-					lastUser.content
-						.filter((part) => part.type === "text")
-						.map((part) => part.text)
-						.join(""),
-				);
-			}
-			queueMicrotask(() => {
-				stream.push({ type: "done", reason: "stop", message: createAssistantMessage("Processed") });
-			});
-			return stream;
-		};
-
-		await expect(agent.continueQueuedMessage()).resolves.toBeUndefined();
-		expect(delivered).toEqual(["Queued steering"]);
-		expect(agent.hasQueuedMessages()).toBe(false);
-	});
-
-	it("continue() is a no-op when the transcript ends on assistant with empty queues", async () => {
-		// Regression: AgentSession._runAgentPrompt and the post-compaction resume
-		// path both call agent.continue() inside a post-run loop guarded by
-		// hasQueuedMessages(). When the queued work was already drained between the
-		// probe and this call (e.g. pi-goal continuation messages delivered via
-		// sendMessage(triggerTurn)), continue() used to throw
-		// "Cannot continue from message role: assistant". That throw was swallowed
-		// to runtime-errors.log and stalled goal auto-continuation. It must now be a
-		// graceful no-op so the caller's loop exits cleanly.
-		const agent = new Agent({
-			streamFn: () => {
-				throw new Error("streamFn should not run for an empty continue()");
-			},
-		});
-
-		agent.state.messages = [
-			{
-				role: "user",
-				content: [{ type: "text", text: "Initial" }],
-				timestamp: Date.now() - 10,
-			},
-			createAssistantMessage("Initial response"),
-		];
-
-		await expect(agent.continue()).resolves.toBeUndefined();
-		expect(agent.state.messages[agent.state.messages.length - 1].role).toBe("assistant");
 	});
 
 	it("keeps legacy prepareNextTurn signal callback behavior", async () => {

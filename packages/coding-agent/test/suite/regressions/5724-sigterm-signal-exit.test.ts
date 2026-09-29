@@ -11,8 +11,6 @@ import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode
 type ShutdownThis = {
 	isShuttingDown: boolean;
 	unregisterSignalHandlers: () => void;
-	// Fork-only: shutdown() stops session-liveness tracking before terminal cleanup.
-	sessionLiveness: { stop: () => void };
 	runtimeHost: { dispose: () => Promise<void> };
 	ui: { terminal: { drainInput: (ms: number) => Promise<void> } };
 	themeController: { disableAutoSync: () => void };
@@ -63,9 +61,6 @@ describe("InteractiveMode SIGTERM shutdown with signal-exit (#5724)", () => {
 			unregisterSignalHandlers: vi.fn(() => {
 				order.push("unregister");
 			}),
-			// Fork-only dependency; runs before the async cleanup this test asserts on,
-			// so keep it a silent no-op to preserve the dispose->drainInput->stop order.
-			sessionLiveness: { stop: vi.fn() },
 			runtimeHost: {
 				dispose: vi.fn(() => {
 					order.push("dispose");

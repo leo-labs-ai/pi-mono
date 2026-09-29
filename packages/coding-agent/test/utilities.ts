@@ -8,7 +8,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Agent } from "@lue-labs/pi-agent-core";
 import type { OAuthCredentials } from "@lue-labs/pi-ai";
-import { streamSimple } from "@lue-labs/pi-ai/compat";
+import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
 import { builtinProviders } from "@lue-labs/pi-ai/providers/all";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -24,8 +24,6 @@ import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createCodingTools } from "../src/index.ts";
-import { pickModel } from "./helpers/models.ts";
-import { fixtureSessionDir } from "./helpers/session-storage.ts";
 
 /**
  * API key for authenticated tests. Tests using this should be wrapped in
@@ -217,9 +215,7 @@ export async function createTestExtensionsResult(
 
 	return {
 		extensions,
-		deferredExtensions: [],
 		errors: [],
-		eventBus,
 		runtime,
 	};
 }
@@ -231,15 +227,12 @@ export interface CreateTestResourceLoaderOptions {
 export function createTestResourceLoader(options: CreateTestResourceLoaderOptions = {}): ResourceLoader {
 	const extensionsResult = options.extensionsResult ?? {
 		extensions: [],
-		deferredExtensions: [],
 		errors: [],
-		eventBus: createEventBus(),
 		runtime: createExtensionRuntime(),
 	};
 
 	return {
 		getExtensions: () => extensionsResult,
-		getExtensionsForRunner: () => extensionsResult,
 		getSkills: () => ({ skills: [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -261,7 +254,7 @@ export async function createTestSession(options: TestSessionOptions = {}): Promi
 	const tempDir = join(tmpdir(), `pi-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(tempDir, { recursive: true });
 
-	const model = pickModel("anthropic");
+	const model = getModel("anthropic", "claude-sonnet-4-5")!;
 	const agent = new Agent({
 		getApiKey: () => API_KEY,
 		initialState: {
@@ -272,9 +265,7 @@ export async function createTestSession(options: TestSessionOptions = {}): Promi
 		streamFn: streamSimple,
 	});
 
-	const sessionManager = options.inMemory
-		? SessionManager.inMemory()
-		: SessionManager.create(tempDir, fixtureSessionDir(tempDir));
+	const sessionManager = options.inMemory ? SessionManager.inMemory() : SessionManager.create(tempDir);
 	const settingsManager = SettingsManager.create(tempDir, tempDir);
 
 	if (options.settingsOverrides) {
@@ -289,7 +280,6 @@ export async function createTestSession(options: TestSessionOptions = {}): Promi
 		sessionManager,
 		settingsManager,
 		cwd: tempDir,
-		modelRegistry,
 		modelRuntime: getModelRuntime(modelRegistry),
 		resourceLoader: createTestResourceLoader(),
 	});

@@ -147,25 +147,23 @@ describe("Anthropic eager tool input streaming compatibility", () => {
 		expect(request.headers["anthropic-beta"]).toBeUndefined();
 	});
 
-	it("always sends the normalized input schema, including for strict JSON-schema tools", async () => {
-		const compatibilityRequest = await captureAnthropicRequest(
+	it("only sends the full input schema for strict JSON-schema tools", async () => {
+		const legacyRequest = await captureAnthropicRequest(
 			{ supportsStrictTools: true },
 			createContext([schemaCompatibilityTool]),
 		);
 		const parameters = schemaCompatibilityTool.parameters as { properties?: unknown; required?: unknown };
-		const normalizedSchema = {
+		expect(getFirstToolInputSchema(legacyRequest.body)).toEqual({
 			type: "object",
 			properties: parameters.properties,
 			required: parameters.required,
-		};
-		expect(getFirstToolInputSchema(compatibilityRequest.body)).toEqual(normalizedSchema);
+		});
 
 		const strictRequest = await captureAnthropicRequest({ supportsStrictTools: true }, createContext([strictTool]));
 		expect(getFirstTool(strictRequest.body).strict).toBe(true);
 		expect(getFirstToolInputSchema(strictRequest.body)).toMatchObject({
 			additionalProperties: false,
-			// Fork serialization sorts semantically unordered required keys for cache-stable bytes.
-			required: ["optional", "value"],
+			required: ["value", "optional"],
 			properties: { optional: { anyOf: [{ type: "number" }, { type: "null" }] } },
 			title: "StrictLookupInput",
 		});

@@ -6,7 +6,6 @@ import type {
 } from "@lue-labs/pi-agent-core";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@lue-labs/pi-agent-core";
 import type { JsonValue, ToolDeclaration, ToolResult } from "@lue-labs/pi-agent-core/experimental/pico3";
-import type { ImageContent, TextContent } from "@lue-labs/pi-ai";
 import type { Static, TSchema } from "typebox";
 import type { ModelToolMetadata } from "./models.ts";
 
@@ -49,7 +48,7 @@ function adaptTool<P extends TSchema, Details>(
 			let updates = Promise.resolve();
 			let updateError: unknown;
 			let latestProgress:
-				| { content: Awaited<ReturnType<typeof tool.execute>>["content"]; details?: Details }
+				| { content: Awaited<ReturnType<typeof tool.execute>>["content"]; details: Details }
 				| undefined;
 			let lastProgressAt = 0;
 			const flushProgress = (): void => {
@@ -59,7 +58,6 @@ function adaptTool<P extends TSchema, Details>(
 				lastProgressAt = Date.now();
 				const progress = partial.content
 					.filter((block) => block.type === "text")
-					.map((block) => block as Extract<(typeof partial.content)[number], { type: "text" }>)
 					.map((block) => block.text)
 					.join("");
 				const details = jsonValue(partial.details);
@@ -100,9 +98,7 @@ function adaptTool<P extends TSchema, Details>(
 				await updates;
 				if (updateError !== undefined) throw updateError;
 				return {
-					content: result.content.filter(
-						(block): block is TextContent | ImageContent => block.type === "text" || block.type === "image",
-					),
+					content: result.content,
 					...(result.details === undefined ? {} : { details: jsonValue(result.details) }),
 					...(result.terminate ? { control: { terminate: true } } : {}),
 				};

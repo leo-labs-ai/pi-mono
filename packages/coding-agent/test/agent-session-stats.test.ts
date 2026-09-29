@@ -1,16 +1,21 @@
 import { Agent } from "@lue-labs/pi-agent-core";
-import { type AssistantMessage, streamSimple, type ToolResultMessage, type Usage } from "@lue-labs/pi-ai/compat";
+import {
+	type AssistantMessage,
+	getModel,
+	streamSimple,
+	type ToolResultMessage,
+	type Usage,
+} from "@lue-labs/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { getUsageCostBreakdown } from "../src/core/usage-totals.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-const model = pickModel("anthropic");
+const model = getModel("anthropic", "claude-sonnet-4-5")!;
 
 function createUsage(totalTokens: number): Usage {
 	return {
@@ -67,7 +72,6 @@ async function createSession() {
 	const sessionManager = SessionManager.inMemory();
 	const authStorage = AuthStorage.inMemory();
 	await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
-	const modelRegistry = await createInMemoryModelRegistry(authStorage);
 	const session = new AgentSession({
 		agent: new Agent({
 			getApiKey: () => "test-key",
@@ -82,8 +86,7 @@ async function createSession() {
 		sessionManager,
 		settingsManager,
 		cwd: process.cwd(),
-		modelRegistry,
-		modelRuntime: getModelRuntime(modelRegistry),
+		modelRuntime: getModelRuntime(await createInMemoryModelRegistry(authStorage)),
 		resourceLoader: createTestResourceLoader(),
 	});
 

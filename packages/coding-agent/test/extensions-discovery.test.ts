@@ -78,18 +78,18 @@ describe("extensions discovery", () => {
 			JSON.stringify({
 				name: "application",
 				type: "module",
-				dependencies: { "@earendil-works/pi-coding-agent": "1.0.0" },
+				dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" },
 			}),
 		);
 		fs.writeFileSync(
 			path.join(dependencyDir, "package.json"),
-			JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", exports: "./index.js" }),
+			JSON.stringify({ name: "@lue-labs/pi-coding-agent", type: "module", exports: "./index.js" }),
 		);
 		fs.writeFileSync(path.join(dependencyDir, "index.js"), "export const physicalDependency = true;");
 		fs.writeFileSync(
 			path.join(extensionsDir, "compiled-esm-extension.js"),
 			`
-				import { physicalDependency } from "@earendil-works/pi-coding-agent";
+				import { physicalDependency } from "@lue-labs/pi-coding-agent";
 				export default function(pi) {
 					if (physicalDependency) pi.registerCommand("physical-dependency", { handler: async () => {} });
 				}
@@ -294,24 +294,6 @@ describe("extensions discovery", () => {
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(0);
-	});
-
-	it("ignores auto-discovered files and directories marked .disabled", async () => {
-		fs.writeFileSync(path.join(extensionsDir, "file.disabled.ts"), extensionCodeWithTool("disabled-file"));
-
-		const subdir = path.join(extensionsDir, "folder.disabled");
-		fs.mkdirSync(subdir);
-		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCodeWithTool("disabled-folder"));
-
-		const activeDir = path.join(extensionsDir, "active");
-		fs.mkdirSync(activeDir);
-		fs.writeFileSync(path.join(activeDir, "index.ts"), extensionCodeWithTool("active-tool"));
-
-		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
-
-		expect(result.errors).toHaveLength(0);
-		expect(result.extensions).toHaveLength(1);
-		expect(result.extensions[0].tools.has("active-tool")).toBe(true);
 	});
 
 	it("does not recurse beyond one level", async () => {

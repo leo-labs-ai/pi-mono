@@ -8,6 +8,7 @@ import type { MistralOptions } from "./api/mistral-conversations.ts";
 import type { OpenAICodexResponsesOptions } from "./api/openai-codex-responses.ts";
 import type { OpenAICompletionsOptions } from "./api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "./api/openai-responses.ts";
+import type { PiMessagesOptions } from "./api/pi-messages.ts";
 import type { AssistantMessageDiagnostic } from "./utils/diagnostics.ts";
 import type { AssistantMessageEventStream } from "./utils/event-stream.ts";
 
@@ -22,7 +23,8 @@ export type KnownApi =
 	| "anthropic-messages"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
-	| "google-vertex";
+	| "google-vertex"
+	| "pi-messages";
 
 export type Api = KnownApi | (string & {});
 
@@ -80,7 +82,7 @@ export type KnownProvider =
 export type ProviderId = KnownProvider | string;
 
 export type ToolChoice = "auto" | "none";
-export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra" | "adaptive";
+export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
 export type ChatTemplateKwargValue =
@@ -102,8 +104,6 @@ export interface ThinkingBudgets {
 	low?: number;
 	medium?: number;
 	high?: number;
-	ultra?: number;
-	adaptive?: number;
 }
 
 // Base options all providers share
@@ -117,12 +117,11 @@ export type ModelPromptCache = Partial<Record<Exclude<CacheRetention, "none">, n
 
 export type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
 
-export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
-
 /** Provider-scoped environment overrides. Values take precedence over process.env. */
 export type ProviderEnv = Record<string, string>;
 export type ProviderHeaders = Record<string, string | null>;
 export type FetchFunction = typeof globalThis.fetch;
+export type SessionAffinityFormat = "openai" | "openai-nosession" | "openrouter";
 
 export interface ProviderResponse {
 	status: number;
@@ -214,7 +213,7 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	transport?: Transport;
 	/**
 	 * Prompt cache retention preference. Providers map this to their supported values.
-	 * Default: "long".
+	 * Default: "short".
 	 */
 	cacheRetention?: CacheRetention;
 	/**
@@ -223,12 +222,6 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * session-aware features. Ignored by providers that don't support it.
 	 */
 	sessionId?: string;
-	/**
-	 * Optional provider prompt-cache affinity key. Unlike sessionId, this may be
-	 * shared across sessions so background heartbeats can warm a stable prefix.
-	 * Providers that do not expose prompt-cache routing ignore it.
-	 */
-	cacheAffinityKey?: string;
 	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
@@ -271,6 +264,7 @@ export interface ApiOptionsMap {
 	"google-vertex": GoogleVertexOptions;
 	"mistral-conversations": MistralOptions;
 	"bedrock-converse-stream": BedrockOptions;
+	"pi-messages": PiMessagesOptions;
 }
 
 /**
@@ -420,11 +414,6 @@ export interface ImageContent {
 	mimeType: string; // e.g., "image/jpeg", "image/png"
 }
 
-export interface ToolReferenceContent {
-	type: "tool_reference";
-	name: string;
-}
-
 export interface ToolCall {
 	type: "toolCall";
 	id: string;
@@ -556,7 +545,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall | ToolReferenceContent)[];
+	content: (TextContent | ThinkingContent | ToolCall)[];
 	api: Api;
 	provider: ProviderId;
 	model: string;
@@ -607,17 +596,17 @@ export type ToolResultMessage<TDetails = JsonValue> = IsJsonCompatible<TDetails>
 			role: "toolResult";
 			toolCallId: string;
 			toolName: string;
-			content: (TextContent | ImageContent | ToolReferenceContent)[];
+			content: (TextContent | ImageContent)[]; // Supports text and images
 			details?: JsonRepresentation<TDetails>;
 			/** Usage from the tool execution itself, if available. Not part of main LLM context accounting. */
 			usage?: Usage;
+			/** Calls this tool made to other tools. Kept for the session record; not sent to the model. */
+			nestedCalls?: NestedToolCalls;
 			/**
 			 * Names from `Context.tools` that became available after this result.
 			 * Providers with native deferred tool loading use this as the load point.
 			 */
 			addedToolNames?: string[];
-			/** Calls this tool made to other tools. Kept for the session record; not sent to the model. */
-			nestedCalls?: NestedToolCalls;
 			isError: boolean;
 			timestamp: number; // Unix timestamp in milliseconds
 		}
@@ -706,13 +695,6 @@ export interface ClassifierResult {
 
 import type { TSchema } from "typebox";
 
-/** Marker used to split stable and dynamic system-prompt sections for providers that support block-level cache control. */
-export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__PI_SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
-
-export function stripSystemPromptDynamicBoundary(systemPrompt: string): string {
-	return systemPrompt.replaceAll(SYSTEM_PROMPT_DYNAMIC_BOUNDARY, "");
-}
-
 /** OpenAI grammar variants for constrained sampling. */
 export type GrammarFormat = "openai_lark" | "openai_regex";
 
@@ -739,28 +721,6 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	name: string;
 	description: string;
 	parameters: TParameters;
-	/** Provider-native hint to defer loading the full tool implementation/schema until discovered. */
-	deferLoading?: boolean;
-	/** Keep this tool eagerly loaded even when other tools are deferred. */
-	alwaysLoad?: boolean;
-	/** Concise searchable hint used by progressive tool discovery surfaces. */
-	searchHint?: string;
-	/**
-	 * Optional namespace/group label for this tool. Set by the policy owner
-	 * (e.g. tool-search) so provider serializers can group related tools into a
-	 * provider-native namespace. Pure serialization metadata: undefined = flat.
-	 */
-	namespace?: string;
-	/** Optional provider allow-list. Runtime surfaces should hide the tool for other providers. */
-	providers?: string[];
-	/**
-	 * When set, Anthropic-family providers send this exact server tool block
-	 * (e.g. { type: "web_search_20250305", name: "web_search", max_uses: 8 })
-	 * instead of a client tool schema. The tool then executes on Anthropic's
-	 * infrastructure; local execute() never runs. Explicit opt-in replaces the
-	 * old name-based web_fetch/web_search interception.
-	 */
-	anthropicServerTool?: Record<string, unknown>;
 	constrainedSampling?: false | ConstrainedSamplingConfig;
 }
 
@@ -780,12 +740,6 @@ export interface Context {
 	tools?: Tool[];
 }
 
-/** A single source/result surfaced by a provider-executed server-side tool. */
-export interface ServerToolSource {
-	title?: string;
-	url: string;
-}
-
 declare const transcriptContextBrand: unique symbol;
 
 /**
@@ -794,8 +748,9 @@ declare const transcriptContextBrand: unique symbol;
  * Only `normalizeContext()` produces this type, so a raw `Context` cannot reach
  * provider code by accident.
  */
-export type TranscriptContext = Context & {
-	readonly [transcriptContextBrand]?: true;
+export type TranscriptContext = {
+	messages: Message[];
+	readonly [transcriptContextBrand]: true;
 };
 
 /**
@@ -813,12 +768,6 @@ export type TranscriptContext = Context & {
  * authoritative `*_end`. Redacted thinking may be complete at start and emit no
  * deltas. Tool-call arguments at `toolcall_start` are provider-specific;
  * `toolcall_delta` carries subsequent JSON updates.
- *
- * `server_tool_use`/`server_tool_result` are display-only signals for provider-executed
- * tools (Anthropic native web_search/web_fetch). They are NOT backed by content blocks:
- * the provider runs them server-side, so they never enter `AssistantMessage.content`, are
- * never executed by the agent loop, and never round-trip to the API. Consumers use them
- * purely to render an activity card.
  */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
@@ -831,16 +780,6 @@ export type AssistantMessageEvent =
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
 	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
-	| { type: "server_tool_use"; id: string; toolName: string; query?: string; url?: string; partial: AssistantMessage }
-	| {
-			type: "server_tool_result";
-			toolUseId: string;
-			toolName: string;
-			status: "completed" | "error";
-			sources?: ServerToolSource[];
-			errorCode?: string;
-			partial: AssistantMessage;
-	  }
 	| {
 			type: "done";
 			reason: Extract<StopReason, "stop" | "length" | "toolUse" | "deferred">;
@@ -918,8 +857,6 @@ export interface OpenAICompletionsCompat {
 	cacheControlFormat?: "anthropic";
 	/** Whether to send session-affinity data from `options.sessionId`. Default: true for OpenRouter endpoints, false otherwise. */
 	sendSessionAffinityHeaders?: boolean;
-	/** Provider-specific deferred tool serialization mode. */
-	deferredToolsMode?: "kimi";
 	/** Session-affinity header format: `openai` sends `session_id`, `x-client-request-id`, and `x-session-affinity`; `openai-nosession` sends `x-client-request-id` and `x-session-affinity`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
@@ -951,39 +888,11 @@ export interface OpenAIResponsesCompat {
 	supportsAdditionalTools?: boolean;
 	/** Whether the model supports client-executed tool search for transcript-anchored additions. Default: false. */
 	supportsToolSearch?: boolean;
-	/**
-	 * Whether the exact model accepts `configuration_update` input items for mid-conversation
-	 * reasoning-effort changes (GPT-6 Astra, standard mode). When true, Pi pins the request-level
-	 * `reasoning.effort` to the conversation's first effort and expresses later changes as
-	 * positional updates, so a level change no longer misses the whole prompt-cache prefix
-	 * (`reasoning_effort_changed`). Pi persists each response's native effort to replay history.
-	 * Not for `-pro` models or transports that only imitate the Responses shape. Default: false.
-	 */
-	supportsMidConvoEffort?: boolean;
-	/**
-	 * Prompt-cache API generation. `"legacy"` (default) sends `prompt_cache_retention`;
-	 * `"breakpoints"` (GPT-5.6+) omits the deprecated retention field and marks explicit
-	 * `prompt_cache_breakpoint` blocks on the stable system-prompt prefix and the previous
-	 * user message. Older models reject breakpoint fields, so this must be opt-in per model.
-	 */
-	promptCacheApi?: "legacy" | "breakpoints";
-	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
+	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
-	/** Whether to derive and send the ChatGPT account header (Codex Responses only). Default: true. */
-	sendChatgptAccountId?: boolean;
-	/** Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only). Default: true. */
-	supportsWebSocketTransport?: boolean;
-	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
-	supportsZstdRequestCompression?: boolean;
 }
-
-/**
- * Compatibility settings for OpenAI Codex Responses APIs. Codex lanes share
- * {@link OpenAIResponsesCompat}; the Codex-only flags live there as optional fields.
- */
-export type OpenAICodexResponsesCompat = OpenAIResponsesCompat;
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
@@ -997,26 +906,6 @@ export interface AnthropicMessagesCompat {
 	supportsEagerToolInputStreaming?: boolean;
 	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
 	supportsLongCacheRetention?: boolean;
-	/** Whether the provider supports native deferred tool schemas (`defer_loading`) and tool references. Default: true. */
-	supportsDeferredTools?: boolean;
-	/**
-	 * Whether the provider supports deferred tools loaded by `tool_reference`
-	 * blocks in tool results. Default: true for first-party Anthropic models
-	 * except Haiku and models older than Claude 4.5; false for other providers.
-	 */
-	supportsToolReferences?: boolean;
-	/**
-	 * Message-anchored schema delivery for gateways with NO native deferral wire
-	 * (`supportsToolReferences: false` lanes such as OAuth bridges that drop
-	 * `defer_loading`/`tool_reference`). When true, tools activated mid-session
-	 * (marked via toolResult `addedToolNames`) are permanently excluded from the
-	 * wire `tools[]` and their JSON schema is delivered once as a plain text
-	 * block appended after the activating tool_result — keeping `tools[]`
-	 * byte-stable so activation never busts the prompt-cache prefix.
-	 * Ignored when `supportsToolReferences` resolves true.
-	 * Default: false.
-	 */
-	inlineDeferredTools?: boolean;
 	/**
 	 * Whether to send the `x-session-affinity` header from `options.sessionId`
 	 * when caching is enabled. Required for providers like Fireworks that use
@@ -1055,14 +944,7 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
-	/**
-	 * Whether the exact model transport supports changing reasoning effort mid-conversation
-	 * without invalidating the prompt cache. Anthropic: effort-only system messages plus thinking
-	 * binding controls. OpenAI Responses / Codex Responses: positional `configuration_update`
-	 * items with the request-level `reasoning.effort` pinned to the conversation's first effort
-	 * (GPT-6 Astra). Pi persists each response's native effort to replay history faithfully.
-	 * Default: false.
-	 */
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
@@ -1177,17 +1059,19 @@ export interface VercelGatewayRouting {
 }
 
 export interface ModelCostRates {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
+	input: number; // $/million tokens
+	output: number; // $/million tokens
+	cacheRead: number; // $/million tokens
+	cacheWrite: number; // $/million tokens
 }
 
 export interface ModelCostTier extends ModelCostRates {
+	/** Use this tier for requests whose total input usage exceeds this token count. */
 	inputTokensAbove: number;
 }
 
 export interface ModelCost extends ModelCostRates {
+	/** Request-wide pricing tiers. The highest matching input threshold applies to the full request. */
 	tiers?: ModelCostTier[];
 }
 
@@ -1242,10 +1126,6 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	 * Missing keys use provider defaults. null marks a level as unsupported.
 	 */
 	thinkingLevelMap?: ThinkingLevelMap;
-	input: ("text" | "image")[];
-	/** Provider input limits and cache-safe preprocessing metadata. */
-	inputLimits?: ModelInputLimits;
-	cost: ModelCost;
 	/** Prompt cache lifetimes per retention tier. Unset when the provider's cache behavior is unknown. */
 	promptCache?: ModelPromptCache;
 	contextWindow: number;

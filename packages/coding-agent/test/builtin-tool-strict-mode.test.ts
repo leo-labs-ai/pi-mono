@@ -23,7 +23,7 @@ describe("strict built-in tools", () => {
 			expect(definitions[name].constrainedSampling).toEqual({ type: "json_schema", strict: "prefer" });
 			expect(tools[name].constrainedSampling).toEqual(definitions[name].constrainedSampling);
 		}
-		for (const name of ["grep", "Glob", "ls"] as const) {
+		for (const name of ["grep", "find", "ls"] as const) {
 			expect(definitions[name].constrainedSampling).toBeUndefined();
 		}
 		// Strictness is a provider-side conversion, not a change to the execution schema.

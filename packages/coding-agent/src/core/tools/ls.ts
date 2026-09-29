@@ -4,19 +4,13 @@ import nodePath from "path";
 import { type Static, Type } from "typebox";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
-import { createLsRenderers } from "./renderers/ls.ts";
+import { lsRenderers } from "./renderers/ls.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
-import { DEFAULT_MAX_BYTES, FULL_TRUNCATION, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
 const lsSchema = Type.Object({
 	path: Type.Optional(Type.String({ description: "Directory to list (default: current directory)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of entries to return (default: 500)" })),
-	full: Type.Optional(
-		Type.Boolean({
-			description:
-				"Return ALL entries with no entry-count/byte truncation (and skip tokenjuice compaction). Use only when you genuinely need the complete listing. Defaults to false.",
-		}),
-	),
 });
 
 export const lsToolSystemPromptContribution = {
@@ -53,8 +47,6 @@ const defaultLsOperations: LsOperations = {
 };
 
 export interface LsToolOptions {
-	toolName?: "ls" | "Ls";
-	label?: string;
 	/** Custom operations for directory listing. Default: local filesystem */
 	operations?: LsOperations;
 }
@@ -64,18 +56,15 @@ export function createLsToolDefinition(
 	options?: LsToolOptions,
 ): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
 	const ops = options?.operations ?? defaultLsOperations;
-	const toolName = options?.toolName ?? "ls";
-	const label = options?.label ?? "Ls";
 	return {
-		name: toolName,
-		label,
-		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Use this tool for directory listings; do not invoke \`ls\` via bash — those calls are blocked at runtime. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		name: "ls",
+		label: "ls",
+		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: lsToolSystemPromptContribution.snippet,
-		executionMode: "parallel",
 		parameters: lsSchema,
 		async execute(
 			_toolCallId,
-			{ path, limit, full }: { path?: string; limit?: number; full?: boolean },
+			{ path, limit }: { path?: string; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
 			ctx?: ExtensionContext,
@@ -92,7 +81,7 @@ export function createLsToolDefinition(
 				(async () => {
 					try {
 						const dirPath = resolveToCwd(path || ".", ctx?.cwd || cwd);
-						const effectiveLimit = full ? Number.MAX_SAFE_INTEGER : (limit ?? DEFAULT_LIMIT);
+						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 
 						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {
@@ -149,10 +138,7 @@ export function createLsToolDefinition(
 
 						const rawOutput = results.join("\n");
 						// Apply byte truncation. There is no separate line limit because entry count is already capped.
-						const truncation = truncateHead(
-							rawOutput,
-							full ? FULL_TRUNCATION : { maxLines: Number.MAX_SAFE_INTEGER },
-						);
+						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
 						let output = truncation.content;
 						const details: LsToolDetails = {};
 						// Build actionable notices for truncation and entry limits.
@@ -180,7 +166,7 @@ export function createLsToolDefinition(
 				})();
 			});
 		},
-		...createLsRenderers(label),
+		...lsRenderers,
 	};
 }
 

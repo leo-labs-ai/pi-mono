@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/api/openai-completions.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { AssistantMessage, Model, OpenAICompletionsCompat, ToolResultMessage, Usage } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 
 const emptyUsage: Usage = {
 	input: 0,
@@ -13,11 +12,7 @@ const emptyUsage: Usage = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 };
 
-const compat: Omit<
-	Required<OpenAICompletionsCompat>,
-	"deferredToolsMode" | "thinkingTokenBudgetField" | "vllmPriority"
-> & {
-	deferredToolsMode?: OpenAICompletionsCompat["deferredToolsMode"];
+const compat: Omit<Required<OpenAICompletionsCompat>, "thinkingTokenBudgetField" | "vllmPriority"> & {
 	thinkingTokenBudgetField?: OpenAICompletionsCompat["thinkingTokenBudgetField"];
 } = {
 	supportsStore: true,
@@ -44,7 +39,6 @@ const compat: Omit<
 	supportsMidConvoToolAdditions: false,
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
-	deferredToolsMode: undefined,
 	sessionAffinityFormat: "openai",
 	supportsLongCacheRetention: true,
 };
@@ -105,7 +99,7 @@ describe("openai-completions convertMessages", () => {
 	});
 
 	it("batches tool-result images after consecutive tool results", () => {
-		const { compat: _compat, ...baseModel } = pickModel("openai");
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {
 			...baseModel,
 			api: "openai-completions",
@@ -151,7 +145,7 @@ describe("openai-completions convertMessages", () => {
 	});
 
 	it("uses '(no tool output)' placeholder for empty tool results without images", () => {
-		const { compat: _compat, ...baseModel } = pickModel("openai");
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {
 			...baseModel,
 			api: "openai-completions",

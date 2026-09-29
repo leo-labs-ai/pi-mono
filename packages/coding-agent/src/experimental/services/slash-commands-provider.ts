@@ -8,14 +8,12 @@ import { type SlashCommandContribution, SlashCommands } from "./slash-commands.t
 
 const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
-	adaptive: "Model self-regulates",
 	minimal: "Very brief reasoning",
 	low: "Light reasoning",
 	medium: "Moderate reasoning",
 	high: "Deep reasoning",
 	xhigh: "Extra-high reasoning",
-	max: "Extended reasoning beyond xhigh",
-	ultra: "Maximum reasoning plus orchestration signal",
+	max: "Maximum reasoning",
 };
 
 interface RegisteredSlashCommand {

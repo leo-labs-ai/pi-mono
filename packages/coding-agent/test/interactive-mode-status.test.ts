@@ -118,18 +118,6 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
-describe("InteractiveMode reduced motion", () => {
-	test("preserves an extension indicator that explicitly hides its frames", () => {
-		const hiddenIndicator = { frames: [] as string[], intervalMs: 80 };
-		const fakeThis: any = {
-			settingsManager: { getMotion: () => "reduced" },
-			workingIndicatorOptions: hiddenIndicator,
-		};
-
-		expect((InteractiveMode as any).prototype.getWorkingIndicatorForMotion.call(fakeThis)).toBe(hiddenIndicator);
-	});
-});
-
 describe("InteractiveMode.showManagedToolStatus", () => {
 	beforeAll(() => initTheme("dark"));
 

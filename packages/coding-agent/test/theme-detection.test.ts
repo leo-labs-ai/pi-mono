@@ -1,5 +1,4 @@
 import { resetCapabilitiesCache, setCapabilities } from "@lue-labs/pi-tui";
-import { type RgbColor, resetCapabilitiesCache, setCapabilities } from "@lue-labs/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	detectColorFgBgTheme,

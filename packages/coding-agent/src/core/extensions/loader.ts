@@ -6,7 +6,7 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import type { Provider } from "@lue-labs/pi-ai";
 import type { KeyId } from "@lue-labs/pi-tui";
 import type { createJiti } from "jiti";
@@ -15,37 +15,25 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
-import { manifestEntryPath, readPiManifest } from "../pi-manifest.ts";
-import { createSyntheticSourceInfo } from "../source-info.ts";
-import { recordTiming, time, timingsEnabled } from "../timings.ts";
-import { createForkExtensionAPI } from "./extension-api-fork.ts";
 import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
 import type { ModelRouteRequest, VirtualModelDefinition } from "../virtual-models.ts";
 import type {
-	AgentTelemetry,
-	DeferredExtension,
 	EntryRenderer,
 	Extension,
 	ExtensionAPI,
 	ExtensionFactory,
-	ExtensionLoadError,
-	ExtensionLoadRequest,
 	ExtensionRuntime,
-	ExtensionSetting,
 	ExtensionVirtualModel,
 	LoadExtensionsResult,
 	MarkdownTransformer,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
-	RunRegistry,
 	ToolDefinition,
 } from "./types.ts";
-
-export { deleteExtensionProcessServiceForTests, getExtensionProcessService } from "./extension-api-fork.ts";
 
 const require = createRequire(import.meta.url);
 
@@ -104,29 +92,12 @@ function getAliases(): Record<string, string> {
 	// global API keep working at runtime until compat is removed.
 	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@lue-labs/pi-ai/compat");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@lue-labs/pi-ai/oauth");
-	const piAiProvidersEntry = resolveWorkspaceOrImport("ai/dist/providers/all.js", "@lue-labs/pi-ai/providers/all");
+	const piAiProvidersEntry = resolveWorkspaceOrImport(
+		"ai/dist/providers/all.js",
+		"@lue-labs/pi-ai/providers/all",
+	);
 
 	_aliases = {
-		"@lue-labs/pi-coding-agent": piCodingAgentEntry,
-		"@lue-labs/pi-agent-core": piAgentCoreEntry,
-		"@lue-labs/pi-tui": piTuiEntry,
-		"@lue-labs/pi-ai/providers/all": piAiProvidersEntry,
-		"@lue-labs/pi-ai/compat": piAiCompatEntry,
-		"@lue-labs/pi-ai/oauth": piAiOauthEntry,
-		"@lue-labs/pi-ai": piAiCompatEntry,
-		// Preserve runtime compatibility for extension packages published before
-		// the fork moved from the user scope to the organization scope.
-		"@valkyriweb/pi-coding-agent": piCodingAgentEntry,
-		"@valkyriweb/pi-agent-core": piAgentCoreEntry,
-		"@valkyriweb/pi-tui": piTuiEntry,
-		"@valkyriweb/pi-ai/providers/all": piAiProvidersEntry,
-		"@valkyriweb/pi-ai/compat": piAiCompatEntry,
-		"@valkyriweb/pi-ai/oauth": piAiOauthEntry,
-		"@valkyriweb/pi-ai": piAiCompatEntry,
-		// Upstream package-name compatibility: third-party extensions import the
-		// upstream scopes (@earendil-works/* current, @mariozechner/* legacy).
-		// Map them onto the fork's @lue-labs/* entries so value imports resolve
-		// in the bundled binary (type-only imports already erase at runtime).
 		"@lue-labs/pi-coding-agent": piCodingAgentEntry,
 		"@lue-labs/pi-agent-core": piAgentCoreEntry,
 		"@lue-labs/pi-tui": piTuiEntry,
@@ -150,53 +121,6 @@ function getAliases(): Record<string, string> {
 	};
 
 	return _aliases;
-}
-
-/**
- * Test-only: the exact module specifiers extensions can resolve, for BOTH
- * resolution paths — the compiled Bun binary (`VIRTUAL_MODULES`) and Node/dev
- * (jiti `getAliases()`). The two MUST stay in lockstep; a drift between them is
- * what dropped `@lue-labs/pi-ai/compat` from the binary map and broke fork
- * extension loading in the 0.80.x daily driver. Guarded by
- * loader-module-alias-symmetry.test.ts.
- */
-export async function getExtensionModuleSpecifiersForTests(): Promise<{
-	virtualModules: string[];
-	aliases: string[];
-}> {
-	return {
-		virtualModules: Object.keys(await getVirtualModules()),
-		aliases: Object.keys(getAliases()),
-	};
-}
-
-/**
- * The jiti resolution options (`virtualModules`/`alias`) that make
- * `@lue-labs/pi-coding-agent`, `@lue-labs/pi-tui`, etc. resolve to the
- * running binary's own bundled modules instead of falling through to plain
- * Node `node_modules` resolution — which frequently doesn't have those
- * exact package names on disk (npm peer-conflict dedup renames, workspace
- * layouts, etc.). Any OTHER jiti-based loader for extension-shaped code
- * (e.g. `cli/agent-view-command.ts`'s standalone dashboard-package import,
- * which used to build its own bare `createJiti()` with no alias/virtualModule
- * config at all and could resolve the entrypoint file but not that file's
- * own `@lue-labs/*` imports) MUST reuse this, not reimplement it — a second
- * copy is exactly the kind of drift `loader-module-alias-symmetry.test.ts`
- * exists to catch for the two branches already in this module.
- */
-export async function getExtensionJitiResolutionOptions(): Promise<
-	| { virtualModules: Record<string, unknown>; tryNative: false }
-	| { virtualModules: Record<string, unknown>; tsconfigPaths: true }
-	| { alias: Record<string, string> }
-> {
-	// Compiled binaries and the bundled Node distribution use embedded modules.
-	if (isBunBinary || isNodeSeaBinary || isBundledNode) {
-		return { virtualModules: await getVirtualModules(), tryNative: false };
-	}
-	// Source TypeScript reuses the host-resolved modules and root tsconfig paths.
-	if (isTypeScriptSourceRuntime) return { virtualModules: await getVirtualModules(), tsconfigPaths: true };
-	// Unbundled Node builds use dist aliases.
-	return { alias: getAliases() };
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
@@ -233,12 +157,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 	const notInitialized = () => {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
-	const state: { staleMessage?: string; runRegistry?: RunRegistry; telemetry?: AgentTelemetry } = {};
+	const state: { staleMessage?: string } = {};
 	const eventBusUnsubscribers = new Set<() => void>();
-	// Default no-op stubs for B5 show/hide handlers. interactive-mode replaces
-	// these via `ExtensionRunner.bindSlotUI()`; non-UI modes silently swallow
-	// show/hide requests.
-	const slotNoOp: (..._args: unknown[]) => void = () => {};
 	const assertActive = () => {
 		if (state.staleMessage) {
 			throw new Error(state.staleMessage);
@@ -254,23 +174,16 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setLabel: notInitialized,
 		getActiveTools: notInitialized,
 		getAllTools: notInitialized,
-		getToolDefinitions: notInitialized,
-		getCustomEntries: notInitialized,
 		getSettings: notInitialized,
 		setActiveTools: notInitialized,
-		setDeferredOverrides: notInitialized,
-		setToolNamespaces: notInitialized,
 		// registerTool() is valid during extension load; refresh is only needed post-bind.
 		refreshTools: () => {},
 		getCommands: notInitialized,
 		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getThinkingLevel: notInitialized,
 		setThinkingLevel: notInitialized,
-		setExtensionConfigValue: notInitialized,
 		flagValues: new Map(),
-		extensionConfig: {},
 		pendingProviderRegistrations: [],
-		suppressNewToolActivation: false,
 		pendingNativeProviderRegistrations: [],
 		mcpServers: new McpServerRegistry(),
 		pendingVirtualModelRegistrations: [],
@@ -309,20 +222,6 @@ export function createExtensionRuntime(): ExtensionRuntime {
 				(r) => r.provider.id !== name,
 			);
 		},
-		setRunRegistry: (registry) => {
-			if (!state.runRegistry) state.runRegistry = registry;
-		},
-		getRunRegistry: () => state.runRegistry,
-		setTelemetry: (telemetry) => {
-			if (!state.telemetry) state.telemetry = telemetry;
-		},
-		getTelemetry: () => state.telemetry,
-		showMainPaneFn: slotNoOp,
-		hideMainPaneFn: slotNoOp,
-		showOverlayFn: slotNoOp,
-		hideOverlayFn: slotNoOp,
-		hasMainPaneFn: () => false,
-		services: new Map(),
 		registerVirtualModel: (definition, extensionPath = "<unknown>") => {
 			runtime.pendingVirtualModelRegistrations.push({ definition, extensionPath });
 		},
@@ -368,9 +267,6 @@ function createExtensionAPI(
 	};
 
 	const api = {
-		cwd,
-		...createForkExtensionAPI(extension, runtime),
-
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): () => void {
 			assertActive();
@@ -400,7 +296,7 @@ function createExtensionAPI(
 				definition: tool,
 				sourceInfo: extension.sourceInfo,
 			});
-			runtime.refreshTools({ activateNewTools: !runtime.suppressNewToolActivation });
+			runtime.refreshTools();
 		},
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
@@ -441,26 +337,6 @@ function createExtensionAPI(
 					runtime.flagValues.set(name, options.default);
 				}
 			}
-		},
-
-		registerSetting(options: Omit<ExtensionSetting, "extensionPath">): void {
-			assertActive();
-			if (options.values.length === 0) {
-				throw new Error(`Extension setting must define at least one value: ${options.id}`);
-			}
-			if (!options.values.includes(options.currentValue)) {
-				throw new Error(`Extension setting currentValue must be one of values: ${options.id}`);
-			}
-			if (new Set(options.values).size !== options.values.length) {
-				throw new Error(`Extension setting values must be unique: ${options.id}`);
-			}
-			if (extension.registeredSettings.has(options.id)) {
-				throw new Error(`Extension setting already registered: ${options.id}`);
-			}
-			extension.registeredSettings.set(options.id, {
-				...options,
-				extensionPath: extension.path,
-			});
 		},
 
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
@@ -668,22 +544,6 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		}
 	}
 
-	// Pre-compiled JavaScript extensions do not need jiti's transform or virtual
-	// module setup. Keep the native path fast so deferred extensions can finish
-	// loading before the first user turn without paying the TypeScript loader cost.
-	if (/\.[mc]?js$/.test(extensionPath)) {
-		try {
-			const module = await import(pathToFileURL(extensionPath).href);
-			const factory = (module.default ?? module) as ExtensionFactory;
-			if (typeof factory === "function" && isCurrentCacheToken(cacheToken)) {
-				extensionCache.set(extensionPath, factory);
-			}
-			if (typeof factory === "function") return factory;
-		} catch {
-			// Fall through to jiti for CommonJS and extensions that need aliases.
-		}
-	}
-
 	const createJitiImpl = await getCreateJiti();
 	// Compiled binaries and the bundled Node distribution use embedded modules.
 	// Source TypeScript reuses host modules and root tsconfig paths. Unbundled
@@ -723,20 +583,10 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
-		defaultMessageRenderers: new Map(),
 		entryRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),
-		registeredSettings: new Map(),
-		forkSystemPromptTransforms: [],
 		shortcuts: new Map(),
-		disposeHandlers: [],
-		registeredAgentDefinitions: [],
-		registeredAgentChains: [],
-		registeredContextModes: new Map(),
-		registeredMainPanes: new Map(),
-		registeredOverlays: new Map(),
-		registeredFooters: new Map(),
 	};
 }
 
@@ -800,32 +650,17 @@ export async function loadExtensionFromFactory(
 	return initializeExtension(factory, extensionPath, extensionPath, resolvedCwd, eventBus, runtime);
 }
 
-function normalizeLoadRequest(input: string | ExtensionLoadRequest): ExtensionLoadRequest {
-	return typeof input === "string" ? { path: input, load: "eager" } : { load: "eager", ...input };
-}
-
-export async function loadDeferredExtension(
-	deferred: DeferredExtension,
-	cwd: string,
-	eventBus: EventBus,
-	runtime: ExtensionRuntime,
-): Promise<{ extension: Extension | null; error: string | null }> {
-	return loadExtension(deferred.path, cwd, eventBus, runtime);
-}
-
 /**
- * Load eager extensions now and keep deferred entries as metadata-only stubs.
+ * Load extensions from paths.
  */
 async function loadExtensionsInternal(
-	inputs: Array<string | ExtensionLoadRequest>,
+	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 	useCache = false,
 ): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
-	const deferredExtensions: DeferredExtension[] = [];
-	const errors: ExtensionLoadError[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 	const warnings: Array<{ path: string; warning: string }> = [];
 	const cacheToken = useCache ? useExtensionCacheCwd(cwd) : undefined;
@@ -833,15 +668,7 @@ async function loadExtensionsInternal(
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
-	const timing = timingsEnabled();
-	for (const input of inputs) {
-		const { path: extPath, load, discovered } = normalizeLoadRequest(input);
-		if (load === "deferred") {
-			deferredExtensions.push({ path: extPath });
-			continue;
-		}
-
-		const startedAt = timing ? performance.now() : 0;
+	for (const extPath of paths) {
 		const { extension, error } = await loadExtension(
 			extPath,
 			resolvedCwd,
@@ -849,14 +676,9 @@ async function loadExtensionsInternal(
 			resolvedRuntime,
 			cacheToken,
 		);
-		if (timing) {
-			recordTiming(`import ${extPath}`, performance.now() - startedAt, "extensions");
-		}
 
 		if (error) {
-			// Carry the discovered flag onto the error so callers can decide whether
-			// this failure is fatal (explicitly requested) or a skip (auto-discovered).
-			errors.push(discovered ? { path: extPath, error, discovered: true } : { path: extPath, error });
+			errors.push({ path: extPath, error });
 			continue;
 		}
 
@@ -867,38 +689,32 @@ async function loadExtensionsInternal(
 
 	return {
 		extensions,
-		deferredExtensions,
 		errors,
-		eventBus: resolvedEventBus,
 		warnings,
 		runtime: resolvedRuntime,
 	};
 }
 
 export async function loadExtensions(
-	inputs: Array<string | ExtensionLoadRequest>,
+	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 ): Promise<LoadExtensionsResult> {
-	return loadExtensionsInternal(inputs, cwd, eventBus, runtime);
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime);
 }
 
 export async function loadExtensionsCached(
-	inputs: Array<string | ExtensionLoadRequest>,
+	paths: string[],
 	cwd: string,
 	eventBus?: EventBus,
 	runtime?: ExtensionRuntime,
 ): Promise<LoadExtensionsResult> {
-	return loadExtensionsInternal(inputs, cwd, eventBus, runtime, true);
+	return loadExtensionsInternal(paths, cwd, eventBus, runtime, true);
 }
 
 function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js") || name.endsWith(".mjs");
-}
-
-function isDisabledExtensionEntry(name: string): boolean {
-	return name.endsWith(".disabled") || name.includes(".disabled.");
+	return name.endsWith(".ts") || name.endsWith(".js");
 }
 
 /**
@@ -917,8 +733,8 @@ function resolveExtensionEntries(dir: string): string[] | null {
 		const manifest = readPiManifest(packageJsonPath);
 		if (manifest?.extensions?.length) {
 			const entries: string[] = [];
-			for (const extEntry of manifest.extensions) {
-				const resolvedExtPath = path.resolve(dir, manifestEntryPath(extEntry));
+			for (const extPath of manifest.extensions) {
+				const resolvedExtPath = path.resolve(dir, extPath);
 				if (fs.existsSync(resolvedExtPath)) {
 					entries.push(resolvedExtPath);
 				}
@@ -962,23 +778,11 @@ function discoverExtensionsInDir(dir: string): string[] {
 	try {
 		const entries = fs.readdirSync(dir, { withFileTypes: true });
 
-		// Collect file entries first so we can prefer .js over .ts when both exist.
-		const fileNames = new Set(entries.filter((e) => e.isFile() || e.isSymbolicLink()).map((e) => e.name));
-
 		for (const entry of entries) {
-			if (isDisabledExtensionEntry(entry.name)) continue;
-
 			const entryPath = path.join(dir, entry.name);
 
 			// 1. Direct files: *.ts or *.js
-			// Prefer pre-compiled .js over .ts when both exist (avoids jiti transpile).
 			if ((entry.isFile() || entry.isSymbolicLink()) && isExtensionFile(entry.name)) {
-				if (
-					entry.name.endsWith(".ts") &&
-					(fileNames.has(entry.name.replace(/\.ts$/, ".js")) || fileNames.has(entry.name.replace(/\.ts$/, ".mjs")))
-				) {
-					continue; // .js/.mjs sibling exists — skip the .ts
-				}
 				discovered.push(entryPath);
 				continue;
 			}
@@ -1009,28 +813,26 @@ export async function discoverAndLoadExtensions(
 ): Promise<LoadExtensionsResult> {
 	const resolvedCwd = resolvePath(cwd);
 	const resolvedAgentDir = resolvePath(agentDir);
-	const allPaths: ExtensionLoadRequest[] = [];
+	const allPaths: string[] = [];
 	const seen = new Set<string>();
 
-	// `discovered` marks extensions found by scanning a directory. Their load
-	// failures are non-fatal; explicitly named ones stay fatal.
-	const addPaths = (paths: string[], discovered: boolean) => {
+	const addPaths = (paths: string[]) => {
 		for (const p of paths) {
 			const resolved = path.resolve(p);
 			if (!seen.has(resolved)) {
 				seen.add(resolved);
-				allPaths.push(discovered ? { path: p, load: "eager", discovered: true } : { path: p, load: "eager" });
+				allPaths.push(p);
 			}
 		}
 	};
 
 	// 1. Project-local extensions: cwd/${CONFIG_DIR_NAME}/extensions/
 	const localExtDir = path.join(resolvedCwd, CONFIG_DIR_NAME, "extensions");
-	addPaths(discoverExtensionsInDir(localExtDir), true);
+	addPaths(discoverExtensionsInDir(localExtDir));
 
 	// 2. Global extensions: agentDir/extensions/
 	const globalExtDir = path.join(resolvedAgentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir), true);
+	addPaths(discoverExtensionsInDir(globalExtDir));
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
@@ -1039,18 +841,15 @@ export async function discoverAndLoadExtensions(
 			// Check for package.json with pi manifest or index.ts
 			const entries = resolveExtensionEntries(resolved);
 			if (entries) {
-				// A directory named explicitly, but its individual entry points were
-				// still found by scanning, so treat them as discovered.
-				addPaths(entries, true);
+				addPaths(entries);
 				continue;
 			}
 			// No explicit entries - discover individual files in directory
-			addPaths(discoverExtensionsInDir(resolved), true);
+			addPaths(discoverExtensionsInDir(resolved));
 			continue;
 		}
 
-		// A file named explicitly by the caller: failing to load it stays fatal.
-		addPaths([resolved], false);
+		addPaths([resolved]);
 	}
 
 	return loadExtensions(allPaths, resolvedCwd, eventBus);

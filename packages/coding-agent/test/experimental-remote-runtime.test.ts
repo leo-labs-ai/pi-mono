@@ -210,7 +210,7 @@ describe("experimental durable server composition", () => {
 			);
 			await activated.management.attach("demo-1", BACKGROUND_CONTEXT);
 			const loaded = await createPresentationFacetLoaders(presentationPlugins)[0]!.load();
-			expect(loaded.facets.map(({ id }) => id)).toEqual(["@lue-labs/pi-example-plugin/tui"]);
+			expect(loaded.facets.map(({ id }) => id)).toEqual(["@earendil-works/pi-example-plugin/tui"]);
 			await loaded.dispose();
 		} finally {
 			await first.dispose();

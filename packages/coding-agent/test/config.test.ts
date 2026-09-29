@@ -13,7 +13,6 @@ import {
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPath = process.env.PATH;
 const originalPiPackageDir = process.env.PI_PACKAGE_DIR;
-const originalPiSourceUpdateCommand = process.env.PI_SOURCE_UPDATE_COMMAND;
 const originalArgv1 = process.argv[1];
 let tempDir: string | undefined;
 
@@ -37,11 +36,6 @@ afterEach(() => {
 		delete process.env.PI_PACKAGE_DIR;
 	} else {
 		process.env.PI_PACKAGE_DIR = originalPiPackageDir;
-	}
-	if (originalPiSourceUpdateCommand === undefined) {
-		delete process.env.PI_SOURCE_UPDATE_COMMAND;
-	} else {
-		process.env.PI_SOURCE_UPDATE_COMMAND = originalPiSourceUpdateCommand;
 	}
 	if (originalArgv1 === undefined) {
 		process.argv.splice(1, 1);
@@ -128,18 +122,6 @@ function createBunGlobalInstall(): { packageDir: string } {
 	return { packageDir };
 }
 
-function createSourceCheckout(): { root: string; packageDir: string } {
-	const root = mkdtempSync(join(tmpdir(), "pi-source-"));
-	const packageDir = join(root, "packages", "coding-agent");
-	mkdirSync(join(root, ".git"), { recursive: true });
-	mkdirSync(packageDir, { recursive: true });
-	writeFileSync(join(packageDir, "package.json"), JSON.stringify({ name: "@lue-labs/pi-coding-agent" }));
-	tempDir = root;
-	process.env.PI_PACKAGE_DIR = packageDir;
-	setExecPath(join(packageDir, "dist", "cli.js"));
-	return { root, packageDir };
-}
-
 function createFakePnpmScript(root: string): string {
 	if (process.platform === "win32") {
 		return `@echo off\r\nif "%1"=="root" if "%2"=="-g" echo ${root}\r\n`;
@@ -190,49 +172,12 @@ describe("detectInstallMethod", () => {
 	});
 
 	test("does not self-update unknown wrapper installs", () => {
-		const packageDir = mkdtempSync(join(tmpdir(), "pi-unknown-"));
-		tempDir = packageDir;
-		process.env.PI_PACKAGE_DIR = packageDir;
 		setExecPath("/usr/local/bin/node");
 
 		expect(detectInstallMethod()).toBe("unknown");
 		expect(getSelfUpdateCommand("@lue-labs/pi-coding-agent")).toBeUndefined();
 		expect(getUpdateInstruction("@lue-labs/pi-coding-agent")).toBe(
 			"Update @lue-labs/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
-		);
-	});
-
-	test("self-updates source checkout installs from configured command", () => {
-		createSourceCheckout();
-
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent", undefined, undefined, [
-			"/Users/luke/Projects/personal/rusty/scripts/update-pi",
-		]);
-
-		expect(detectInstallMethod()).toBe("source-checkout");
-		expect(command).toEqual({
-			command: "/Users/luke/Projects/personal/rusty/scripts/update-pi",
-			args: [],
-			display: "/Users/luke/Projects/personal/rusty/scripts/update-pi",
-		});
-	});
-
-	test("self-updates source checkout installs from env command", () => {
-		createSourceCheckout();
-		process.env.PI_SOURCE_UPDATE_COMMAND = "~/Projects/personal/rusty/scripts/update-pi";
-
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent");
-
-		expect(command?.display).toBe("~/Projects/personal/rusty/scripts/update-pi");
-		expect(command?.args.at(-1)).toBe("~/Projects/personal/rusty/scripts/update-pi");
-	});
-
-	test("source checkout unavailable instruction mentions source update config", () => {
-		createSourceCheckout();
-
-		expect(getSelfUpdateCommand("@lue-labs/pi-coding-agent")).toBeUndefined();
-		expect(getSelfUpdateUnavailableInstruction("@lue-labs/pi-coding-agent")).toContain(
-			"Configure a source update command with PI_SOURCE_UPDATE_COMMAND or settings.sourceUpdateCommand",
 		);
 	});
 
@@ -283,17 +228,17 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(command).toEqual({
 			command: "npm",
 			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @lue-labs/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
+			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
 			steps: [
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "uninstall", "-g", "@lue-labs/pi-coding-agent"],
-					display: `npm --prefix ${prefix} uninstall -g @lue-labs/pi-coding-agent`,
+					args: ["--prefix", prefix, "uninstall", "-g", "@mariozechner/pi-coding-agent"],
+					display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent`,
 				},
 				{
 					command: "npm",
@@ -377,19 +322,19 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed pnpm global installs by removing the old package first", () => {
 		createPnpmGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", "@new-scope/pi"],
 			display:
-				"pnpm remove -g @lue-labs/pi-coding-agent && pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/pi",
+				"pnpm remove -g @mariozechner/pi-coding-agent && pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/pi",
 			steps: [
 				{
 					command: "pnpm",
-					args: ["remove", "-g", "@lue-labs/pi-coding-agent"],
-					display: "pnpm remove -g @lue-labs/pi-coding-agent",
+					args: ["remove", "-g", "@mariozechner/pi-coding-agent"],
+					display: "pnpm remove -g @mariozechner/pi-coding-agent",
 				},
 				{
 					command: "pnpm",
@@ -446,18 +391,18 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed yarn global installs by removing the old package first", () => {
 		createYarnGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("yarn");
 		expect(command).toEqual({
 			command: "yarn",
 			args: ["global", "add", "--ignore-scripts", "@new-scope/pi"],
-			display: "yarn global remove @lue-labs/pi-coding-agent && yarn global add --ignore-scripts @new-scope/pi",
+			display: "yarn global remove @mariozechner/pi-coding-agent && yarn global add --ignore-scripts @new-scope/pi",
 			steps: [
 				{
 					command: "yarn",
-					args: ["global", "remove", "@lue-labs/pi-coding-agent"],
-					display: "yarn global remove @lue-labs/pi-coding-agent",
+					args: ["global", "remove", "@mariozechner/pi-coding-agent"],
+					display: "yarn global remove @mariozechner/pi-coding-agent",
 				},
 				{
 					command: "yarn",
@@ -471,19 +416,19 @@ describe("detectInstallMethod", () => {
 	test("self-updates renamed bun global installs by removing the old package first", () => {
 		createBunGlobalInstall();
 
-		const command = getSelfUpdateCommand("@lue-labs/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
 			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@new-scope/pi"],
 			display:
-				"bun uninstall -g @lue-labs/pi-coding-agent && bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/pi",
+				"bun uninstall -g @mariozechner/pi-coding-agent && bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/pi",
 			steps: [
 				{
 					command: "bun",
-					args: ["uninstall", "-g", "@lue-labs/pi-coding-agent"],
-					display: "bun uninstall -g @lue-labs/pi-coding-agent",
+					args: ["uninstall", "-g", "@mariozechner/pi-coding-agent"],
+					display: "bun uninstall -g @mariozechner/pi-coding-agent",
 				},
 				{
 					command: "bun",

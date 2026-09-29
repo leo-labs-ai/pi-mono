@@ -7,8 +7,8 @@ import { randomBytes } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent, Usage } from "@earendil-works/pi-ai";
+import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@lue-labs/pi-agent-core";
+import type { AnyModel, ClassifierContext, ImageContent, ModelType, TextContent, Usage } from "@lue-labs/pi-ai";
 import {
 	type CodemodeResult,
 	CodemodeSandbox,

@@ -49,8 +49,6 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
-import { stripSystemPromptDynamicBoundary } from "../types.ts";
-import { resolveCacheRetention } from "../utils/cache-retention.ts";
 import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
@@ -812,6 +810,20 @@ function mapThinkingLevelToEffort(
 }
 
 /**
+ * Resolve cache retention preference.
+ * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
+ */
+function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention {
+	if (cacheRetention) {
+		return cacheRetention;
+	}
+	if (getProviderEnvValue("PI_CACHE_RETENTION", env) === "long") {
+		return "long";
+	}
+	return "short";
+}
+
+/**
  * Check if the model is an Anthropic Claude model on Bedrock.
  * Checks both model ID and model name to support application inference profiles
  * whose ARNs don't contain the model name.
@@ -881,7 +893,7 @@ function buildSystemPrompt(
 ): SystemContentBlock[] | undefined {
 	if (!systemPrompt) return undefined;
 
-	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(stripSystemPromptDynamicBoundary(systemPrompt)) }];
+	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(systemPrompt) }];
 
 	// Add cache point for supported Claude models when caching is enabled
 	if (cacheRetention !== "none" && supportsPromptCaching(model, env)) {
@@ -921,12 +933,9 @@ function sanitizeBedrockDocument(value: JsonValue): DocumentType {
 	return value;
 }
 
-function convertToolResultContent(
-	content: (TextContent | ImageContent | { type: "tool_reference"; name: string })[],
-): ToolResultContentBlock[] {
+function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
-		if (c.type === "tool_reference") continue;
 		if (c.type === "image") {
 			result.push({ image: createImageBlock(c.mimeType, c.data) });
 		} else {
@@ -1237,37 +1246,22 @@ function buildAdditionalModelRequestFields(
 		// Omit it there until the GovCloud Converse schema catches up.
 		const display = isGovCloudBedrockTarget(model, options) ? undefined : (options.thinkingDisplay ?? "summarized");
 		const result: Record<string, any> = supportsAdaptiveThinking(model.id, model.name)
-			? (() => {
-					const thinking = { type: "adaptive", ...(display !== undefined ? { display } : {}) };
-					// "adaptive" level = no effort cap; Claude self-regulates fully.
-					if (options.reasoning === "adaptive") {
-						return { thinking };
-					}
-					return {
-						thinking,
-						output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
-					};
-				})()
+			? {
+					thinking: { type: "adaptive", ...(display !== undefined ? { display } : {}) },
+					output_config: { effort: mapThinkingLevelToEffort(model, options.reasoning) },
+				}
 			: (() => {
 					const defaultBudgets: Record<ThinkingLevel, number> = {
 						minimal: 1024,
 						low: 2048,
 						medium: 8192,
 						high: 16384,
-						xhigh: 16384, // Claude doesn't support xhigh, clamp to high
-						max: 16384, // OpenAI-only level, clamp to high
-						ultra: 16384, // OpenAI client orchestration mode, clamp to high
-						adaptive: 16384, // Non-adaptive Claude models can't go adaptive, clamp to high
+						xhigh: 16384, // Budget-based Claude clamps extended levels to high
+						max: 16384,
 					};
 
-					// Custom budgets override defaults (xhigh/max/ultra/adaptive not in ThinkingBudgets, use high)
-					const level =
-						options.reasoning === "xhigh" ||
-						options.reasoning === "max" ||
-						options.reasoning === "ultra" ||
-						options.reasoning === "adaptive"
-							? "high"
-							: options.reasoning;
+					// Custom budgets only cover token-based levels through high.
+					const level = options.reasoning === "xhigh" || options.reasoning === "max" ? "high" : options.reasoning;
 					const budget = options.thinkingBudgets?.[level] ?? defaultBudgets[options.reasoning];
 
 					return {

@@ -1,4 +1,4 @@
-import { colorToHex, okhslColor } from "@earendil-works/pi-tui";
+import { colorToHex, okhslColor } from "@lue-labs/pi-tui";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";

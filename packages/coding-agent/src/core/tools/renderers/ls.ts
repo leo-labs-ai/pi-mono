@@ -14,24 +14,14 @@ import type { LsToolDetails } from "../ls.ts";
 import { getTextOutput, renderToolPath, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
-function formatLsCall(
-	args: { path?: string; limit?: number } | undefined,
-	theme: Theme,
-	label: string,
-	cwd: string,
-): string {
+function formatLsCall(args: { path?: string; limit?: number } | undefined, theme: Theme, cwd: string): string {
 	const limit = args?.limit;
 	const pathDisplay = renderToolPath(str(args?.path), theme, cwd, { emptyFallback: "." });
-	let text = `${theme.fg("toolTitle", theme.bold(label))} ${pathDisplay}`;
+	let text = `${theme.fg("toolTitle", theme.bold("ls"))} ${pathDisplay}`;
 	if (limit !== undefined) {
 		text += theme.fg("toolOutput", ` (limit ${limit})`);
 	}
 	return text;
-}
-function colorLsEntry(entry: string, theme: Theme): string {
-	if (entry.endsWith("/")) return theme.fg("accent", entry);
-	if (entry.startsWith(".")) return theme.fg("muted", entry);
-	return theme.fg("toolOutput", entry);
 }
 function formatLsResult(
 	result: {
@@ -49,7 +39,7 @@ function formatLsResult(
 		const maxLines = options.expanded ? lines.length : 20;
 		const displayLines = lines.slice(0, maxLines);
 		const remaining = lines.length - maxLines;
-		text += `\n${displayLines.map((line) => colorLsEntry(line, theme)).join("\n")}`;
+		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
 		if (remaining > 0) {
 			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")}${theme.fg("muted", ")")}`;
 		}
@@ -66,22 +56,15 @@ function formatLsResult(
 	return text;
 }
 
-export type LsRenderers = Pick<ToolDefinition<any, any>, "renderCall" | "renderResult">;
-
-/** The ls tool is registered under more than one label, so the rendered title follows the definition. */
-export function createLsRenderers(label = "Ls"): LsRenderers {
-	return {
-		renderCall(args, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatLsCall(args as any, theme, label, context.cwd));
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatLsResult(result as any, options, theme, context.showImages));
-			return text;
-		},
-	};
-}
-
-export const lsRenderers: LsRenderers = createLsRenderers();
+export const lsRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "renderResult"> = {
+	renderCall(args, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatLsCall(args as any, theme, context.cwd));
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(formatLsResult(result as any, options, theme, context.showImages));
+		return text;
+	},
+};

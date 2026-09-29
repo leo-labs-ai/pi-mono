@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { describe, expect, it } from "vitest";
-import type { JsonObject, JsonValue, Tool, ToolCall } from "../src/types.ts";
+import type { JsonValue, Tool, ToolCall } from "../src/types.ts";
 import { validateToolArguments } from "../src/utils/validation.ts";
 
 function createToolCallWithPlainSchema(
@@ -96,48 +96,6 @@ describe("validateToolArguments", () => {
 			const { tool, toolCall } = createToolCallWithPlainSchema(testCase.schema, testCase.input);
 			expect(validateToolArguments(tool, toolCall)).toEqual({ value: testCase.expected });
 		}
-	});
-
-	it("parses stringified JSON arrays/objects when the schema expects structured input", () => {
-		const arrayTool: Tool = {
-			name: "agent",
-			description: "agent",
-			parameters: Type.Object({
-				tasks: Type.Array(Type.Object({ agent: Type.String(), task: Type.String() })),
-				concurrency: Type.Optional(Type.Number()),
-			}),
-		};
-		const arrayCall: ToolCall = {
-			type: "toolCall",
-			id: "t1",
-			name: "agent",
-			arguments: {
-				tasks: '[{"agent":"explore","task":"look"},{"agent":"plan","task":"think"}]',
-				concurrency: "3",
-			} as unknown as JsonObject,
-		};
-		expect(validateToolArguments(arrayTool, arrayCall)).toEqual({
-			tasks: [
-				{ agent: "explore", task: "look" },
-				{ agent: "plan", task: "think" },
-			],
-			concurrency: 3,
-		});
-
-		const objectTool: Tool = {
-			name: "echo",
-			description: "echo",
-			parameters: Type.Object({
-				payload: Type.Object({ a: Type.Number(), b: Type.String() }),
-			}),
-		};
-		const objectCall: ToolCall = {
-			type: "toolCall",
-			id: "t2",
-			name: "echo",
-			arguments: { payload: '{"a":1,"b":"x"}' } as unknown as JsonObject,
-		};
-		expect(validateToolArguments(objectTool, objectCall)).toEqual({ payload: { a: 1, b: "x" } });
 	});
 
 	it("treats null as omission for optional non-nullable properties", () => {

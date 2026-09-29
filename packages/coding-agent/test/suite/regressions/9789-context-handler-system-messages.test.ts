@@ -1,10 +1,10 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage } from "@lue-labs/pi-agent-core";
 import {
 	fauxAssistantMessage,
 	getCurrentSystemPrompt,
 	getCurrentTools,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai";
+} from "@lue-labs/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionFactory } from "../../../src/index.ts";
 import { createHarness, type Harness } from "../harness.ts";
@@ -195,9 +195,7 @@ describe("context_with_system handlers", () => {
 		const input = seen.at(-1);
 		expect(input?.[0]?.role).toBe("system");
 		expect(input?.[1]?.role).toBe("compactionSummary");
-		// Fork loadout uses Claude Code-compatible capitalized tool names (see
-		// createUppercaseBashToolDefinition); upstream's default is lowercase "bash".
-		expect(harness.session.getActiveToolNames()).toContain("Bash");
+		expect(harness.session.getActiveToolNames()).toContain("bash");
 		expect(toolNames(getRequest())).toEqual(harness.session.getActiveToolNames().filter((name) => name !== "bash"));
 	});
 

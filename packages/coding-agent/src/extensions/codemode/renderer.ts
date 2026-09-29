@@ -7,7 +7,7 @@
  * separate tool rows because they never reach the model as tool calls.
  */
 
-import { Text } from "@earendil-works/pi-tui";
+import { Text } from "@lue-labs/pi-tui";
 import type { ToolDefinition } from "../../core/extensions/types.ts";
 import { getTextOutput, replaceTabs, str } from "../../core/tools/render-utils.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";

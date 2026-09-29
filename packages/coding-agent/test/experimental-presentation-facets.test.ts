@@ -164,10 +164,10 @@ describe("server-selected presentation facets", () => {
 
 		const artifacts = await plugin.build();
 		const manifest = await readFacetBundleManifest(plugin.manifestPath);
-		expect(manifest.plugin).toEqual({ id: "@lue-labs/pi-example-plugin", version: "1.0.0" });
+		expect(manifest.plugin).toEqual({ id: "@earendil-works/pi-example-plugin", version: "1.0.0" });
 		expect(Object.keys(manifest.entries)).toEqual(["session", "tui"]);
 		const loaded = await createPresentationFacetLoaders(createPresentationFacetData(artifacts))[0]!.load();
-		expect(loaded.facets.map(({ id }) => id)).toEqual(["@lue-labs/pi-example-plugin/tui"]);
+		expect(loaded.facets.map(({ id }) => id)).toEqual(["@earendil-works/pi-example-plugin/tui"]);
 		await loaded.dispose();
 	});
 });

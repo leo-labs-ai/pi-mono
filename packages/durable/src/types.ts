@@ -2,8 +2,6 @@ import type { AttachedReplicatedState, Context, Draft, JsonValue } from "@earend
 import type { Op } from "@earendil-works/chord/delta";
 import type { Message, Models } from "@lue-labs/pi-ai";
 import type { ContextView, RegistrySnapshot } from "./harness/types.ts";
-import type { Context, JsonValue } from "@earendil-works/chord";
-import type { Message } from "@lue-labs/pi-ai";
 
 /** JSON object used as the root of every durable document. */
 export type JsonObject = { [key: string]: JsonValue };

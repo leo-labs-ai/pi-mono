@@ -129,13 +129,6 @@ export interface Component {
 	handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
 
 	/**
-	 * If false, higher-level pane hosts may keep focus on their existing input
-	 * surface while displaying this component. Use for display-only panes whose
-	 * text input is handled elsewhere.
-	 */
-	captureInput?: boolean;
-
-	/**
 	 * If true, component receives key release events (Kitty protocol).
 	 * Default is false - release events are filtered out.
 	 */
@@ -164,10 +157,19 @@ type PendingTerminalColorQuery = {
 	timer: NodeJS.Timeout | undefined;
 };
 
-// Upper bound on retained OSC 11 background-color queries. Only a few can be
-// genuinely outstanding (startup + color-scheme-change re-queries); the cap keeps
-// timed-out entries from accumulating on terminals that never answer.
-const MAX_PENDING_OSC11_QUERIES = 8;
+const TERMINAL_PALETTE_SIZE = 16;
+/** OSC 10 and 11 plus OSC 4 for every palette color. */
+const TERMINAL_COLOR_REPLY_COUNT = 2 + TERMINAL_PALETTE_SIZE;
+/**
+ * Default colors, palette colors 0-15, and a trailing primary device attributes (DA1) request.
+ * Every terminal answers DA1 and terminals answer in order, so the DA1 reply marks the end of
+ * the color replies, including for terminals that ignore the color queries.
+ */
+const TERMINAL_COLOR_QUERY = `\x1b]10;?\x07\x1b]11;?\x07${Array.from(
+	{ length: TERMINAL_PALETTE_SIZE },
+	(_, index) => `\x1b]4;${index};?\x07`,
+).join("")}\x1b[c`;
+const DEVICE_ATTRIBUTES_RESPONSE_PATTERN = /^\x1b\[\?[\d;]*c$/;
 
 /**
  * Interface for components that can receive focus and display a hardware cursor.
@@ -479,7 +481,7 @@ export interface TUI extends Component {
 	}): Promise<TerminalColors>;
 }
 
-export const VIEWPORT_TUI = Symbol.for("@lue-labs/pi-tui/viewport");
+export const VIEWPORT_TUI = Symbol.for("@earendil-works/pi-tui/viewport");
 
 export interface ViewportTUI extends TUI {
 	readonly [VIEWPORT_TUI]: true;
@@ -502,13 +504,6 @@ export abstract class TuiBase extends Container implements TUI {
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
-	/**
-	 * Whether the host terminal currently has focus (DEC mode 1004). When false,
-	 * renders are deferred (the last frame stays on screen) so an unfocused or
-	 * switched-away terminal does not burn CPU repainting; a single render flushes on
-	 * focus-in. Defaults true so terminals without 1004 support behave normally.
-	 */
-	private terminalFocused = true;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = false;
 	private clearOnShrink = false;
@@ -521,7 +516,7 @@ export abstract class TuiBase extends Container implements TUI {
 	private pendingTerminalColorQueries: PendingTerminalColorQuery[] = [];
 	private terminalColorSchemeListeners = new Set<(scheme: TerminalColorScheme) => void>();
 	private terminalColorSchemeNotificationsEnabled = false;
-	/** Directory for debug/crash logs. Defaults to the pi agent directory, so a caller that passes nothing still gets crash dumps. */
+	/** Directory for debug/crash logs. When undefined, debug logging is disabled and crash dumps fall back to the OS temp directory. */
 	protected readonly logDirectory: string | undefined;
 
 	// Overlay stack for modal components rendered on top of base content
@@ -1011,10 +1006,6 @@ export abstract class TuiBase extends Container implements TUI {
 		process.nextTick(() => {
 			this.immediateRenderScheduled = false;
 			if (this.stopped || !this.renderRequested) return;
-			if (!this.terminalFocused) {
-				// Defer while unfocused; full-redraw state is retained and focus-in flushes it.
-				return;
-			}
 			// A previously queued scheduleRender() can create a timer before this
 			// callback runs. User input must preempt that throttled frame.
 			this.cancelRenderTimer();
@@ -1034,10 +1025,6 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.stopped || this.renderTimer || !this.renderRequested) {
 			return;
 		}
-		if (!this.terminalFocused) {
-			// Defer while unfocused; renderRequested stays true so focus-in catches up.
-			return;
-		}
 		const elapsed = performance.now() - this.lastRenderAt;
 		const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
 		this.renderTimer = setTimeout(() => {
@@ -1055,11 +1042,7 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private handleTerminalInput(data: string): void {
-		// Update the render-throttling focus state as a side effect, but don't swallow the
-		// event here: input listeners (e.g. TuiAltScreen's selection cancel-on-focus-loss)
-		// need to see raw focus-in/focus-out sequences too.
-		const isFocusEvent = this.updateFocusState(data);
-		if (this.consumeOsc11BackgroundResponse(data)) {
+		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
 		if (this.consumeTerminalColorSchemeReport(data)) {
@@ -1081,11 +1064,6 @@ export abstract class TuiBase extends Container implements TUI {
 				return;
 			}
 			data = current;
-		}
-
-		// No listener consumed a focus sequence; don't forward it to keybindings/components.
-		if (isFocusEvent) {
-			return;
 		}
 
 		// Consume terminal cell size responses without blocking unrelated input.
@@ -1141,69 +1119,9 @@ export abstract class TuiBase extends Container implements TUI {
 		}
 	}
 
-	/**
-	 * Handle DEC mode 1004 focus events (ESC[I focus-in, ESC[O focus-out). On
-	 * focus-out we stop scheduling renders so spinner/idle repaints pause and the last
-	 * painted frame stays on screen; on focus-in we render once to catch up. Returns
-	 * whether `data` was a focus sequence; input listeners still get to see and react
-	 * to it (e.g. cancel an active selection), so this does not consume the event.
-	 */
-	private updateFocusState(data: string): boolean {
-		if (data === "\x1b[I") {
-			this.setTerminalFocused(true);
-			return true;
-		}
-		if (data === "\x1b[O") {
-			this.setTerminalFocused(false);
-			return true;
-		}
-		return false;
-	}
-
-	private setTerminalFocused(focused: boolean): void {
-		if (this.terminalFocused === focused) {
-			return;
-		}
-		this.terminalFocused = focused;
-		if (focused && this.renderRequested) {
-			this.scheduleRender();
-		}
-	}
-
-	// Settle a pending OSC 11 query exactly once (resolve its promise). The entry is
-	// left in the FIFO so a late reply from the terminal is still consumed/swallowed
-	// (see trimSettledOsc11Queries for the growth bound).
-	private settleOsc11BackgroundQuery(query: PendingOsc11BackgroundQuery, rgb: RgbColor | undefined): void {
-		if (query.settled) {
-			return;
-		}
-		query.settled = true;
-		if (query.timer) {
-			clearTimeout(query.timer);
-			query.timer = undefined;
-		}
-		query.resolve?.(rgb);
-		query.resolve = undefined;
-	}
-
-	// Bound the pending-query backlog. Timed-out queries stay so a late reply is
-	// swallowed, but on a terminal that never answers they would otherwise grow
-	// without limit. Drop the oldest already-settled entries beyond the cap and keep
-	// the reply counter in sync (guarded against underflow); unsettled queries and
-	// the most recent settled ones are retained.
-	private trimSettledOsc11Queries(): void {
-		while (this.pendingOsc11BackgroundQueries.length > MAX_PENDING_OSC11_QUERIES) {
-			const index = this.pendingOsc11BackgroundQueries.findIndex((entry) => entry.settled);
-			if (index === -1) {
-				break;
-			}
-			this.pendingOsc11BackgroundQueries.splice(index, 1);
-			this.pendingOsc11BackgroundReplies = Math.max(0, this.pendingOsc11BackgroundReplies - 1);
-		}
-	}
-
-	private consumeOsc11BackgroundResponse(data: string): boolean {
-		if (this.pendingOsc11BackgroundReplies <= 0) {
+	private consumeTerminalColorResponse(data: string): boolean {
+		const query = this.pendingTerminalColorQueries[0];
+		if (!query) {
 			return false;
 		}
 		if (DEVICE_ATTRIBUTES_RESPONSE_PATTERN.test(data)) {
@@ -1212,11 +1130,25 @@ export abstract class TuiBase extends Container implements TUI {
 			return true;
 		}
 
-		const rgb = parseOsc11BackgroundColor(data);
-		this.pendingOsc11BackgroundReplies -= 1;
-		const query = this.pendingOsc11BackgroundQueries.shift();
-		if (query) {
-			this.settleOsc11BackgroundQuery(query, rgb);
+		const response = parseOscColorResponse(data);
+		if (!response) {
+			return false;
+		}
+		const { target, rgb } = response;
+		const key = String(target);
+		if (!query.deliver || query.replied.has(key)) {
+			return true;
+		}
+		query.replied.add(key);
+		if (target === "foreground") {
+			query.foreground = rgb;
+		} else if (target === "background") {
+			query.background = rgb;
+		} else if (target < TERMINAL_PALETTE_SIZE) {
+			query.palette[target] = rgb;
+		}
+		if (query.replied.size === TERMINAL_COLOR_REPLY_COUNT) {
+			this.completeTerminalColorQuery(query);
 		}
 		return true;
 	}
@@ -1551,10 +1483,8 @@ export abstract class TuiBase extends Container implements TUI {
 			};
 			// Resolve with the replies so far, and keep collecting late replies for `onLateReply`.
 			query.timer = setTimeout(() => {
-				this.settleOsc11BackgroundQuery(query, undefined);
-				// Bound retention on terminals that never answer OSC 11: once enough
-				// queries have timed out, drop the oldest settled entries.
-				this.trimSettledOsc11Queries();
+				query.deliver = onLateReply;
+				resolve(this.terminalColorQueryResult(query));
 			}, timeoutMs);
 			this.pendingTerminalColorQueries.push(query);
 			this.terminal.write(TERMINAL_COLOR_QUERY);

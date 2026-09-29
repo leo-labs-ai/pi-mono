@@ -33,14 +33,14 @@ node examples/sdk/01-minimal.ts
 ## Quick Reference
 
 ```typescript
-import { getModel } from "@lue-labs/pi-ai";
+import { getModel } from "@earendil-works/pi-ai";
 import {
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} from "@lue-labs/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create();
 

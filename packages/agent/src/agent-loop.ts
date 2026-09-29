@@ -171,8 +171,6 @@ async function runLoop(
 	let currentContext = initialContext;
 	let config = initialConfig;
 	let lastCompletedTurn: PrepareNextTurnContext | undefined;
-	// Counts completed assistant turns across the whole run for the maxTurns cap.
-	let turnsCompleted = 0;
 	let explicitContinuation = false;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
@@ -218,15 +216,6 @@ async function runLoop(
 			}
 			pendingMessages = [];
 
-			// Refresh model-facing context just before each provider request.
-			// Tools can mutate the live Agent state (for example deferred tool activation),
-			// and the next LLM call in the same agent run must see that updated tool schema.
-			if (config.refreshContext) {
-				const refreshed = await config.refreshContext();
-				if (refreshed.systemPrompt !== undefined) currentContext.systemPrompt = refreshed.systemPrompt;
-				if (refreshed.tools !== undefined) currentContext.tools = refreshed.tools;
-				if (refreshed.messages !== undefined) currentContext.messages = refreshed.messages;
-			}
 			const requestUpdate = await config.prepareRequest?.(
 				{
 					context: currentContext,
@@ -259,8 +248,6 @@ async function runLoop(
 					toolResults: [],
 					context: currentContext,
 					newMessages,
-					// Error/abort ends the run: no further model work is pending.
-					hasMoreToolCalls: false,
 				};
 				await config.finishTurn?.(lastCompletedTurn, signal);
 				await emit({ type: "turn_end", message, toolResults: [] });
@@ -274,11 +261,13 @@ async function runLoop(
 			const toolResults: ToolResultMessage[] = [];
 			hasMoreToolCalls = false;
 			if (toolCalls.length > 0) {
-				// A "length" stop can only have cut the *trailing* tool call: arguments
-				// stream to completion one call at a time, so every earlier call in the
-				// message is whole. `prepareToolCall` blocks exactly that trailing call
-				// and lets the complete ones run.
-				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+				// A "length" stop means the output was cut off by the token limit, so
+				// every tool call in the message may carry truncated arguments. Fail
+				// them all instead of executing potentially borked calls.
+				const executedToolBatch =
+					message.stopReason === "length"
+						? await failToolCallsFromTruncatedMessage(toolCalls, emit)
+						: await executeToolCalls(currentContext, message, config, signal, emit);
 				toolResults.push(...executedToolBatch.messages);
 				hasMoreToolCalls = !executedToolBatch.terminate;
 
@@ -288,35 +277,16 @@ async function runLoop(
 				}
 			}
 
-			turnsCompleted += 1;
-
 			lastCompletedTurn = {
 				message,
 				toolResults,
 				context: currentContext,
 				newMessages,
-				hasMoreToolCalls,
 			};
 			const decision = await config.finishTurn?.(lastCompletedTurn, signal);
 			await emit({ type: "turn_end", message, toolResults });
 
-			// Hard turn cap (e.g. background extractor forks). Stop before starting
-			// another LLM call even if the model still wants to call tools.
-			// Checked after turn_end so the cap still reports a completed turn.
-			if (config.maxTurns !== undefined && config.maxTurns > 0 && turnsCompleted >= config.maxTurns) {
-				await emit({ type: "agent_end", messages: newMessages });
-				return;
-			}
-
 			if (decision?.action === "end") {
-				await emit({ type: "agent_end", messages: newMessages });
-				return;
-			}
-
-			// Fork hook: documented to run after turn_end is emitted and to exit before
-			// steering/follow-up queues are polled or another LLM call starts
-			// (packages/agent/README.md).
-			if (await config.shouldStopAfterTurn?.(lastCompletedTurn)) {
 				await emit({ type: "agent_end", messages: newMessages });
 				return;
 			}
@@ -459,11 +429,6 @@ async function streamAssistantResponse(
 			case "toolcall_start":
 			case "toolcall_delta":
 			case "toolcall_end":
-			// Display-only signals for provider-executed web tools (web_search/web_fetch).
-			// They carry `partial` but no content block; forward them so the UI can render
-			// an activity card. They are never tool calls and never round-trip.
-			case "server_tool_use":
-			case "server_tool_result":
 				if (partialMessage) {
 					partialMessage = event.partial;
 					context.messages[context.messages.length - 1] = partialMessage;
@@ -501,6 +466,40 @@ async function streamAssistantResponse(
 	}
 	await emit({ type: "message_end", message: finalMessage });
 	return finalMessage;
+}
+
+/**
+ * Fail all tool calls from an assistant message that was truncated by the
+ * output token limit. Streamed tool-call arguments are finalized with a
+ * best-effort JSON salvage parser, so a truncated message can yield tool calls
+ * whose arguments parse and validate but are silently incomplete. None of them
+ * are safe to execute; report each as an error so the model can re-issue them.
+ */
+async function failToolCallsFromTruncatedMessage(
+	toolCalls: AgentToolCall[],
+	emit: AgentEventSink,
+): Promise<ExecutedToolCallBatch> {
+	const messages: ToolResultMessage[] = [];
+	for (const toolCall of toolCalls) {
+		await emit({
+			type: "tool_execution_start",
+			toolCallId: toolCall.id,
+			toolName: toolCall.name,
+			args: toolCall.arguments,
+		});
+		const finalized: FinalizedToolCallOutcome = {
+			toolCall,
+			result: createErrorToolResult(
+				`Tool call "${toolCall.name}" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+			),
+			isError: true,
+		};
+		await emitToolExecutionEnd(finalized, emit);
+		const toolResultMessage = createToolResultMessage(finalized);
+		await emitToolResultMessage(toolResultMessage, emit);
+		messages.push(toolResultMessage);
+	}
+	return { messages, terminate: false };
 }
 
 /**
@@ -705,26 +704,6 @@ function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall)
 	};
 }
 
-/**
- * A `length` stop means the provider cut the response mid-stream. When the cut
- * lands inside the final tool call's streamed argument JSON, lenient partial-JSON
- * parsing yields incomplete arguments — at best a confusing validation error
- * ("missing required property"), at worst a silently truncated payload that
- * still validates (e.g. a `write` whose `content` string was cut short).
- * A trailing tool call on a length-stopped message is therefore never
- * trustworthy, even when its arguments happen to parse.
- */
-function isTruncatedTrailingToolCall(assistantMessage: AssistantMessage, toolCall: AgentToolCall): boolean {
-	if (assistantMessage.stopReason !== "length") return false;
-	const last = assistantMessage.content[assistantMessage.content.length - 1];
-	return last?.type === "toolCall" && last.id === toolCall.id;
-}
-
-const TRUNCATED_TOOL_CALL_MESSAGE =
-	'This tool call was cut off: the response hit the output token limit (stopReason "length") while its arguments were still streaming, so the arguments are incomplete and were not executed. ' +
-	"Do not retry the identical call. Produce less output this turn — for example, create the file with a short `write` and extend it with `edit` calls, or split the work across multiple smaller tool calls. " +
-	"If the context window is nearly full, the per-turn output budget may be tiny; finish or compact before attempting large outputs.";
-
 async function prepareToolCall(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
@@ -733,15 +712,7 @@ async function prepareToolCall(
 	signal: AbortSignal | undefined,
 	tools: readonly AgentTool<any>[] = currentContext.tools ?? [],
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
-	if (isTruncatedTrailingToolCall(assistantMessage, toolCall)) {
-		return {
-			kind: "immediate",
-			result: createErrorToolResult(TRUNCATED_TOOL_CALL_MESSAGE),
-			isError: true,
-		};
-	}
-
-	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
+	const tool = tools.find((t) => t.name === toolCall.name);
 	if (!tool) {
 		return {
 			kind: "immediate",

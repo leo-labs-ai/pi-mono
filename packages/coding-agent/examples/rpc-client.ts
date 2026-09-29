@@ -7,7 +7,7 @@
 
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { RpcClient } from "@earendil-works/pi-coding-agent";
+import { RpcClient } from "@lue-labs/pi-coding-agent";
 
 const exampleDirectory = dirname(fileURLToPath(import.meta.url));
 const prompt = process.argv.slice(2).join(" ") || "Explain this repository in one paragraph.";

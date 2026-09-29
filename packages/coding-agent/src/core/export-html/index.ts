@@ -6,7 +6,7 @@ import { getResolvedThemeColors, getThemeExportColors } from "../../modes/intera
 import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import type { SessionEntry } from "../session-manager.ts";
-import { loadEntriesFromFile, SessionManager } from "../session-manager.ts";
+import { SessionManager } from "../session-manager.ts";
 
 /**
  * Interface for rendering custom tools to HTML.
@@ -248,12 +248,7 @@ export async function exportSessionToHtml(
 		throw new Error("Nothing to export yet - start a conversation first");
 	}
 
-	// Resident pruning deliberately stubs compacted entries in the live manager.
-	// Export is an archival operation, so always recover its complete payloads from
-	// the append-only JSONL rather than exporting those resident placeholders.
-	const fileEntries = loadEntriesFromFile(sessionFile);
-	const header = fileEntries.find((entry) => entry.type === "session") ?? null;
-	const entries = fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
+	const entries = sm.getEntries();
 
 	// Pre-render custom tools if a tool renderer is provided
 	let renderedTools: Record<string, RenderedToolHtml> | undefined;
@@ -266,7 +261,7 @@ export async function exportSessionToHtml(
 	}
 
 	const sessionData: SessionData = {
-		header,
+		header: sm.getHeader(),
 		entries,
 		leafId: sm.getLeafId(),
 		systemPrompt: state?.systemPrompt,
@@ -299,13 +294,10 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 	}
 
 	const sm = SessionManager.open(resolvedInputPath);
-	const fileEntries = loadEntriesFromFile(resolvedInputPath);
-	const header = fileEntries.find((entry) => entry.type === "session") ?? null;
-	const entries = fileEntries.filter((entry): entry is SessionEntry => entry.type !== "session");
 
 	const sessionData: SessionData = {
-		header,
-		entries,
+		header: sm.getHeader(),
+		entries: sm.getEntries(),
 		leafId: sm.getLeafId(),
 		systemPrompt: undefined,
 		tools: undefined,

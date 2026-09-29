@@ -12,9 +12,11 @@
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
+	CacheRetention,
 	JsonObject,
 	JsonValue,
 	Model,
+	ProviderEnv,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -22,11 +24,11 @@ import type {
 	ToolCall,
 	TranscriptContext,
 } from "../types.ts";
-import { resolveCacheRetention } from "../utils/cache-retention.ts";
 import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
+import { getProviderEnvValue } from "../utils/provider-env.ts";
 
 export interface PiMessagesOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
@@ -342,6 +344,14 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted: 
 	return { type: "error", reason, error: assistantMessage };
 }
 
+function resolveCacheRetention(cacheRetention?: CacheRetention, env?: ProviderEnv): CacheRetention | undefined {
+	if (cacheRetention) {
+		return cacheRetention;
+	}
+	// Backend defaults apply when unset; only the legacy env opt-in is mapped.
+	return getProviderEnvValue("PI_CACHE_RETENTION", env) === "long" ? "long" : undefined;
+}
+
 export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 	model: Model<"pi-messages">,
 	context: TranscriptContext,
@@ -369,10 +379,7 @@ export const stream: StreamFunction<"pi-messages", PiMessagesOptions> = (
 					temperature: options?.temperature,
 					maxTokens: options?.maxTokens,
 					reasoning: options?.reasoning,
-					cacheRetention: resolveCacheRetention(options?.cacheRetention, options?.env, {
-						defaultRetention: undefined,
-						allowedEnvValues: ["long"],
-					}),
+					cacheRetention: resolveCacheRetention(options?.cacheRetention, options?.env),
 					sessionId: options?.sessionId,
 					toolChoice: options?.toolChoice,
 				},

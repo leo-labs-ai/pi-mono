@@ -13,8 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { AsyncLocalStorage } from "node:async_hooks";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import {
 	type AfterToolCallContext,
@@ -41,11 +40,9 @@ import type {
 	ProviderHeaders,
 	SystemMessage,
 	TextContent,
-	Tool,
 	ToolResultMessage,
 	Usage,
-} from "@lue-labs/pi-ai";
-import { contentText, getCurrentSystemMessage, retryDelayMs } from "@lue-labs/pi-ai";
+} from "@lue-labs/pi-ai/compat";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -63,24 +60,11 @@ import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";
 import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
-import {
-	AGENTS_ENGINE_SERVICE_ID,
-	type AgentEngine,
-	type AgentParentSnapshot,
-	createAgentEngine,
-	runWithAgentEngineResolver,
-} from "./agents/engine.ts";
-import type { AgentToolParentServices } from "./agents/executor.ts";
-import type { AgentBackgroundCompletion } from "./agents/types.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { generateBugReportSummary } from "./bug-report.ts";
-import { createPromptCacheAffinityKey } from "./cache-affinity.ts";
-import { type CacheHealthMetrics, computeCacheHealth } from "./cache-health.ts";
-import { CacheHeartbeatManager } from "./cache-heartbeat.ts";
 import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
-	COMPACTION_FAILURE_TRIP_COUNT,
 	type CompactionPreparation,
 	type CompactionResult,
 	calculateContextTokens,
@@ -89,18 +73,13 @@ import {
 	estimateContextTokens,
 	estimateProjectedContextTokens,
 	estimateTokens,
-	evaluateRapidRefill,
 	generateBranchSummary,
-	isTransientCompactionError,
 	prepareCompaction,
 	shouldCompact,
 } from "./compaction/index.ts";
-import { CONTEXT_USAGE_SERVICE_ID, type ContextUsageSnapshotService } from "./context-usage.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
-import { isDeferredTool } from "./deferred-tools.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
-import { applyFilters, extensionHookNames } from "./extensions/extension-hooks.ts";
 import {
 	type AgentActivityOutcome,
 	type BoundaryContextPreview,
@@ -110,7 +89,6 @@ import {
 	type ExtensionErrorListener,
 	type ExtensionMode,
 	ExtensionRunner,
-	type ExtensionSlotUIActions,
 	type ExtensionUIContext,
 	type InputSource,
 	type MessageEndEvent,
@@ -134,11 +112,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
-import { getExtensionProcessService } from "./extensions/loader.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { ForkAgentOptions, ForkAgentResult, TranscriptEntry } from "./extensions/types.ts";
-import { type BashExecutionMessage, type CustomMessage, convertToLlm, hasUnsettledToolCalls } from "./messages.ts";
-import type { ModelRegistry } from "./model-registry.ts";
 import { type BashExecutionMessage, type CustomMessage, convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
@@ -150,9 +124,7 @@ import {
 	type BranchSummaryEntry,
 	type CompactionEntry,
 	type ContextEditEntry,
-	type CustomEntry,
 	getLatestCompactionEntry,
-	type ResidentPruneResult,
 	type SessionEntry,
 	SessionManager,
 	type SessionProjection,
@@ -167,22 +139,8 @@ import {
 	type NormalizedBuildSystemPromptOptions,
 	normalizeBuildSystemPromptOptions,
 } from "./system-prompt.ts";
-import {
-	capMidRunCompactionToolResultText,
-	capModelFacingToolResultText,
-	MAX_MID_RUN_COMPACTION_TOOL_RESULTS_TEXT_CHARS,
-	replaceOversizedToolResultImages,
-	replaceUnsupportedToolResultImages,
-	retireOutOfBudgetContextImages,
-	stripModelFacingContextImages,
-} from "./tool-artifacts.ts";
-import {
-	type BackgroundShellNotification,
-	type BashOperations,
-	createLocalBashOperations,
-	subscribeBashBgNotificationForOwner,
-} from "./tools/bash.ts";
-import { allToolNames, createAllToolDefinitions, type ToolName } from "./tools/index.ts";
+import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, combineUsage, createUsageTotals } from "./usage-totals.ts";
 import {
@@ -221,34 +179,6 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
-function estimateSystemPromptTokens(systemPrompt: string): number {
-	return Math.ceil(systemPrompt.length / 4);
-}
-
-export interface PendingAutoModelRequest {
-	requestedModel: string;
-	routingMetadata?: Record<string, unknown>;
-}
-
-const IDLE_CACHE_HINT_MS = 55 * 60 * 1000;
-
-/** Order-independent equality for two string sets. */
-function _sameStringSet(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-	if (a.size !== b.size) return false;
-	for (const value of a) {
-		if (!b.has(value)) return false;
-	}
-	return true;
-}
-
-/** Order-independent key+value equality for two string maps. */
-function _sameStringMap(a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>): boolean {
-	if (a.size !== b.size) return false;
-	for (const [key, value] of a) {
-		if (b.get(key) !== value) return false;
-	}
-	return true;
-}
 /** Tool execution events of calls a tool made through `ctx.executeTool()` carry `parentToolCallId`. */
 type WithParentToolCallId<E> = E extends {
 	type: "tool_execution_start" | "tool_execution_update" | "tool_execution_end";
@@ -271,19 +201,8 @@ export type AgentSessionEvent =
 			followUp: readonly string[];
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
-	| {
-			type: "resident_prune";
-			reason: "manual" | "threshold" | "overflow";
-			result: ResidentPruneResult;
-	  }
 	| { type: "entry_appended"; entry: SessionEntry }
 	| { type: "session_info_changed"; name: string | undefined }
-	| {
-			type: "model_changed";
-			model: Model<any>;
-			previousModel: Model<any> | undefined;
-			source: "set" | "cycle" | "restore";
-	  }
 	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
 			type: "compaction_end";
@@ -295,23 +214,6 @@ export type AgentSessionEvent =
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "idle_cache_hint"; idleMs: number; cacheTtlMs: number; message: string }
-	| {
-			type: "cache_heartbeat";
-			scope: "base" | "session";
-			model: string;
-			provider: string;
-			cacheRead: number;
-			cacheWrite: number;
-			input: number;
-			cacheHitRate: number | undefined;
-	  }
-	| (CacheHealthMetrics & {
-			sessionId: string;
-			turn: number;
-			model: string;
-			timestamp: string;
-	  })
 	| {
 			type: "summarization_retry_scheduled";
 			attempt: number;
@@ -335,24 +237,6 @@ export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 // Types
 // ============================================================================
 
-/**
- * Identity of the agent run a session represents, for observability/telemetry
- * correlation. Stamped onto emitted `tool_call`/`tool_result` events as
- * `agentId` (this run) and `parentAgentId` (the run that spawned it). Both
- * undefined for the top-level interactive session (it is not an agent run).
- */
-export interface AgentRunIdentity {
-	/** This session's own agent-run id (`AgentRecentRun.id`). */
-	runId?: string;
-	/** The run that spawned this session; undefined at top level. */
-	parentRunId?: string;
-}
-
-type AgentRunEventIdentity = {
-	agentId?: string;
-	parentAgentId?: string;
-};
-
 function withoutDeletedHeaders(headers: ProviderHeaders | undefined): Record<string, string> | undefined {
 	return headers
 		? Object.fromEntries(Object.entries(headers).filter((entry): entry is [string, string] => entry[1] !== null))
@@ -370,8 +254,6 @@ export interface AgentSessionConfig {
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
 	customTools?: ToolDefinition[];
-	/** Model registry for API key resolution and model discovery */
-	modelRegistry: ModelRegistry;
 	/** Canonical model/auth runtime used by coding-agent internals. */
 	modelRuntime: ModelRuntime;
 	/** Keeps the prompt cache entry of the last session request warm. */
@@ -391,39 +273,17 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
-	/** Services shared with native child agent sessions. */
-	agentToolServices?: AgentToolParentServices;
-	/** Identity of this session's agent run, for telemetry correlation across nested sub-agents. */
-	agentRunIdentity?: AgentRunIdentity;
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
-	/** Auto-model alias waiting for semantic input before resolving to a concrete model. */
-	pendingAutoModelRequest?: PendingAutoModelRequest;
-	/**
-	 * Origin of this session. Exposed on `ExtensionContext.source` so hooks
-	 * can distinguish user-driven sessions (interactive TUI, `pi --print`,
-	 * RPC) from machine-driven ones (in-process child-agent runs spawned by
-	 * the built-in `agent` tool / `ctx.forkAgent`, or out-of-process Pi
-	 * children spawned with `pi --source child-agent`). Defaults to
-	 * `"interactive"`. Replaces the legacy `PI_MEMORY_SUBAGENT=1` env
-	 * contract used by dream-memory / pi-memory.
-	 */
-	source?: InputSource;
 }
 
 export interface ExtensionBindings {
 	uiContext?: ExtensionUIContext;
 	mode?: ExtensionMode;
 	commandContextActions?: ExtensionCommandContextActions;
-	abortHandler?: (reason?: unknown) => void;
+	abortHandler?: () => void;
 	shutdownHandler?: ShutdownHandler;
 	onError?: ExtensionErrorListener;
-	/**
-	 * Wiring for the B5 imperative show/hide API (`pi.showMainPane` /
-	 * `pi.showOverlay`). Provided only by UI-capable modes (interactive); when
-	 * omitted, the default no-op stubs silently swallow show/hide requests.
-	 */
-	slotUIActions?: ExtensionSlotUIActions;
 }
 
 export type QueuedInputDisposition = "handled" | "queued";
@@ -494,22 +354,6 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 // AgentSession Class
 // ============================================================================
 
-// web_fetch/web_search are now client-side extension tools (Claude Code parity)
-// and provider-agnostic; no per-provider add/strip is needed. Server-tool opt-in
-// happens via ToolDefinition.anthropicServerTool in pi-ai's convertOneTool.
-function syncClaudeBridgeNativeTools(toolNames: string[], _model: Model<any> | undefined): string[] {
-	return toolNames;
-}
-
-function isToolAvailableForModel(definition: unknown, model: Model<any> | undefined): boolean {
-	const providers =
-		typeof definition === "object" && definition !== null && "providers" in definition
-			? (definition as { providers?: unknown }).providers
-			: undefined;
-	if (!Array.isArray(providers)) return true;
-	return !!model?.provider && providers.includes(model.provider);
-}
-
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -522,8 +366,6 @@ export class AgentSession {
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
 	private _agentRunAbortRequested = false;
-	private _queuedMessageDrainAfterAgentSettles = false;
-	private _abortAndResumeQueuedPromise: Promise<void> | undefined;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
 
@@ -537,26 +379,9 @@ export class AgentSession {
 	private _pendingCustomMessages: CustomMessage[] = [];
 
 	// Compaction state
-	private _manualCompactionPreflightAbortController: AbortController | undefined = undefined;
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
-	private _consecutiveRapidRefills = 0;
-	private _consecutiveCompactionFailures = 0;
-	private _autoCompactDisabledThisSession = false;
-	private _midRunCompactionStop = false;
-	/** Tool results retained only to resume a turn after mid-run compaction. */
-	private _midRunCompactionToolResults: ToolResultMessage[] = [];
-	/** Set by extensions that need the current run to park after the active turn completes. */
-	private _extensionStopAfterTurnReason: string | undefined = undefined;
-	private _lastIdleCacheHintAssistantTimestamp: number | undefined = undefined;
-	/** Prompt-cache heartbeats (fork-owned); state and scheduling live in cache-heartbeat.ts. */
-	private readonly _cacheHeartbeat: CacheHeartbeatManager;
-	/** Debounce timer for wakeOnIdle continuation turns (see sendCustomMessage). */
-	private _idleWakeTimer: ReturnType<typeof setTimeout> | undefined = undefined;
-	private _disposed = false;
-	private _unsubscribeBashBgNotification?: () => void;
-	private _backgroundAgentTerminalUnsubscribers = new Set<() => void>();
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -597,19 +422,15 @@ export class AgentSession {
 	private _excludedToolNames?: Set<string>;
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
-	private _agentToolServices?: AgentToolParentServices;
-	private _agentRunIdentity?: AgentRunIdentity;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionMode: ExtensionMode = "print";
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
-	private _extensionAbortHandler?: (reason?: unknown) => void;
+	private _extensionAbortHandler?: () => void;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
-	private _extensionSlotUIActions?: ExtensionSlotUIActions;
 
 	private _modelRuntime: ModelRuntime;
-	private _modelRegistry: ModelRegistry;
 	private _cacheWarmer?: Pick<CacheWarmer, "cancel" | "status" | "onAgentSettled" | "onModeChanged" | "onWarmed">;
 
 	// Tool registry for extension getTools/setTools
@@ -619,28 +440,12 @@ export class AgentSession {
 	/** Declared tools whose declarations requests leave out, from `prepareLoadout` hooks. */
 	private _hiddenDeclarations: ReadonlySet<string> = new Set();
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
-	private _deferredOverrides: Set<string> = new Set();
-	private _toolNamespaces: Map<string, string> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
-	private _activeToolProviderSchemaOverrides?: Map<string, Tool>;
-	private _activeToolProviderSchemaOrder?: string[];
-	private _inheritedForkToolFallbacks?: Map<string, AgentTool>;
-	/** Parent transcript prefix for `context: "fork"` children; not part of this session's entries. */
-	private _inheritedForkMessages?: AgentMessage[];
-	private _activeToolProviderSchemaCache = new WeakMap<AgentTool, AgentTool>();
 
-	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
-	private _systemPromptFrozen = false;
-	private _systemPromptNeedsRefilter = false;
-	private _source: InputSource = "interactive";
-	private _pendingAutoModelRequest?: PendingAutoModelRequest;
-	private _autoModelResolveInFlight?: Promise<void>;
-	private _activeTurnCalls = 0;
-	private _turnCallScope = new AsyncLocalStorage<number>();
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -651,7 +456,6 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
-		this._modelRegistry = config.modelRegistry;
 		this._cacheWarmer = config.cacheWarmer;
 		if (this._cacheWarmer) {
 			this._cacheWarmer.onWarmed = (entry) => this._emit({ type: "entry_appended", entry });
@@ -661,40 +465,7 @@ export class AgentSession {
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
-		this._agentToolServices = config.agentToolServices;
-		this._agentRunIdentity = config.agentRunIdentity;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
-		this._pendingAutoModelRequest = config.pendingAutoModelRequest;
-		if (config.source) this._source = config.source;
-		// Background bash ownership belongs to every AgentSession, not only the
-		// interactive TUI. One owner-scoped lifecycle subscription gives child,
-		// RPC, and print sessions exactly one wake per lifecycle event.
-		this._unsubscribeBashBgNotification = subscribeBashBgNotificationForOwner(this.sessionId, (notification) => {
-			if (notification.type === "shell_needs_input") this.emitBashStall(notification);
-			else this.emitBashCompletion(notification);
-		});
-
-		// Host reads are live (getters/closures) — never snapshots of session state.
-		const session = this;
-		this._cacheHeartbeat = new CacheHeartbeatManager({
-			get disposed() {
-				return session._disposed;
-			},
-			get model() {
-				return session.model;
-			},
-			get systemPrompt() {
-				return session.systemPrompt;
-			},
-			get sessionId() {
-				return session.sessionId;
-			},
-			settingsManager: this.settingsManager,
-			agent: this.agent,
-			findLastAssistantMessage: () => this._findLastAssistantMessage(),
-			loadDeferredExtensions: () => this._extensionRunner.loadDeferredExtensions(),
-			emit: (event) => this._emit(event),
-		});
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -715,15 +486,6 @@ export class AgentSession {
 
 	get modelRuntime(): ModelRuntime {
 		return this._modelRuntime;
-	}
-
-	get modelRegistry(): ModelRegistry {
-		return this._modelRegistry;
-	}
-
-	/** Origin of this session — see `AgentSessionConfig.source`. */
-	get source(): InputSource {
-		return this._source;
 	}
 
 	private async _getRequiredRequestAuth(
@@ -803,14 +565,6 @@ export class AgentSession {
 			if (signal?.aborted) throw error;
 			return { model, thinkingLevel };
 		}
-	}
-
-	private _agentRunEventIdentity(): AgentRunEventIdentity {
-		const identity = this._agentRunIdentity;
-		return {
-			...(identity?.runId !== undefined ? { agentId: identity.runId } : {}),
-			...(identity?.parentRunId !== undefined ? { parentAgentId: identity.parentRunId } : {}),
-		};
 	}
 
 	/**
@@ -926,33 +680,6 @@ export class AgentSession {
 			isError: hookResult?.isError ?? isError,
 			usage: hookResult?.usage,
 		};
-
-		// Mid-run compaction cap: a run that keeps going (pending tool results,
-		// queued steering/follow-up) can drift far past the compaction threshold
-		// before it ends — the post-run check defers threshold compaction to the
-		// next prompt. Stop the loop at the turn boundary instead;
-		// _handlePostAgentRun then compacts and resumes the interrupted run.
-		// Runs ending naturally (no more work) keep the defer semantics — including
-		// a terminal tool batch (e.g. a goal_finish-style tool sets terminate):
-		// its tool results end the run rather than continuing it, so stopping for
-		// compaction here would compact after completion and resume a finished run.
-		this.agent.shouldStopAfterTurn = ({ message, toolResults, hasMoreToolCalls }) => {
-			if (this._extensionStopAfterTurnReason !== undefined) {
-				this._extensionStopAfterTurnReason = undefined;
-				return true;
-			}
-
-			if (!hasMoreToolCalls && !this.agent.hasQueuedMessages()) return false;
-			const settings = this.settingsManager.getCompactionSettings(this.model);
-			if (!settings.enabled) return false;
-			const contextWindow = this.model?.contextWindow ?? 0;
-			if (!shouldCompact(calculateContextTokens(message.usage), contextWindow, settings)) return false;
-			// Avoid stopping for compaction when the fixed prefix already exceeds its threshold.
-			if (contextWindow - settings.reserveTokens < this._estimateFixedPrefixTokens()) return false;
-			this._midRunCompactionStop = true;
-			this._midRunCompactionToolResults = toolResults;
-			return true;
-		};
 	}
 
 	/**
@@ -1013,21 +740,12 @@ export class AgentSession {
 			return { ...context, messages: projection.messages };
 		}
 		await this._runAutoCompaction("threshold", false);
-		return {
-			...context,
-			messages: this._withInheritedForkPrefix(this.sessionManager.buildSessionProjection().messages),
-		};
+		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 	}
 
 	private _installAgentRequestProjection(): void {
 		const previousPrepareRequest = this.agent.prepareRequest;
 		this.agent.prepareRequest = async (request, signal) => {
-			const canonicalContext = {
-				...request.context,
-				messages: this._withInheritedForkPrefix(this.sessionManager.buildSessionProjection().messages),
-				// Messages declare the provider-visible loadout; context.tools keeps executable implementations.
-				tools: this.agent.state.tools.slice(),
-
 			const failed = this._failedResponse;
 			this._failedResponse = undefined;
 			const prepare = async () => {
@@ -1143,10 +861,7 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			const context = await this._compactBeforeNextAssistantResponse({
-				...turn.context,
-				messages: this._withInheritedForkPrefix(this.sessionManager.buildSessionProjection().messages),
-			});
+			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;
@@ -1184,7 +899,7 @@ export class AgentSession {
 		for (const entry of projection.entries) {
 			for (const message of entry.messages) this._entryIdsByMessage.set(message, entry.sourceEntry.id);
 		}
-		this.agent.state.messages = this._withInheritedForkPrefix(projection.messages);
+		this.agent.state.messages = projection.messages;
 	}
 
 	private _applyBoundaryDrafts(manager: SessionManager, drafts: SessionBoundaryDraft[]): SessionEntry[] {
@@ -1282,11 +997,7 @@ export class AgentSession {
 	/** Emit an event to all listeners */
 	private _emit(event: AgentSessionEvent): void {
 		for (const l of this._eventListeners) {
-			try {
-				l(event);
-			} catch (error) {
-				console.error("AgentSession event listener failed", error);
-			}
+			l(event);
 		}
 	}
 
@@ -1314,7 +1025,7 @@ export class AgentSession {
 	}
 
 	private _resolveIdleWaitIfIdle(): void {
-		if (this._isAgentRunActive || !this._resolveIdleWait) {
+		if (!this.isIdle || !this._resolveIdleWait) {
 			return;
 		}
 		const resolve = this._resolveIdleWait;
@@ -1332,10 +1043,6 @@ export class AgentSession {
 			this._emit({ type: "agent_settled" });
 		} finally {
 			this._isEmittingAgentSettled = false;
-			this._resolveIdleWaitIfIdle();
-			if (this._queuedMessageDrainAfterAgentSettles) {
-				this._drainQueuedMessagesPostCompaction();
-			}
 		}
 
 		const deferred = this._deferredSettledActions.splice(0);
@@ -1387,27 +1094,9 @@ export class AgentSession {
 			}
 		}
 
-		if (event.type === "agent_start") {
-			this._extensionStopAfterTurnReason = undefined;
-		}
-
 		// Emit to extensions first, then notify public listeners.
 		await this._emitExtensionEvent(event);
 		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
-		if (event.type === "agent_end") {
-			this._extensionStopAfterTurnReason = undefined;
-			// Free base64 payloads of images that fell out of the model-facing
-			// budget. This turn's messages were persisted synchronously on
-			// message_end, and the retired set is a subset of what the transient
-			// provider view already replaces, so this is durable-safe and
-			// cache-neutral (my-pi#1147). Exception: before the first assistant
-			// message lands, the deferred first flush still buffers entries that
-			// share object references with resident state — retiring then would
-			// write placeholders into the durable JSONL, so skip until flushed.
-			if (!this.sessionManager.hasPendingDurableEntries()) {
-				retireOutOfBudgetContextImages(this.agent.state.messages);
-			}
-		}
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -1420,7 +1109,6 @@ export class AgentSession {
 					event.message.content,
 					event.message.display,
 					event.message.details,
-					event.message.modelVisible,
 				);
 			} else if (
 				event.message.role === "system" ||
@@ -1451,8 +1139,6 @@ export class AgentSession {
 					});
 					this._retryAttempt = 0;
 				}
-
-				this._appendCacheHealthEntry(assistantMsg);
 			}
 		}
 
@@ -1466,123 +1152,6 @@ export class AgentSession {
 			this._flushPendingCustomMessages();
 		}
 	};
-
-	/**
-	 * Estimate token count for the immovable prefix (system prompt + tool schemas)
-	 * that compaction cannot remove. Used by the fixed-prefix-overflow guard to
-	 * detect when compaction would be a structural no-op. Uses the same chars/4
-	 * heuristic as estimateSystemPromptTokens/estimateTokens elsewhere in this file.
-	 */
-	private _estimateFixedPrefixTokens(): number {
-		const systemPromptTokens = estimateSystemPromptTokens(this.systemPrompt);
-		const tools = this.agent.state.tools;
-		const toolsTokens = tools && tools.length > 0 ? Math.ceil(JSON.stringify(tools).length / 4) : 0;
-		return systemPromptTokens + toolsTokens;
-	}
-
-	/**
-	 * Count assistant turns since the most recent compaction (or total assistant
-	 * turns if there is no compaction yet). Shared by cache-health bookkeeping
-	 * and the auto-compaction rapid-refill breaker so both use one definition
-	 * of "turns since compaction".
-	 */
-	private _assistantTurnsAfterCompaction(branch: ReturnType<SessionManager["getBranch"]>): number {
-		const assistantEntries = branch.filter((entry) => entry.type === "message" && entry.message.role === "assistant");
-		const assistantTurn = assistantEntries.length;
-		const latestCompaction = getLatestCompactionEntry(branch);
-		return latestCompaction
-			? branch
-					.slice(branch.findIndex((entry) => entry.id === latestCompaction.id) + 1)
-					.filter((entry) => entry.type === "message" && entry.message.role === "assistant").length
-			: assistantTurn;
-	}
-
-	private _appendCacheHealthEntry(message: AssistantMessage): void {
-		const branch = this.sessionManager.getBranch();
-		const assistantTurn = branch.filter(
-			(entry) => entry.type === "message" && entry.message.role === "assistant",
-		).length;
-		const latestCompaction = getLatestCompactionEntry(branch);
-		const assistantTurnsAfterCompaction = this._assistantTurnsAfterCompaction(branch);
-		const postCompactionTurn = latestCompaction !== null && assistantTurnsAfterCompaction <= 1;
-		const currentAssistantIndex = branch.length - 1;
-		let previousAssistantIndex = -1;
-		for (let i = currentAssistantIndex - 1; i >= 0; i--) {
-			const entry = branch[i];
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				previousAssistantIndex = i;
-				break;
-			}
-		}
-		const previousAssistantEntry = previousAssistantIndex >= 0 ? branch[previousAssistantIndex] : undefined;
-		const entriesSincePreviousAssistant = branch.slice(previousAssistantIndex + 1, currentAssistantIndex);
-		const exemptions = entriesSincePreviousAssistant.some((entry) => entry.type === "model_change")
-			? ["model_change" as const]
-			: [];
-		// Non-tool-result user input between assistant turns triggers Anthropic's
-		// thinking-block strip; cache-health uses it to classify the expected
-		// one-time prefix rewrite as thinking_strip_likely.
-		// Whether an entry is a boundary is decided by what it becomes on the wire,
-		// so ask the converter rather than re-listing roles here. Injected
-		// notifications, bash records, and branch/compaction summaries all become
-		// `role:"user"`; a `!!`-prefixed bash record is dropped from context and is
-		// correctly not a boundary. Enumerating roles by hand drifted from this and
-		// mislabelled the resulting breaks as cache_write_unhealthy.
-		const isUserBoundary = (entry: (typeof branch)[number]): boolean =>
-			entry.type === "message" && convertToLlm([entry.message])[0]?.role === "user";
-		const followsUserTurn = entriesSincePreviousAssistant.some(isUserBoundary);
-		// The strip rewinds the warm prefix to the previous boundary: the first
-		// assistant turn after it carried the first thinking block now being
-		// dropped, so its cached prefix size is where the next strip will read to.
-		let previousBoundaryIndex = -1;
-		for (let i = previousAssistantIndex; i >= 0; i--) {
-			if (isUserBoundary(branch[i])) {
-				previousBoundaryIndex = i;
-				break;
-			}
-		}
-		let previousUserBoundaryPrefix: number | undefined;
-		for (let i = previousBoundaryIndex + 1; previousBoundaryIndex >= 0 && i <= previousAssistantIndex; i++) {
-			const entry = branch[i];
-			if (entry.type === "message" && entry.message.role === "assistant") {
-				const usage = (entry.message as AssistantMessage).usage;
-				previousUserBoundaryPrefix = (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
-				break;
-			}
-		}
-		const currentEntry = branch[currentAssistantIndex];
-		const model = (message as { model?: string }).model ?? this.model?.id ?? "unknown";
-		const timestamp =
-			currentEntry?.timestamp ??
-			(Number.isFinite(message.timestamp) ? new Date(message.timestamp).toISOString() : new Date().toISOString());
-		const previousAssistant =
-			previousAssistantEntry?.type === "message" && previousAssistantEntry.message.role === "assistant"
-				? {
-						usage: (previousAssistantEntry.message as AssistantMessage).usage,
-						timestamp: previousAssistantEntry.timestamp,
-						model: (previousAssistantEntry.message as AssistantMessage & { model?: string }).model,
-					}
-				: undefined;
-		const health = {
-			...computeCacheHealth({
-				usage: message.usage,
-				timestamp,
-				model,
-				assistantTurn,
-				postCompactionTurn,
-				exemptions,
-				previousAssistant,
-				followsUserTurn,
-				previousUserBoundaryPrefix,
-			}),
-			sessionId: this.sessionManager.getSessionId(),
-			turn: assistantTurn,
-			model,
-			timestamp,
-		};
-		this.sessionManager.appendCustomEntry("cache_health", health);
-		if (health.warnings.length > 0) this._emit(health);
-	}
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
 		if (this._agentRunAbortRequested) return false;
@@ -1651,70 +1220,6 @@ export class AgentSession {
 			}
 		}
 		return undefined;
-	}
-
-	private _emitIdleCacheHintIfNeeded(assistantMessage: AssistantMessage): void {
-		if (assistantMessage.stopReason === "aborted" || assistantMessage.stopReason === "error") return;
-		if (this._lastIdleCacheHintAssistantTimestamp === assistantMessage.timestamp) return;
-
-		const cacheTokens = assistantMessage.usage.cacheRead + assistantMessage.usage.cacheWrite;
-		if (cacheTokens <= 0) return;
-
-		const idleMs = Date.now() - assistantMessage.timestamp;
-		if (idleMs < IDLE_CACHE_HINT_MS) return;
-
-		this._lastIdleCacheHintAssistantTimestamp = assistantMessage.timestamp;
-		this._emit({
-			type: "idle_cache_hint",
-			idleMs,
-			cacheTtlMs: IDLE_CACHE_HINT_MS,
-			message:
-				"This session has been idle long enough that prompt-cache warmth may be gone. For broad follow-up work, prefer cache-efficient forks (`explore`/`decompose`) or compact first if you need a handoff summary.",
-		});
-	}
-
-	private _capMidRunCompactionToolResults(): void {
-		let remainingTextChars = MAX_MID_RUN_COMPACTION_TOOL_RESULTS_TEXT_CHARS;
-		let messages = this.agent.state.messages;
-		let changed = false;
-		for (const result of this._midRunCompactionToolResults) {
-			const content = capMidRunCompactionToolResultText(
-				result.content,
-				this._cwd,
-				result.toolCallId,
-				result.toolName,
-				remainingTextChars,
-			);
-			const retainedContent = content ?? result.content;
-			remainingTextChars = Math.max(
-				0,
-				remainingTextChars -
-					retainedContent.reduce((total, block) => total + (block.type === "text" ? block.text.length : 0), 0),
-			);
-			if (!content) continue;
-
-			// SessionManager stores message references. Replace the state slot rather
-			// than mutating result.content so the append-only session entry retains
-			// its full tool output for exporters and later session reloads.
-			const resultIndex = messages.indexOf(result);
-			if (resultIndex !== -1) {
-				if (!changed) {
-					messages = messages.slice();
-					changed = true;
-				}
-				messages[resultIndex] = { ...result, content };
-			}
-
-			// Requests are rebuilt from the session projection (see
-			// _installAgentRequestProjection), so capping agent.state.messages alone
-			// no longer shrinks what the provider sees. Record the cap as a
-			// context_edit: the projection applies it while the original entry keeps
-			// its full tool output for exporters and session reloads.
-			const entryId = this._findPersistedMessageEntryId(result);
-			if (entryId) this.sessionManager.appendContextEdit(entryId, { content });
-		}
-		if (changed) this.agent.state.messages = messages;
-		this._midRunCompactionToolResults = [];
 	}
 
 	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
@@ -1839,28 +1344,10 @@ export class AgentSession {
 	}
 
 	/**
-	 * Reconnect to agent events after _disconnectFromAgent().
-	 * Preserves all existing listeners.
-	 */
-	private _reconnectToAgent(): void {
-		if (this._unsubscribeAgent) return;
-		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
-	}
-
-	/**
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
-		this._disposed = true;
-		for (const unsubscribe of this._backgroundAgentTerminalUnsubscribers) unsubscribe();
-		this._backgroundAgentTerminalUnsubscribers.clear();
-		this._unsubscribeBashBgNotification?.();
-		this._unsubscribeBashBgNotification = undefined;
-		// Fire extension dispose hooks before invalidating the runner so handlers
-		// can still observe their own state. Errors are isolated per handler.
-		this._extensionRunner.fireSessionDispose();
-		// Abort any in-flight session work so nothing keeps running past dispose.
 		try {
 			this.abortRetry();
 			this.abortCompaction();
@@ -1870,6 +1357,7 @@ export class AgentSession {
 		} catch {
 			// Dispose must succeed even if an abort hook throws.
 		}
+
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
@@ -1912,11 +1400,6 @@ export class AgentSession {
 		return this.agent.state.model;
 	}
 
-	/** Auto-model alias selected but not yet semantically resolved. */
-	get pendingAutoModelAlias(): string | undefined {
-		return this._pendingAutoModelRequest?.requestedModel;
-	}
-
 	/** Current thinking level */
 	get thinkingLevel(): ThinkingLevel {
 		return this.agent.state.thinkingLevel;
@@ -1937,63 +1420,12 @@ export class AgentSession {
 
 	/** Whether the session has no active agent run, compaction, branch summary, retry, or queued continuation. */
 	get isIdle(): boolean {
-		// Full busy predicate (regression #295): raw streaming windows, compaction,
-		// and in-flight turn calls all report busy. Turn calls entered by the
-		// current async context are excluded so extension handlers that run inside
-		// a turn (agent_settled, command handlers resuming from waitForIdle) see
-		// the session's state, not their own call (regression #6363).
-		const foreignTurnCalls = this._activeTurnCalls - (this._turnCallScope.getStore() ?? 0);
-		return (
-			foreignTurnCalls <= 0 &&
-			!this.isStreaming &&
-			!this.agent.state.isStreaming &&
-			!this.isCompacting &&
-			!this.agent.isProcessing
-		);
+		return !this._isAgentRunActive && !this.isCompacting;
 	}
 
 	/** Current effective system prompt, including changes not yet sent to the model. */
 	get systemPrompt(): string {
 		return buildSystemPrompt(this._runSystemPromptOptions ?? this._baseSystemPromptOptions);
-	}
-
-	/**
-	 * Override the base system prompt with pre-built bytes and freeze it.
-	 *
-	 * Used by fork children to inherit the parent's frozen turn-start system prompt,
-	 * ensuring cache-identical API request prefixes (system + tools + messages must
-	 * all match for a cache hit). Called after session creation, before the first
-	 * agent.prompt() invocation.
-	 *
-	 * Setting the frozen flag prevents before_agent_start extension handlers from
-	 * re-applying goal context / active-recall rewrites on top of a prompt that
-	 * already contains them — which would produce double-injected bytes and a
-	 * guaranteed cache miss on every turn.
-	 */
-	overrideBaseSystemPrompt(prompt: string): void {
-		this._baseSystemPrompt = prompt;
-		this._baseSystemPromptOptions.forceSystemPrompt = prompt;
-		this._systemPromptFrozen = true;
-	}
-
-	/**
-	 * Returns the system prompt as it would appear after all `before_agent_start`
-	 * handlers have applied their rewrites in preview mode (no side effects).
-	 * Used by diagnostic UIs (e.g. /context) so the displayed prompt matches
-	 * what the LLM will actually see, even before the first turn.
-	 */
-	async getEffectiveSystemPrompt(): Promise<string> {
-		if (!this._baseSystemPromptOptions) return this.systemPrompt;
-		return this._extensionRunner.previewSystemPromptRewrites(this._baseSystemPrompt, this._baseSystemPromptOptions);
-	}
-
-	/**
-	 * Apply child-only transforms to a prompt inherited from another session.
-	 * The executor calls this before freezing a fork prefix; the parent session
-	 * and its cache-bearing prompt remain untouched.
-	 */
-	getForkSystemPrompt(systemPrompt: string): string {
-		return this._extensionRunner.applyForkSystemPromptTransforms(systemPrompt);
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -2008,112 +1440,6 @@ export class AgentSession {
 	getActiveToolNames(): string[] {
 		return this.agent.state.tools.map((t) => t.name);
 	}
-
-	/** Executable active tools in provider order. Internal fork lifecycle input:
-	 * children prefer their own freshly-built handlers, then reuse a parent tool
-	 * only when that handler is absent (for example, a deferred process tool that
-	 * was activated after the parent session started). */
-	getActiveExecutableTools(): AgentTool[] {
-		return [...this.agent.state.tools];
-	}
-
-	/**
-	 * Adopt a parent transcript prefix for a forked child session (fork-delta).
-	 *
-	 * `context: "fork"` gives the child the calling session's transcript, but those
-	 * messages are never entries of the *child's* session. Requests are rebuilt from
-	 * `buildSessionProjection()`, which only knows about the child's own entries, so the
-	 * prefix has to be reattached at every rebuild or it is silently dropped — taking the
-	 * tool declarations it carries with it (the child's own system message only records the
-	 * *delta* against the inherited loadout, e.g. `toolsRemoved: [Glob]`).
-	 */
-	adoptInheritedForkMessages(messages: readonly AgentMessage[]): void {
-		this._inheritedForkMessages = [...messages];
-		this.agent.state.messages = this._withInheritedForkPrefix(this.sessionManager.buildSessionProjection().messages);
-	}
-
-	/** Prepend the inherited fork prefix (if any) to a freshly built projection. */
-	private _withInheritedForkPrefix(messages: AgentMessage[]): AgentMessage[] {
-		if (!this._inheritedForkMessages?.length) return messages;
-		return [...this._inheritedForkMessages, ...messages];
-	}
-
-	inheritMissingActiveTools(parentTools: readonly AgentTool[]): void {
-		const childByName = new Map(this.agent.state.tools.map((tool) => [tool.name, tool]));
-		this._inheritedForkToolFallbacks = new Map(parentTools.map((tool) => [tool.name, tool]));
-		this.agent.state.tools = parentTools.map((parentTool) => childByName.get(parentTool.name) ?? parentTool);
-	}
-
-	/** Provider-visible metadata for the currently active tools, in wire order. */
-	getActiveToolProviderSchemas(): Tool[] {
-		return this.agent.state.tools.map((tool) => ({
-			name: tool.name,
-			description: tool.description,
-			parameters: tool.parameters,
-			deferLoading: tool.deferLoading,
-			alwaysLoad: tool.alwaysLoad,
-			searchHint: tool.searchHint,
-			namespace: tool.namespace,
-			providers: tool.providers,
-			anthropicServerTool: tool.anthropicServerTool,
-		}));
-	}
-
-	/**
-	 * Overlay frozen provider metadata while retaining this session's local
-	 * execute handlers. Used by cache-compatible children so tools serialize
-	 * exactly like the parent without inheriting parent-bound closures.
-	 */
-	overrideActiveToolProviderSchemas(schemas: readonly Tool[]): void {
-		const currentNames = this.getActiveToolNames();
-		const schemaNames = schemas.map((schema) => schema.name);
-		if (
-			currentNames.length !== schemaNames.length ||
-			currentNames.some((name, index) => name !== schemaNames[index])
-		) {
-			throw new Error(
-				`Cannot preserve parent tool schemas: child tools [${currentNames.join(", ")}] do not match parent tools [${schemaNames.join(", ")}]`,
-			);
-		}
-		this._activeToolProviderSchemaOverrides = new Map(schemas.map((schema) => [schema.name, schema]));
-		this._activeToolProviderSchemaOrder = schemaNames;
-		this._activeToolProviderSchemaCache = new WeakMap();
-		this.agent.state.tools = this._applyActiveToolProviderSchemaOverrides(this.agent.state.tools);
-	}
-
-	/** Reuse a parent's cache-affinity lane for an inherited prompt prefix. */
-	overridePromptCacheAffinityKey(key: string): void {
-		this.agent.cacheAffinityKey = key;
-	}
-
-	/** The exact affinity key the SDK would send for the current model-facing prefix. */
-	getPromptCacheAffinityKey(): string | undefined {
-		const model = this.model;
-		if (!model) return undefined;
-		return this.agent.cacheAffinityKey ?? createPromptCacheAffinityKey(model, this.agent.state);
-	}
-
-	private _applyActiveToolProviderSchemaOverrides(tools: AgentTool[]): AgentTool[] {
-		const overrides = this._activeToolProviderSchemaOverrides;
-		if (!overrides) return tools;
-		const expectedNames = this._activeToolProviderSchemaOrder ?? [];
-		const byName = new Map(tools.map((tool) => [tool.name, tool]));
-		const aligned = expectedNames.map((name) => byName.get(name) ?? this._inheritedForkToolFallbacks?.get(name));
-		if (aligned.some((tool) => !tool)) {
-			const actualNames = tools.map((tool) => tool.name);
-			throw new Error(
-				`Cannot preserve parent tool schemas after registry refresh: child tools [${actualNames.join(", ")}] do not match parent tools [${expectedNames.join(", ")}]`,
-			);
-		}
-		return (aligned as AgentTool[]).map((tool) => {
-			const schema = overrides.get(tool.name);
-			if (!schema) return tool;
-			const cached = this._activeToolProviderSchemaCache.get(tool);
-			if (cached) return cached;
-			const overlaid = { ...tool, ...schema };
-			this._activeToolProviderSchemaCache.set(tool, overlaid);
-			return overlaid;
-		});
 
 	/** Get the names of the tools that tools can call through `ctx.executeTool()`. */
 	getCallableToolNames(): string[] {
@@ -2140,64 +1466,6 @@ export class AgentSession {
 		return this._toolDefinitions.get(name)?.definition;
 	}
 
-	getToolDefinitions(): ToolDefinition[] {
-		return Array.from(this._toolDefinitions.values()).map(({ definition }) => definition);
-	}
-
-	/**
-	 * Resumability seam for interactive (UI-only) tools - see ToolDefinition.resumePendingCall.
-	 *
-	 * If the transcript's last message is an assistant turn with exactly one
-	 * unresolved tool call, and that tool opted in via resumePendingCall,
-	 * re-execute it now (e.g. AskUserQuestion re-presents its dialog after a
-	 * killed/resumed session) and feed the real result back into the agent loop
-	 * via agent.prompt() - the same path a live tool result takes, so session
-	 * persistence and extension events stay consistent.
-	 *
-	 * No-ops (returns false) when there is no pending call, more than one
-	 * pending call, or the tool doesn't opt in - every other tool keeps today's
-	 * behavior (a stale call is left for the generic orphaned-tool-call
-	 * synthetic-error fallback, so a resumed session never silently re-runs e.g.
-	 * a pending bash/edit call). All pending-question state lives in the
-	 * transcript's already-persisted tool call - nothing here touches the
-	 * cached system prefix (prompt-cache golden rule).
-	 */
-	async resumePendingInteractiveToolCall(): Promise<boolean> {
-		// A resumable pending call may belong to a deferred extension. Load it before
-		// resolving the persisted tool name, and before this path can invoke the model.
-		await this._extensionRunner.loadDeferredExtensions();
-		const messages = this.agent.state.messages;
-		const last = messages[messages.length - 1];
-		if (!last || last.role !== "assistant") return false;
-
-		const toolCalls = (last as AssistantMessage).content.filter((block) => block.type === "toolCall");
-		if (toolCalls.length !== 1) return false;
-		const toolCall = toolCalls[0] as { id: string; name: string; arguments: Record<string, unknown> };
-
-		const definition = this.getToolDefinition(toolCall.name);
-		if (!definition?.resumePendingCall) return false;
-
-		const tool = this.agent.state.tools.find((candidate) => candidate.name === toolCall.name);
-		if (!tool) return false;
-
-		if (this.agent.state.isStreaming) return false;
-
-		return this._withActiveTurnCall(async () => {
-			const result = await tool.execute(toolCall.id, toolCall.arguments, undefined, undefined);
-			const toolResultMessage: ToolResultMessage = {
-				role: "toolResult",
-				toolCallId: toolCall.id,
-				toolName: toolCall.name,
-				content: result.content,
-				details: result.details,
-				isError: false,
-				timestamp: Date.now(),
-			};
-			await this.agent.prompt(toolResultMessage);
-			return true;
-		});
-	}
-
 	/**
 	 * Set active tools by name.
 	 * Only tools in the registry can be enabled. Unknown and hidden tool names are ignored.
@@ -2205,48 +1473,6 @@ export class AgentSession {
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
-		// Fix #3 full variant (cache-break-investigation-2026-05-16.md §7.3 c):
-		// builtin and alwaysLoad-tagged tools that were active before this call
-		// stay active. Bridge log shows Bash/Edit/Write/Grep/Read each removed
-		// ~2,560× per 18d — most plausibly extensions calling setActiveTools()
-		// with a narrow list that doesn't re-include builtins (e.g. pi-tool-search
-		// computing a curated active set, deferred-tool activation paths).
-		//
-		// Protection is additive and gated:
-		//   - Only restores tools that were ALREADY active. Sessions created
-		//     with `noTools: "builtin"` (builtins registered but inactive) stay
-		//     inactive — we never add a tool that wasn't already active.
-		//   - Only restores builtins (`allToolNames` set) and `alwaysLoad:true`
-		//     tools. Extension tools and deferred tools follow the caller's
-		//     replacement list as before.
-		const orderedNames: string[] = [...toolNames];
-		const previousActive = new Set(this.getActiveToolNames());
-		for (const name of previousActive) {
-			const tool = this._toolRegistry.get(name);
-			if (!tool) continue;
-			if (allToolNames.has(name as ToolName) || tool.alwaysLoad === true) {
-				orderedNames.push(name);
-			}
-		}
-
-		const activeToolNames =
-			this.model?.provider === "claude-bridge"
-				? syncClaudeBridgeNativeTools(orderedNames, this.model)
-				: this.model?.api === "openai-codex-responses"
-					? orderedNames.filter((name) => /^[a-zA-Z0-9_-]+$/.test(name))
-					: orderedNames;
-
-		const tools: AgentTool[] = [];
-		const validToolNames: string[] = [];
-		const seenToolNames = new Set<string>();
-		for (const name of activeToolNames) {
-			if (seenToolNames.has(name)) continue;
-			const tool = this._toolRegistry.get(name);
-			if (tool && isToolAvailableForModel(tool, this.model)) {
-				seenToolNames.add(name);
-				tools.push(tool);
-				validToolNames.push(name);
-
 		const tools = this._applyToolLoadout(toolNames);
 		this._rebuildSystemPrompt(tools.map((tool) => tool.name));
 	}
@@ -2313,73 +1539,6 @@ export class AgentSession {
 				return description === undefined ? tool : { ...tool, description };
 			});
 		}
-		const providerStableTools = this._applyActiveToolProviderSchemaOverrides(tools);
-		const current = this.agent.state.tools;
-		if (
-			this._baseSystemPromptOptions &&
-			current.length === providerStableTools.length &&
-			current.every((tool, index) => tool === providerStableTools[index])
-		) {
-			return;
-		}
-
-		this.agent.state.tools = providerStableTools;
-		if (this._systemPromptFrozen) return;
-
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this._systemPromptNeedsRefilter = true;
-	}
-
-	setDeferredToolOverrides(names: string[]): void {
-		const desired = new Set<string>();
-		for (const name of names) {
-			const entry = this._toolDefinitions.get(name);
-			if (!entry) continue;
-			const definition = entry.definition;
-			if (definition.alwaysLoad === true) continue;
-			if (definition.deferLoading === true && !this._deferredOverrides.has(name)) continue;
-			desired.add(name);
-		}
-
-		if (_sameStringSet(this._deferredOverrides, desired)) return;
-		this._deferredOverrides = desired;
-		this._refreshToolRegistry();
-	}
-
-	setToolNamespaces(map: Record<string, string>): void {
-		const desired = new Map<string, string>();
-		for (const [name, namespace] of Object.entries(map)) {
-			if (namespace && this._toolDefinitions.has(name)) desired.set(name, namespace);
-		}
-
-		if (_sameStringMap(this._toolNamespaces, desired)) return;
-		this._toolNamespaces = desired;
-		this._refreshToolRegistry();
-	}
-
-	private _applyToolNamespaces(): void {
-		if (this._toolNamespaces.size === 0) return;
-		for (const [name, namespace] of this._toolNamespaces) {
-			const entry = this._toolDefinitions.get(name);
-			if (entry && entry.definition.namespace !== namespace) {
-				entry.definition = { ...entry.definition, namespace };
-			}
-			const tool = this._toolRegistry.get(name);
-			if (tool && tool.namespace !== namespace) tool.namespace = namespace;
-		}
-	}
-
-	private _applyDeferredOverrides(): void {
-		if (this._deferredOverrides.size === 0) return;
-		for (const name of this._deferredOverrides) {
-			const entry = this._toolDefinitions.get(name);
-			if (entry && entry.definition.alwaysLoad !== true && entry.definition.deferLoading !== true) {
-				entry.definition = { ...entry.definition, deferLoading: true };
-			}
-			const tool = this._toolRegistry.get(name);
-			if (tool && tool.alwaysLoad !== true && tool.deferLoading !== true) tool.deferLoading = true;
-		}
-
 		this._hiddenDeclarations = hidden;
 		this.agent.state.tools = declared;
 		return declared;
@@ -2463,19 +1622,12 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
+	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
-		const toolGuidelines: Record<string, string[]> = {};
-		for (const name of validToolNames) {
-			const definition = this._toolDefinitions.get(name)?.definition;
-			if (definition && isDeferredTool(definition)) {
-				continue;
-			}
+		for (const name of this._toolRegistry.keys()) {
 			const snippet = this._toolPromptSnippets.get(name);
 			if (snippet) toolSnippets[name] = snippet;
-			const guidelines = this._toolPromptGuidelines.get(name);
-			if (guidelines) toolGuidelines[name] = guidelines;
 		}
 
 		const loaderSystemPrompt = this._resourceLoader.getSystemPrompt();
@@ -2492,9 +1644,8 @@ export class AgentSession {
 			appendSystemPrompt,
 			selectedTools: validToolNames,
 			toolSnippets,
-			toolGuidelines,
+			toolGuidelines: Object.fromEntries(this._toolPromptGuidelines),
 		});
-		return buildSystemPrompt(this._baseSystemPromptOptions);
 	}
 
 	/**
@@ -2582,57 +1733,9 @@ export class AgentSession {
 		this.setActiveToolsByName((current.toolsAdded ?? []).map((tool) => tool.name));
 	}
 
-	/**
-	 * Re-apply the `systemPrompt:build` filters to the base prompt when a
-	 * mid-turn tool/skill change rebuilt it unfiltered.
-	 *
-	 * CACHE CRITICAL: `_rebuildSystemPrompt` returns a raw `buildSystemPrompt`
-	 * output that skips the filter chain (filters only run in
-	 * `_runBeforeAgentStart`). Sending that raw prompt drops cache-stabilising
-	 * transforms (time-context date strip, cache-base-prompt boundary
-	 * relocation), mutating the cached prefix and bursting the prompt cache on
-	 * every tool change. Re-apply the filters to the CURRENT base prompt — the
-	 * same input `_runBeforeAgentStart` filters each turn, minus the handler
-	 * pass. Filters are idempotent (no-op when already applied), so a clobbered
-	 * unfiltered prompt is healed while handler-appended content and the current
-	 * tool snippets baked into `_baseSystemPrompt` are preserved. Runs at the
-	 * single send chokepoint (`_runAgentPrompt`); no-op unless a rebuild occurred.
-	 */
-	private async _refilterSystemPromptIfNeeded(): Promise<void> {
-		if (!this._systemPromptNeedsRefilter) return;
-		this._systemPromptNeedsRefilter = false;
-		if (this._systemPromptFrozen || !this._baseSystemPromptOptions) return;
-		const filtered = await this._extensionRunner.applySystemPromptBuildFilters(
-			this._baseSystemPrompt,
-			this._baseSystemPromptOptions,
-		);
-		if (filtered === this._baseSystemPrompt) return;
-		this._baseSystemPrompt = filtered;
-		const runOptions =
-			this._runSystemPromptOptions ?? normalizeBuildSystemPromptOptions(this._baseSystemPromptOptions);
-		runOptions.forceSystemPrompt = filtered;
-		this._runSystemPromptOptions = runOptions;
-	}
-
 	// =========================================================================
 	// Prompting
 	// =========================================================================
-
-	private async _withActiveTurnCall<T>(operation: () => Promise<T>): Promise<T> {
-		this._activeTurnCalls++;
-		try {
-			return await this._turnCallScope.run((this._turnCallScope.getStore() ?? 0) + 1, operation);
-		} finally {
-			this._activeTurnCalls--;
-			// Turn-call exit can complete an idle window that the settle emit saw as
-			// busy (the settling prompt's own call was still unwinding); wake waiters
-			// so they re-check isIdle in their own context.
-			this._resolveIdleWaitIfIdle();
-			if (this._activeTurnCalls === 0 && this._queuedMessageDrainAfterAgentSettles) {
-				setTimeout(() => this._drainQueuedMessagesPostCompaction(), 0);
-			}
-		}
-	}
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		this._agentRunAbortRequested = false;
@@ -2641,14 +1744,6 @@ export class AgentSession {
 		this._recordSelection();
 		this._isAgentRunActive = true;
 		try {
-			// A turn is starting — cancel any pending idle wake. The notification
-			// that scheduled it is already in messages[], so this turn reads it;
-			// firing the wake afterwards would add a spurious extra turn (even if
-			// this turn finishes before the debounce window elapses).
-			this._cancelIdleWake();
-			await this._refilterSystemPromptIfNeeded();
-			this._cacheHeartbeat.setSessionTarget(this._findLastAssistantMessage()?.timestamp);
-			this._cacheHeartbeat.noteActivity();
 			await this.agent.prompt(messages);
 			while (!this._agentRunAbortRequested) {
 				if (await this._handlePostAgentRun()) {
@@ -2665,6 +1760,7 @@ export class AgentSession {
 			this._failedResponse = undefined;
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
+			this._flushPendingCustomMessages();
 			await this._emitAgentSettled();
 		}
 	}
@@ -2679,10 +1775,6 @@ export class AgentSession {
 			return false;
 		}
 		if (!message) return this.agent.hasQueuedMessages();
-
-		if (message.stopReason === "aborted") {
-			return false;
-		}
 
 		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
@@ -2704,14 +1796,7 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
-		if (this._midRunCompactionStop) {
-			this._midRunCompactionStop = false;
-			await this._checkCompaction(message, true, "run", toolResults);
-			this._capMidRunCompactionToolResults();
-			return !this._agentRunAbortRequested;
-		}
-
-		if (await this._checkCompaction(message, true, "defer", toolResults)) {
+		if (await this._checkCompaction(message, true, toolResults)) {
 			return !this._agentRunAbortRequested;
 		}
 
@@ -2787,67 +1872,6 @@ export class AgentSession {
 	}
 
 	/**
-	 * Deliver messages queued while manual compaction held the busy gate.
-	 * compact() aborts any active run first, so no run is in flight to drain
-	 * the queue and nothing else kicks one off — without this, a message
-	 * steered during /compact would sit undelivered until the next prompt
-	 * (or be lost on process exit). Fire-and-forget: failures leave the
-	 * message queued (pre-drain status quo) rather than crashing the caller.
-	 */
-	private _drainQueuedMessagesPostCompaction(): void {
-		if (this._disposed || !this.agent.hasQueuedMessages()) {
-			this._queuedMessageDrainAfterAgentSettles = false;
-			return;
-		}
-		if (this.isStreaming || this.isCompacting || this.agent.isProcessing || this._activeTurnCalls > 0) {
-			this._queuedMessageDrainAfterAgentSettles = true;
-			return;
-		}
-		this._queuedMessageDrainAfterAgentSettles = false;
-		void this._withActiveTurnCall(async () => {
-			try {
-				await this._extensionRunner.loadDeferredExtensions();
-				if (
-					this._disposed ||
-					!this.agent.hasQueuedMessages() ||
-					this._isAgentRunActive ||
-					this.isCompacting ||
-					this.agent.isProcessing
-				) {
-					return;
-				}
-
-				this._isAgentRunActive = true;
-				try {
-					this._cancelIdleWake();
-					await this._refilterSystemPromptIfNeeded();
-					this._cacheHeartbeat.setSessionTarget(this._findLastAssistantMessage()?.timestamp);
-					this._cacheHeartbeat.noteActivity();
-					await this.agent.continueQueuedMessage();
-					while (await this._handlePostAgentRun()) {
-						await this.agent.continue();
-					}
-				} finally {
-					this._flushPendingBashMessages();
-					await this._emitAgentSettled();
-				}
-			} catch {
-				// Racing run started or continue() rejected the trailing message
-				// shape: an active run drains the queue itself; otherwise the
-				// message stays visibly queued for the next turn.
-			}
-		});
-	}
-
-	private _drainQueuedMessagesAfterCompactionLifecycle(): void {
-		if (this._isAgentRunActive) {
-			this._queuedMessageDrainAfterAgentSettles = true;
-			return;
-		}
-		this._drainQueuedMessagesPostCompaction();
-	}
-
-	/**
 	 * Send a prompt to the agent.
 	 * - Handles extension commands (registered via pi.registerCommand) immediately, even during streaming
 	 * - Expands file-based prompt templates by default
@@ -2861,176 +1885,17 @@ export class AgentSession {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
 		}
-		await this._withActiveTurnCall(() => this._prompt(text, options));
-	}
-
-	private async _prompt(text: string, options?: PromptOptions): Promise<void> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
-		let messages: AgentMessage[] | undefined;
-
-		try {
-			// Keep startup responsive, but make the first user action the hard boundary:
-			// all deferred commands, handlers, and tool schemas must exist before input
-			// handling and before_agent_start compute the first provider request. Entering
-			// try first keeps this preflight inside prompt()'s error-reporting contract.
-			await this._extensionRunner.loadDeferredExtensions();
-
-			// Handle extension commands first (execute immediately, even during streaming)
-			// Extension commands manage their own LLM interaction via pi.sendMessage()
-			if (expandPromptTemplates && text.startsWith("/")) {
-				const handled = await this._tryExecuteExtensionCommand(text);
-				if (handled) {
-					// Extension command executed, no prompt to send
-					preflightResult?.(true);
-					return;
-				}
-			}
-
-			if (this._compactionAbortController !== undefined) {
-				throw new Error(
-					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
-				);
-			}
-
-			// Emit input event for extension interception (before skill/template expansion)
-			const processedInput = await this._runInputHandlers(
-				text,
-				options?.images,
-				options?.source ?? "interactive",
-				this.isStreaming ? options?.streamingBehavior : undefined,
-			);
-			if (!processedInput) {
-				preflightResult?.(true);
+		// Handle extension commands first (execute immediately, even during streaming)
+		// Extension commands manage their own LLM interaction via pi.sendMessage()
+		if (expandPromptTemplates && text.startsWith("/")) {
+			const handled = await this._tryExecuteExtensionCommand(text);
+			if (handled) {
+				// Extension command executed, no prompt to send
+				preflightResult?.("handled");
 				return;
 			}
-			const { text: currentText, images: currentImages } = processedInput;
-
-			// Expand skill commands (/skill:name args) and prompt templates (/template args)
-			let expandedText = currentText;
-			if (expandPromptTemplates) {
-				expandedText = this._expandSkillCommand(expandedText);
-				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
-			}
-
-			// If a run is in flight, queue via steer() or followUp() based on option.
-			// isStreaming alone is NOT a complete busy signal: compaction runs its
-			// LLM calls outside agent.runWithLifecycle() (isStreaming stays false),
-			// and agent.isProcessing covers the setup window inside prompt() and
-			// the agent_end listener phase. Prompts sent in those windows used to
-			// fall through and race agent.prompt(), rejecting with "Agent is
-			// already processing a prompt" — fatal for un-awaited callers
-			// (extension sendUserMessage). Same gate as sendCustomMessage.
-			if (this.isStreaming || this.isCompacting || this.agent.isProcessing) {
-				// Preserve the strict contract while visibly streaming; in the
-				// compaction/setup windows default to steer so the message is
-				// queued and delivered instead of racing or being dropped.
-				// Strict contract only while the LLM is visibly streaming (raw agent
-				// flag) — session.isStreaming now tracks the whole run
-				// (_isAgentRunActive), which includes the compaction/agent_end windows
-				// where the fork must default to steer instead of throwing.
-				const behavior = options?.streamingBehavior ?? (this.agent.state.isStreaming ? undefined : "steer");
-				if (!behavior) {
-					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-					);
-				}
-				if (behavior === "followUp") {
-					await this._queueFollowUp(expandedText, currentImages);
-				} else {
-					await this._queueSteer(expandedText, currentImages);
-				}
-				preflightResult?.(true);
-				return;
-			}
-
-			// Flush any pending bash messages before the new prompt.
-			this._flushPendingBashMessages();
-
-			await this._resolvePendingAutoModelForPrompt(expandedText);
-
-			// Validate model
-			if (!this.model) {
-				throw new Error(formatNoModelSelectedMessage());
-			}
-
-			const hasConfiguredAuth =
-				this._modelRuntime.hasConfiguredAuth(this.model.provider) ||
-				(await this._modelRuntime.checkAuth(this.model.provider)) !== undefined;
-			if (!hasConfiguredAuth) {
-				const isOAuth = this._modelRuntime.isUsingOAuth(this.model.provider);
-				if (isOAuth) {
-					throw new Error(
-						`Authentication failed for "${this.model.provider}". ` +
-							`Credentials may have expired or network is unavailable. ` +
-							`Run '/login ${this.model.provider}' to re-authenticate.`,
-					);
-				}
-				throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
-			}
-
-			// Check if we should warn or compact before sending (catches aborted responses).
-			// The user's new prompt is sent below, so do not call agent.continue() here.
-			const lastAssistant = this._findLastAssistantMessage();
-			if (lastAssistant) {
-				this._emitIdleCacheHintIfNeeded(lastAssistant);
-				await this._checkCompaction(lastAssistant, false);
-			}
-
-			// Emit before_agent_start before normalizing images so extension-driven model
-			// selection determines the resize profile used for the request and history.
-			const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				this._baseSystemPromptOptions,
-				options?.source ?? "interactive",
-			);
-			// Handlers may edit event.systemPromptOptions.selectedTools or call setActiveTools(),
-			// which updates the live loadout instead. An explicit edit wins; otherwise the live
-			// loadout is authoritative, so a setActiveTools() call is not undone here.
-			const handlerEditedTools =
-				result.systemPromptOptions.selectedTools.length !== selectedToolsBefore.length ||
-				result.systemPromptOptions.selectedTools.some((name, index) => name !== selectedToolsBefore[index]);
-			if (!handlerEditedTools) result.systemPromptOptions.selectedTools = this.getActiveToolNames();
-
-			const normalized = await this._normalizePromptImages(currentImages);
-			const userText =
-				normalized.hints.length > 0 ? `${expandedText}\n\n${normalized.hints.join("\n")}` : expandedText;
-
-			// Build messages only after hooks and image normalization have completed.
-			messages = [];
-			const userContent: (TextContent | ImageContent)[] = [{ type: "text", text: userText }];
-			userContent.push(...normalized.images);
-			messages.push({
-				role: "user",
-				content: userContent,
-				timestamp: Date.now(),
-			});
-
-			// Inject any pending "nextTurn" messages as context alongside the user message
-			for (const msg of this._pendingNextTurnMessages) {
-				messages.push(msg);
-			}
-			this._pendingNextTurnMessages = [];
-
-			for (const msg of result.messages) {
-				messages.push({
-					role: "custom",
-					customType: msg.customType,
-					// Untyped extensions can pass null/missing content; normalize at ingestion.
-					content: msg.content ?? [],
-					display: msg.display,
-					details: msg.details,
-					timestamp: Date.now(),
-				});
-			}
-			const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
-			this._runSystemPromptOptions = result.systemPromptOptions;
-			if (updateMessage) messages.unshift(updateMessage);
-		} catch (error) {
-			preflightResult?.(false);
-			throw error;
 		}
 
 		if (this._compactionAbortController !== undefined) {
@@ -3336,20 +2201,15 @@ export class AgentSession {
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
-	 * @param message Custom message with customType, content, display, details, and optional model visibility
+	 * @param message Custom message with customType, content, display, details
 	 * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
 	 * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
-	 * @param options.wakeOnIdle If true and the message lands via the idle branch
-	 *   (not streaming, no triggerTurn), schedule one debounced continuation turn so
-	 *   the model reads the notification autonomously. Busy delivery is unaffected —
-	 *   the queue already drains into the active run. No-op when triggerTurn is set.
 	 */
 	async sendCustomMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn"; wakeOnIdle?: boolean },
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
-		let landedAtIdle = false;
-		const appMessage: CustomMessage<T> = {
+		const appMessage = {
 			role: "custom" as const,
 			customType: message.customType,
 			// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -3357,163 +2217,30 @@ export class AgentSession {
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
-		};
-		if (message.modelVisible !== undefined) appMessage.modelVisible = message.modelVisible;
-		const emitCustomMessage = () =>
-			this._extensionRunner.emit({ type: "custom_message" as const, message: appMessage });
+		} satisfies CustomMessage<T>;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
-			await emitCustomMessage();
-			// NOTE (0.84.4 merge): fork busy-routing below supersedes upstream's
-			// isStreaming-only deferral + _pendingCustomMessages/_appendCustomMessage/
-			// _flushPendingCustomMessages helpers. The fork routes busy custom messages
-			// through the existing steer/followUp queues so post-compaction continue()
-			// drains them; upstream's separate pending queue is intentionally not adopted.
-		} else if (
-			this.isStreaming ||
-			this.isCompacting ||
-			this.agent.isProcessing ||
-			// A tool call still awaiting its result is a busy state the flags above can
-			// miss (an aborted run, or a window between run bookkeeping). Appending here
-			// would persist the message between the toolCall entry and its toolResult,
-			// which Anthropic rejects on every later request — permanently (pi-mono#479).
-			// Queue it instead; the agent loop drains steering only at turn boundaries,
-			// after the batch's results are recorded.
-			// triggerTurn callers still take the prompt path: queueing them with no run
-			// in flight would strand the message. Their ordering is repaired at request
-			// assembly instead (restoreToolResultAdjacency).
-			(!options?.triggerTurn && hasUnsettledToolCalls(this.agent.state.messages))
-		) {
-			// Treat compaction and any in-flight run as streaming-equivalent for delivery
-			// routing. Compaction runs its own LLM calls outside agent.runWithLifecycle(),
-			// so state.isStreaming is false even though the agent is busy and a regular
-			// turn cannot be started. agent.isProcessing also covers the brief setup
-			// window inside prompt() and the agent_end listener phase — windows where
-			// isStreaming may be false but a fresh prompt() would still throw
-			// "Agent is already processing a prompt". Without this, custom messages
-			// arriving during those windows (e.g. monitor exit notifications fired with
-			// triggerTurn:true) either crash the runtime with that throw, or fall into
-			// the bottom 'else' branch and get pushed raw onto messages[]. They never
-			// enter the steering/follow-up queues, so the post-compaction recovery in
-			// _runAutoCompaction (which only resumes on hasQueuedMessages()) never
-			// kicks the loop, and the message rots in the transcript until the next
-			// user prompt. Routing through the queues lets the existing
-			// post-compaction continue() drain them.
+		} else if (this.isStreaming && options?.triggerTurn !== false) {
 			if (options?.deliverAs === "followUp") {
 				this.agent.followUp(appMessage);
 			} else {
 				this.agent.steer(appMessage);
 			}
-			await emitCustomMessage();
 		} else if (options?.triggerTurn) {
-			// A settled handler that triggers a turn must not start it until *every*
-			// agent_settled handler has run, or later handlers observe isIdle() === false.
-			// Deferred work replays this same branch once the settled emit completes.
 			if (this._isEmittingAgentSettled) {
-				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
+				this._deferredSettledActions.push(async () => await this._runAgentPrompt(appMessage));
 				return;
 			}
-			await this._withActiveTurnCall(async () => {
-				// Match prompt(): deferred handlers and tool schemas must be present before
-				// before_agent_start constructs the first machine-driven provider request.
-				await this._extensionRunner.loadDeferredExtensions();
-				// Mirror prompt()'s pre-turn compaction check. Without it, harness-driven
-				// turns (e.g. pi-goal continuations via sendCustomMessage({triggerTurn}))
-				// never hit threshold compaction — context grows unbounded across goal
-				// iterations until hard overflow. Compaction runs first; the custom
-				// message then starts its turn against the compacted context.
-				const lastAssistant = this._findLastAssistantMessage();
-				if (lastAssistant) {
-					if (await this._checkCompaction(lastAssistant, false)) {
-						try {
-							await this.agent.continue();
-							while (await this._handlePostAgentRun()) {
-								await this.agent.continue();
-							}
-						} finally {
-							this._flushPendingBashMessages();
-						}
-					}
-				}
-				// Fire before_agent_start so extensions can modify the system prompt for
-				// turns triggered by custom messages — same path as session.prompt()-driven
-				// turns. Without this, e.g. pi-goal's `pendingControlPrompt` (set right
-				// before triggerTurn:true) is never consumed and the model is invoked with
-				// the base system prompt + an opaque custom message it can't see, so it
-				// has no way to know what the goal/objective is.
-				// triggerTurn fires for custom-message-driven turns. These are never
-				// direct user input — the caller is an extension hook (e.g. pi-goal's
-				// pendingControlPrompt). Tag as "extension" so memory hooks skip recall
-				// and persistent-memory inject for these synthetic turns.
-				const beforeStart = this._baseSystemPromptOptions
-					? await this._extensionRunner.emitBeforeAgentStart(
-							"",
-							undefined,
-							this._baseSystemPrompt,
-							this._baseSystemPromptOptions,
-							"extension",
-						)
-					: undefined;
-				const extraMessages: AgentMessage[] = [];
-				if (beforeStart) {
-					const updateMessage = this._preparePromptAndToolLoadout(beforeStart.systemPromptOptions);
-					this._runSystemPromptOptions = beforeStart.systemPromptOptions;
-					if (updateMessage) extraMessages.push(updateMessage);
-				}
-				if (beforeStart?.messages) {
-					for (const msg of beforeStart.messages) {
-						const extraMessage: CustomMessage = {
-							role: "custom",
-							customType: msg.customType,
-							content: msg.content,
-							display: msg.display,
-							details: msg.details,
-							timestamp: Date.now(),
-						};
-						if (msg.modelVisible !== undefined) extraMessage.modelVisible = msg.modelVisible;
-						extraMessages.push(extraMessage);
-					}
-				}
-				const runOutcomePromise = this._runAgentPrompt(
-					extraMessages.length > 0 ? [...extraMessages, appMessage] : appMessage,
-				).then(
-					() => ({ ok: true as const }),
-					(error: unknown) => ({ ok: false as const, error }),
-				);
-				await emitCustomMessage();
-				const runOutcome = await runOutcomePromise;
-				if (!runOutcome.ok) {
-					// Defense-in-depth for a TOCTOU race: two extension callers can both
-					// pass the streaming/compacting/isProcessing gate above, then race on
-					// agent.prompt() — the first wins, the second throws "already
-					// processing". Falling back to steer keeps the message in the active
-					// run instead of dropping it (or surfacing a confusing
-					// "Extension <runtime> error" to the user).
-					if (
-						runOutcome.error instanceof Error &&
-						/already processing( a prompt)?/.test(runOutcome.error.message)
-					) {
-						this.agent.steer(appMessage);
-					} else {
-						throw runOutcome.error;
-					}
-				}
-			});
+			await this._runAgentPrompt(appMessage);
+		} else if (this.isStreaming) {
+			// Appending now would put the message between an assistant tool call and its
+			// result, which providers that validate message order reject on replay. Defer
+			// to the end of the turn. Nothing is emitted yet: message events must not
+			// describe messages the session tree does not contain.
+			this._pendingCustomMessages.push(appMessage);
 		} else {
-			this.agent.state.messages.push(appMessage);
-			this.sessionManager.appendCustomMessageEntry(
-				message.customType,
-				message.content,
-				message.display,
-				message.details,
-				message.modelVisible,
-			);
-			this._emit({ type: "message_start", message: appMessage });
-			this._emit({ type: "message_end", message: appMessage });
-			landedAtIdle = true;
-			await emitCustomMessage();
+			this._appendCustomMessage(appMessage);
 		}
-		if (landedAtIdle && options?.wakeOnIdle) this._scheduleIdleWake();
 	}
 
 	private _appendCustomMessage(appMessage: CustomMessage): void {
@@ -3542,79 +2269,12 @@ export class AgentSession {
 		}
 	}
 
-	private _appendCustomMessage(appMessage: CustomMessage): void {
-		this.sessionManager.appendCustomMessageEntry(
-			appMessage.customType,
-			appMessage.content,
-			appMessage.display,
-			appMessage.details,
-			// Preserved from the fork's inline append: upstream's helper drops
-			// modelVisible, which silently makes model-invisible custom messages
-			// visible to the model when they flow through this path.
-			appMessage.modelVisible,
-		);
-		this._refreshFinalizedContext();
-		this._emit({ type: "message_start", message: appMessage });
-		this._emit({ type: "message_end", message: appMessage });
-	}
-
-	/**
-	 * Schedule one debounced continuation turn after a wakeOnIdle message landed
-	 * at idle. N notifications arriving in the same window collapse into a single
-	 * wake. The busy re-check at fire time guards the race called out above
-	 * `_emitAgentCompletion`: a user prompt (or another wake) starting a turn
-	 * inside the window already has the notification in context — waking then
-	 * would add a spurious extra turn. Even a racing wake is safe: the busy
-	 * branch ordering in sendCustomMessage degrades triggerTurn to a queued
-	 * followUp, never a double run.
-	 */
-	private _cancelIdleWake(): void {
-		if (this._idleWakeTimer !== undefined) {
-			clearTimeout(this._idleWakeTimer);
-			this._idleWakeTimer = undefined;
-		}
-	}
-
-	private _scheduleIdleWake(): void {
-		if (this._disposed || this._idleWakeTimer !== undefined) return;
-		this._idleWakeTimer = setTimeout(() => {
-			this._idleWakeTimer = undefined;
-			if (this._disposed) return;
-			// Transient-busy at fire time (turn-starting call, compaction, or agent
-			// run) must NOT drop the wake: the completion notification is already
-			// in history, but the turn-trigger would be lost forever. A turn already
-			// in progress has the notification in context and is self-healing, yet a
-			// threshold/overflow compaction overlapping this window rewrites history
-			// and leaves the session idle with an unhandled notification. Re-arm one
-			// debounce window later so the wake survives until genuinely idle.
-			if (!this.isIdle) {
-				this._scheduleIdleWake();
-				return;
-			}
-			void this.sendCustomMessage(
-				{
-					customType: "idle-wake",
-					content:
-						"Background work finished while you were idle (see the completion notification above). Handle it now: read the result, continue the task it unblocks, or report the outcome. Do not wait for further user input if the next step is clear.",
-					display: false,
-					details: undefined,
-				},
-				{ deliverAs: "followUp", triggerTurn: true },
-			).catch(() => {
-				/* sendCustomMessage logs its own runtime errors; never crash the timer. */
-			});
-		}, AgentSession.IDLE_WAKE_DEBOUNCE_MS);
-		this._idleWakeTimer.unref?.();
-	}
-
-	private static readonly IDLE_WAKE_DEBOUNCE_MS = 300;
-
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
-	 * While streaming, deliverAs is required; other busy windows default to "steer".
+	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 *
 	 * @param content User message content (string or content array)
-	 * @param options.deliverAs Delivery mode while busy: "steer" or "followUp"
+	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
 	 * @param options.expandPromptTemplates Whether to dispatch extension commands and expand skill commands and prompt templates. Default: false.
 	 */
 	async sendUserMessage(
@@ -3664,30 +2324,6 @@ export class AgentSession {
 		return { steering, followUp };
 	}
 
-	/**
-	 * Remove the most recently queued message and return it for editing.
-	 * Prefers follow-up messages over steering, since follow-ups are the
-	 * messages a user typically queues last. Removes the entry from both the
-	 * display mirror and the underlying agent delivery queue so the recalled
-	 * message is not also sent to the model. Returns null when nothing is
-	 * queued.
-	 */
-	popLastQueuedMessage(): { text: string; mode: "steer" | "followUp" } | null {
-		if (this._followUpMessages.length > 0) {
-			const text = this._followUpMessages.pop() as string;
-			this.agent.removeLastFollowUpMessage();
-			this._emitQueueUpdate();
-			return { text, mode: "followUp" };
-		}
-		if (this._steeringMessages.length > 0) {
-			const text = this._steeringMessages.pop() as string;
-			this.agent.removeLastSteeringMessage();
-			this._emitQueueUpdate();
-			return { text, mode: "steer" };
-		}
-		return null;
-	}
-
 	/** Number of pending messages (includes both steering and follow-up) */
 	get pendingMessageCount(): number {
 		return this._steeringMessages.length + this._followUpMessages.length;
@@ -3722,74 +2358,11 @@ export class AgentSession {
 		await this.waitForIdle();
 	}
 
-	/** Abort the active turn, then deliver any queued messages using the configured queue modes. */
-	abortAndResumeQueuedMessages(): Promise<void> {
-		if (this._abortAndResumeQueuedPromise) return this._abortAndResumeQueuedPromise;
-		const operation = this._abortAndResumeQueuedMessages();
-		this._abortAndResumeQueuedPromise = operation;
-		const clearOperation = () => {
-			if (this._abortAndResumeQueuedPromise === operation) {
-				this._abortAndResumeQueuedPromise = undefined;
-			}
-		};
-		void operation.then(clearOperation, clearOperation);
-		return operation;
-	}
-
-	private async _abortAndResumeQueuedMessages(): Promise<void> {
-		this.abortRetry();
-		if (!this._isAgentRunActive) return;
-
-		this.agent.abort();
-		await this.waitForIdle();
-		if (!this.agent.hasQueuedMessages()) return;
-
-		await this._withActiveTurnCall(async () => {
-			this._isAgentRunActive = true;
-			try {
-				while (this.agent.hasQueuedMessages()) {
-					await this._refilterSystemPromptIfNeeded();
-					this._cacheHeartbeat.setSessionTarget(this._findLastAssistantMessage()?.timestamp);
-					this._cacheHeartbeat.noteActivity();
-					await this.agent.continueQueuedMessage();
-					while (await this._handlePostAgentRun()) {
-						await this.agent.continue();
-					}
-				}
-			} finally {
-				this._flushPendingBashMessages();
-				await this._emitAgentSettled();
-			}
-		});
-	}
-
 	async waitForIdle(): Promise<void> {
-		// Waiters re-check the full idle predicate in their own async context each
-		// wake: the resolver only signals "no agent run active", which is weaker
-		// than isIdle (foreign turn calls may still be unwinding).
-		while (!this.isIdle) {
-			await this._getIdleWaitPromise();
+		if (this.isIdle) {
+			return;
 		}
-	}
-
-	private async _abortForManualCompaction(abortController: AbortController): Promise<void> {
-		this.abortRetry();
-		this.agent.abort();
-		while (true) {
-			const foreignTurnCalls = this._activeTurnCalls - (this._turnCallScope.getStore() ?? 0);
-			if (
-				!this._isAgentRunActive &&
-				!this.agent.state.isStreaming &&
-				!this.agent.isProcessing &&
-				foreignTurnCalls <= 0
-			) {
-				break;
-			}
-			await this._getIdleWaitPromise();
-		}
-		if (this._manualCompactionPreflightAbortController !== abortController) {
-			throw new Error("Compaction was cancelled");
-		}
+		await this._getIdleWaitPromise();
 	}
 
 	// =========================================================================
@@ -3800,141 +2373,14 @@ export class AgentSession {
 		nextModel: Model<any>,
 		previousModel: Model<any> | undefined,
 		source: "set" | "cycle" | "restore",
-		options?: { force?: boolean },
 	): Promise<void> {
-		const modelChanged = !modelsAreEqual(previousModel, nextModel);
-		if (!modelChanged && !options?.force) return;
-		this._emit({ type: "model_changed", model: nextModel, previousModel, source });
+		if (modelsAreEqual(previousModel, nextModel)) return;
 		await this._extensionRunner.emit({
 			type: "model_select",
 			model: nextModel,
 			previousModel,
 			source,
 		});
-		if (!modelChanged) return;
-		this._refreshToolRegistry({
-			activeToolNames: syncClaudeBridgeNativeTools(this.getActiveToolNames(), nextModel),
-			activateNewTools: false,
-		});
-		await this.extendResourcesFromExtensions("reload");
-	}
-
-	/**
-	 * Select an auto-model alias that should resolve at the next prompt boundary.
-	 */
-	setPendingAutoModelAlias(requestedModel: string, routingMetadata?: Record<string, unknown>): void {
-		const trimmed = requestedModel.trim();
-		if (!trimmed) return;
-		this._pendingAutoModelRequest = { requestedModel: trimmed, routingMetadata };
-	}
-
-	private async _resolvePendingAutoModelForPrompt(promptText: string): Promise<void> {
-		// A resolution is already running for this pending request: join it instead of
-		// starting a second concurrent resolve (would emit duplicate warnings/model-selects).
-		if (this._autoModelResolveInFlight) return this._autoModelResolveInFlight;
-
-		const pending = this._pendingAutoModelRequest;
-		if (!pending) return;
-		// Capture-and-clear synchronously before the first await so a second prompt()
-		// landing in the resolution window observes no pending request. Re-armed below
-		// if the resolve throws, so a failed attempt can be retried by the next prompt.
-		this._pendingAutoModelRequest = undefined;
-
-		const run = this._runAutoModelResolve(promptText, pending);
-		this._autoModelResolveInFlight = run;
-		try {
-			await run;
-		} catch (error) {
-			this._pendingAutoModelRequest ??= pending;
-			throw error;
-		} finally {
-			this._autoModelResolveInFlight = undefined;
-		}
-	}
-
-	private async _runAutoModelResolve(promptText: string, pending: PendingAutoModelRequest): Promise<void> {
-		const currentModel = this.model;
-		if (!currentModel) {
-			throw new Error(formatNoModelSelectedMessage());
-		}
-
-		const routing = {
-			...(pending.routingMetadata ?? {}),
-			promptPreview: promptText.slice(0, 6000),
-			promptLength: promptText.length,
-		};
-		const resolved = await applyFilters(
-			extensionHookNames.modelResolve,
-			{
-				requestedModel: pending.requestedModel,
-				model: currentModel,
-				thinkingLevel: this.thinkingLevel,
-				metadata: { routing } as Record<string, unknown>,
-			},
-			{
-				cwd: this._cwd,
-				source: this._source,
-				sessionId: this.sessionManager.getSessionId(),
-				// A pending alias is resolved only at an explicit prompt/cache-domain boundary;
-				// do not let startup's existing-session guard suppress this deliberate route.
-				hasExistingSession: false,
-				modelRegistry: this._modelRegistry,
-				settingsManager: this.settingsManager,
-				sessionManager: this.sessionManager,
-			},
-		);
-
-		const nextModel = resolved.model ?? currentModel;
-		const resolvedMetadata = resolved.metadata as Record<string, unknown> | undefined;
-		const hasRoutingDecision =
-			resolvedMetadata?.llmRouterDecision !== undefined ||
-			resolvedMetadata?.llmRouterUnavailable !== undefined ||
-			typeof resolvedMetadata?.tier === "string" ||
-			!modelsAreEqual(currentModel, nextModel) ||
-			(resolved.thinkingLevel !== undefined && resolved.thinkingLevel !== this.thinkingLevel);
-		// Router explicitly unavailable OR no routing decision at all: the session
-		// continues on the concrete fallback model, but say so as a custom message —
-		// for child agents the executor lifts this into the parent-facing run
-		// warnings so the caller can cancel and re-dispatch with an explicit model.
-		const routerUnavailable = resolvedMetadata?.llmRouterUnavailable !== undefined;
-		if (!hasRoutingDecision || routerUnavailable) {
-			const message = routerUnavailable
-				? `Auto model ${pending.requestedModel} could not be routed (semantic router unavailable); continuing with ${currentModel.provider}/${currentModel.id}.`
-				: `Auto model ${pending.requestedModel} could not be routed (no routing decision); continuing with ${currentModel.provider}/${currentModel.id}.`;
-			await this.sendCustomMessage(
-				{
-					customType: "model-routing-warning",
-					content: message,
-					display: true,
-					details: {
-						requestedModel: pending.requestedModel,
-						provider: currentModel.provider,
-						modelId: currentModel.id,
-						reason: routerUnavailable ? "router_unavailable" : "no_routing_decision",
-					},
-				},
-				{ triggerTurn: false },
-			);
-			// Router-unavailable still resolved to a concrete decision (keep current
-			// model): fall through so the session records the model like any other
-			// resolution. Only a true no-decision aborts here.
-			if (!hasRoutingDecision) {
-				this._pendingAutoModelRequest = undefined;
-				return;
-			}
-		}
-		if (!this._modelRegistry.hasConfiguredAuth(nextModel)) {
-			throw new Error(`No API key for ${nextModel.provider}/${nextModel.id}`);
-		}
-
-		const previousModel = this.model;
-		this.agent.state.model = nextModel;
-		this.agent.cacheAffinityKey = createPromptCacheAffinityKey(nextModel, this.agent.state);
-		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
-		this.setThinkingLevel((resolved.thinkingLevel ?? this.thinkingLevel) as ThinkingLevel);
-		this._pendingAutoModelRequest = undefined;
-
-		await this._emitModelSelect(nextModel, previousModel, "set", { force: true });
 	}
 
 	/**
@@ -3949,10 +2395,8 @@ export class AgentSession {
 		}
 
 		const previousModel = this.model;
-		this._pendingAutoModelRequest = undefined;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
-		this.agent.cacheAffinityKey = createPromptCacheAffinityKey(model, this.agent.state);
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
@@ -4019,9 +2463,7 @@ export class AgentSession {
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
 
 		// Apply model
-		this._pendingAutoModelRequest = undefined;
 		this.agent.state.model = next.model;
-		this.agent.cacheAffinityKey = createPromptCacheAffinityKey(next.model, this.agent.state);
 		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
@@ -4056,9 +2498,7 @@ export class AgentSession {
 		const nextModel = availableModels[nextIndex];
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
-		this._pendingAutoModelRequest = undefined;
 		this.agent.state.model = nextModel;
-		this.agent.cacheAffinityKey = createPromptCacheAffinityKey(nextModel, this.agent.state);
 		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
@@ -4190,16 +2630,6 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
-	private _pruneResidentHistoryAfterCompaction(
-		reason: "manual" | "threshold" | "overflow",
-		compactionEntryId: string,
-	): void {
-		const settings = this.settingsManager.getCompactionSettings(this.model);
-		if (!settings.residentPrune) return;
-		const result = this.sessionManager.pruneResidentHistoryAfterCompaction(compactionEntryId);
-		this._emit({ type: "resident_prune", reason, result });
-	}
-
 	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
 	private async _runDefaultCompaction(
 		preparation: CompactionPreparation,
@@ -4208,16 +2638,8 @@ export class AgentSession {
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
 	): Promise<CompactionResult> {
-		// Cache-safe compaction (fork): reuse the parent turn's exact system prompt,
-		// model-facing messages, and tools for the summary request so it reuses the
-		// same cached prefix instead of busting the prompt cache. Both manual and
-		// automatic paths route through here, so building the context once here keeps
-		// the invariant in a single place (upstream's helper only passed sessionId).
-		const cacheSafeContext = {
-			systemPrompt: this.systemPrompt,
-			messages: stripModelFacingContextImages(await convertToLlm(this.agent.state.messages)),
-			tools: this.agent.state.tools,
-		};
+		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
+		const request = await this._getSummarizationRequestAuth(model, signal);
 		return compact(
 			preparation,
 			request.model,
@@ -4230,23 +2652,12 @@ export class AgentSession {
 			request.env,
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			cacheSafeContext,
-			// Route the summary request with the live routing session. The prefix above is only
-			// cached on the node that served this session's turns, and providers key cache
-			// affinity off that ID; omitting it sends a request that matches the cached
-			// prefix to a node that has never seen it. This must be the agent's routing id
-			// (what the main loop sends on every turn), not AgentSession.sessionId, which is
-			// the session-manager's persistence id and is unrelated to cache affinity.
-			this.agent.sessionId,
+			undefined, // sessionId
 		);
 	}
 
-	private _clearManualCompactionState(abortController?: AbortController): void {
-		// Fork: guard the reset so a concurrent compaction that already installed a
-		// newer controller is not clobbered (abort-controller concurrency safety).
-		if (!abortController || this._compactionAbortController === abortController) {
-			this._compactionAbortController = undefined;
-		}
+	private _clearManualCompactionState(): void {
+		this._compactionAbortController = undefined;
 		this._resolveIdleWaitIfIdle();
 	}
 
@@ -4266,42 +2677,8 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		if (
-			this._manualCompactionPreflightAbortController !== undefined ||
-			this._compactionAbortController !== undefined ||
-			this._autoCompactionAbortController !== undefined ||
-			this._branchSummaryAbortController !== undefined
-		) {
-			throw new Error("Compaction is already in progress");
-		}
-
-		const abortController = new AbortController();
-		this._manualCompactionPreflightAbortController = abortController;
-		try {
-			await this._abortForManualCompaction(abortController);
-			if (abortController.signal.aborted) {
-				throw new Error("Compaction cancelled");
-			}
-			this._compactionAbortController = abortController;
-			this._manualCompactionPreflightAbortController = undefined;
-			// Manual compaction is independently provider-capable and can run before
-			// the first prompt, so it needs the same settled tool registry.
-			await this._extensionRunner.loadDeferredExtensions();
-			if (abortController.signal.aborted) {
-				throw new Error("Compaction cancelled");
-			}
-		} catch (error) {
-			if (this._manualCompactionPreflightAbortController === abortController) {
-				this._manualCompactionPreflightAbortController = undefined;
-			}
-			if (this._compactionAbortController === abortController) {
-				this._compactionAbortController = undefined;
-			}
-			this._flushPendingBashMessages();
-			this._drainQueuedMessagesPostCompaction();
-			throw error;
-		}
-
+		await this.abort();
+		this._compactionAbortController = new AbortController();
 		this._emit({ type: "compaction_start", reason: "manual" });
 		let fromExtension = false;
 		let cancelledByExtension = false;
@@ -4335,7 +2712,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: abortController.signal,
+					signal: this._compactionAbortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -4368,10 +2745,7 @@ export class AgentSession {
 					preparation,
 					model,
 					customInstructions,
-					// Fork uses the local abortController (defense-in-depth vs. concurrent
-					// compaction races) rather than the this._compactionAbortController field.
-					abortController.signal,
-					env,
+					this._compactionAbortController.signal,
 					"manual",
 				);
 				summary = result.summary;
@@ -4381,28 +2755,13 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (abortController.signal.aborted) {
+			if (this._compactionAbortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
-			const compactionEntryId = this.sessionManager.appendCompaction(
-				summary,
-				firstKeptEntryId,
-				tokensBefore,
-				details,
-				fromExtension,
-				usage,
-			);
-			this._pruneResidentHistoryAfterCompaction("manual", compactionEntryId);
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
-			// Manual compaction is user-invoked, so nothing encloses it that would
-			// flush later — unlike auto-compaction, which runs inside _runAgentPrompt.
-			// A bash execution recorded during the summarization is deferred, and
-			// without this it stays unpersisted until some future prompt.
-			this._flushPendingBashMessages();
-			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
-
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
 
 			// Get the saved compaction entry for the extension event
@@ -4429,7 +2788,7 @@ export class AgentSession {
 				details,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
-			this._clearManualCompactionState(abortController);
+			this._clearManualCompactionState();
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -4442,7 +2801,7 @@ export class AgentSession {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = this._compactionAbortController.signal.aborted || cancelledByExtension;
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
-			this._clearManualCompactionState(abortController);
+			this._clearManualCompactionState();
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -4460,9 +2819,7 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._clearManualCompactionState(abortController);
-			this._reconnectToAgent();
-			this._drainQueuedMessagesPostCompaction();
+			this._clearManualCompactionState();
 		}
 	}
 
@@ -4470,7 +2827,6 @@ export class AgentSession {
 	 * Cancel in-progress compaction (manual or auto).
 	 */
 	abortCompaction(): void {
-		this._manualCompactionPreflightAbortController?.abort();
 		this._compactionAbortController?.abort();
 		this._autoCompactionAbortController?.abort();
 	}
@@ -4491,9 +2847,8 @@ export class AgentSession {
 	 *    remove the failed assistant message, compact, and retry the turn once.
 	 * 2. Overflow without retry: a successful response exceeded the configured
 	 *    context window; compact but preserve the completed response.
-	 * 3. Threshold: valid or estimated context usage crossed the configured
-	 *    threshold; compact before the next user prompt. After agent_end, when
-	 *    `thresholdMode` is "defer", only mark it pending.
+	 * 3. Threshold without retry: valid or estimated context usage crossed the
+	 *    configured threshold; compact without retrying the completed response.
 	 *
 	 * Each case calls `_runAutoCompaction()`. After preparation and the
 	 * `session_before_compact` hook, that method calls the lower-level `compact()`
@@ -4502,13 +2857,11 @@ export class AgentSession {
 	 *
 	 * @param assistantMessage The assistant message to check
 	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
-	 * @param thresholdMode Whether threshold compaction should run now or wait for the next prompt
 	 * @returns Whether the post-run loop should call `agent.continue()` for overflow recovery or queued messages
 	 */
 	private async _checkCompaction(
 		assistantMessage: AssistantMessage,
 		skipAbortedCheck = true,
-		thresholdMode: "run" | "defer" = "run",
 		toolResults: AgentMessage[] = [],
 	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings(this.model);
@@ -4641,7 +2994,6 @@ export class AgentSession {
 			contextTokens = directContextTokens;
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			if (thresholdMode === "defer") return false;
 			return await this._runAutoCompaction("threshold", false);
 		}
 		return false;
@@ -4658,84 +3010,15 @@ export class AgentSession {
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
-		if (this._autoCompactDisabledThisSession) {
-			return false;
-		}
-		if (
-			this._manualCompactionPreflightAbortController !== undefined ||
-			this._compactionAbortController !== undefined ||
-			this._autoCompactionAbortController !== undefined ||
-			this._branchSummaryAbortController !== undefined
-		) {
-			return false;
-		}
-
 		const model = this.model;
-		if (!model) {
-			return false;
-		}
-
 		const settings = this.settingsManager.getCompactionSettings(model);
-		const abortController = new AbortController();
-		this._autoCompactionAbortController = abortController;
+		let abortController: AbortController | undefined;
 		let started = false;
-		let preflightComplete = false;
-		let drainQueuedMessages = false;
 		let fromExtension = false;
 		let cancelledByExtension = false;
 
 		try {
-			// Auto-compaction may issue its own provider request. Most callers already
-			// crossed prompt preflight, but keep this entry point safe on its own.
-			await this._extensionRunner.loadDeferredExtensions();
-			preflightComplete = true;
-			if (abortController.signal.aborted) {
-				this._emit({
-					type: "compaction_end",
-					reason,
-					result: undefined,
-					aborted: true,
-					willRetry: false,
-				});
-				return false;
-			}
-
-			// Fixed-prefix-overflow guard: if the immovable prefix (system prompt + tools,
-			// which compaction cannot remove) alone exceeds the compaction threshold,
-			// compaction is a structural no-op - skip instead of attempting-then-looping.
-			const compactionThreshold = model.contextWindow - settings.reserveTokens;
-			const fixedPrefixTokens = this._estimateFixedPrefixTokens();
-			if (reason === "threshold" && fixedPrefixTokens > compactionThreshold) {
-				this._emit({
-					type: "compaction_end",
-					reason,
-					result: undefined,
-					aborted: false,
-					willRetry: false,
-					errorMessage:
-						"Auto-compaction cannot help: the fixed prefix (system prompt + tools) alone exceeds the compaction threshold. Reduce pinned context or switch to a larger-context model.",
-				});
-				return false;
-			}
-
-			const branchForRapidRefill = this.sessionManager.getBranch();
-			const rapidRefill = evaluateRapidRefill({
-				hadPriorCompaction: getLatestCompactionEntry(branchForRapidRefill) !== null,
-				turnsSinceCompaction: this._assistantTurnsAfterCompaction(branchForRapidRefill),
-				consecutiveRapidRefills: this._consecutiveRapidRefills,
-			});
-			this._consecutiveRapidRefills = rapidRefill.consecutiveRapidRefills;
-			if (rapidRefill.action === "trip") {
-				this._consecutiveRapidRefills = 0;
-				this._emit({
-					type: "compaction_end",
-					reason,
-					result: undefined,
-					aborted: false,
-					willRetry: false,
-					errorMessage:
-						"Auto-compaction is thrashing: context refilled to the limit within 3 turns of the previous compaction, 3 times in a row. A file being read or a tool output is likely too large for the context window. Try reading in smaller chunks, or use /new to start fresh.",
-				});
+			if (!model) {
 				return false;
 			}
 
@@ -4745,8 +3028,10 @@ export class AgentSession {
 				return false;
 			}
 
-			this._emit({ type: "compaction_start", reason });
+			abortController = new AbortController();
+			this._autoCompactionAbortController = abortController;
 			started = true;
+			this._emit({ type: "compaction_start", reason });
 			abortController.signal.throwIfAborted();
 
 			let extensionCompaction: CompactionResult | undefined;
@@ -4804,21 +3089,10 @@ export class AgentSession {
 			}
 			abortController.signal.throwIfAborted();
 
-			const compactionEntryId = this.sessionManager.appendCompaction(
-				summary,
-				firstKeptEntryId,
-				tokensBefore,
-				details,
-				fromExtension,
-				usage,
-			);
-			this._pruneResidentHistoryAfterCompaction(reason, compactionEntryId);
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
-			this._capMidRunCompactionToolResults();
-			// Read post-cap state, not a rebuilt projection: the cap replaces slots in
-			// agent.state.messages and intentionally leaves the session entries uncapped.
-			const estimatedTokensAfter = estimateMessagesTokens(this.agent.state.messages);
+			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
 
 			// Get the saved compaction entry for the extension event
 			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
@@ -4843,7 +3117,6 @@ export class AgentSession {
 				usage,
 				details,
 			};
-			this._consecutiveCompactionFailures = 0;
 			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) return true;
@@ -4852,54 +3125,8 @@ export class AgentSession {
 			// Continue once so queued messages are delivered.
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
-			if (!preflightComplete) {
-				drainQueuedMessages = true;
-				throw error;
-			}
 			const message = error instanceof Error ? error.message : "compaction failed";
 			const aborted = abortController?.signal.aborted === true || cancelledByExtension;
-			if (!aborted && isTransientCompactionError(message)) {
-				if (started) {
-					this._emit({
-						type: "compaction_end",
-						reason,
-						result: undefined,
-						aborted: false,
-						willRetry: false,
-						errorMessage: `${
-							reason === "overflow" ? "Context overflow recovery" : "Auto-compaction"
-						} hit a transient provider error; it will be retried and does not count toward the circuit breaker: ${message}`,
-					});
-				}
-				return false;
-			}
-
-			if (!aborted) {
-				this._consecutiveCompactionFailures++;
-				if (this._consecutiveCompactionFailures >= COMPACTION_FAILURE_TRIP_COUNT) {
-					this._autoCompactDisabledThisSession = true;
-					const circuitBreakerErrorMessage =
-						"Auto-compaction circuit breaker tripped after 3 consecutive failures — auto-compaction is disabled for the rest of this session. Try /new to start fresh or switch to a larger-context model.";
-					this._emit({
-						type: "compaction_end",
-						reason,
-						result: undefined,
-						aborted: false,
-						willRetry: false,
-						errorMessage: circuitBreakerErrorMessage,
-					});
-					if (started) {
-						await this._emitSessionCompactFailed({
-							reason,
-							errorMessage: circuitBreakerErrorMessage,
-							aborted: false,
-							willRetry: false,
-							fromExtension,
-						});
-					}
-					return false;
-				}
-			}
 			if (started) {
 				const errorMessage = aborted
 					? undefined
@@ -4928,9 +3155,6 @@ export class AgentSession {
 				this._autoCompactionAbortController = undefined;
 			}
 			this._resolveIdleWaitIfIdle();
-			if (drainQueuedMessages) {
-				this._drainQueuedMessagesAfterCompactionLifecycle();
-			}
 		}
 	}
 
@@ -4965,29 +3189,11 @@ export class AgentSession {
 		if (bindings.onError !== undefined) {
 			this._extensionErrorListener = bindings.onError;
 		}
-		if (bindings.slotUIActions !== undefined) {
-			this._extensionSlotUIActions = bindings.slotUIActions;
-		}
 
 		this._applyExtensionBindings(this._extensionRunner);
 		await this._extensionRunner.emit(this._sessionStartEvent);
 		this._extensionRunner.reportUnhandledMcpServers();
 		await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
-		this._scheduleDeferredExtensionLoading();
-	}
-
-	/** Load deferred extensions now when a child must activate a parent-visible tool. */
-	async loadDeferredExtensions(): Promise<void> {
-		await this._extensionRunner.loadDeferredExtensions();
-	}
-
-	private _scheduleDeferredExtensionLoading(): void {
-		const runner = this._extensionRunner;
-		if (runner.getDeferredExtensionPaths().length === 0) return;
-		setTimeout(() => {
-			if (this._extensionRunner !== runner) return;
-			void runner.loadDeferredExtensions();
-		}, 250);
 	}
 
 	private async extendResourcesFromExtensions(reason: "startup" | "reload"): Promise<void> {
@@ -5045,9 +3251,6 @@ export class AgentSession {
 	private _applyExtensionBindings(runner: ExtensionRunner): void {
 		runner.setUIContext(this._extensionUIContext, this._extensionMode);
 		runner.bindCommandContext(this._extensionCommandContextActions);
-		if (this._extensionSlotUIActions) {
-			runner.bindSlotUI(this._extensionSlotUIActions);
-		}
 
 		this._extensionErrorUnsubscriber?.();
 		this._extensionErrorUnsubscriber = this._extensionErrorListener
@@ -5067,190 +3270,6 @@ export class AgentSession {
 		}
 
 		this.agent.state.model = refreshedModel;
-		this.agent.cacheAffinityKey = createPromptCacheAffinityKey(refreshedModel, this.agent.state);
-	}
-
-	private _getAgentParentSnapshot(): AgentParentSnapshot {
-		return {
-			activeTools: this.getActiveToolNames(),
-			executableTools: this.getActiveExecutableTools(),
-			providerTools: this.getActiveToolProviderSchemas(),
-			cacheAffinityKey: this.getPromptCacheAffinityKey(),
-			sessionManager: this.sessionManager,
-			model: this.model,
-			thinkingLevel: this.thinkingLevel,
-			// Capture the parent's frozen turn-start system prompt so fork children
-			// inherit byte-identical system + tools bytes and hit the parent's cached
-			// prefix.
-			systemPrompt: this.agent.state.systemPrompt,
-			signal: this.agent.signal,
-		};
-	}
-
-	private _createAgentEngine(): AgentEngine {
-		if (!this._agentToolServices) {
-			throw new Error("forkAgent is not available: agent tool services are not bound to this session");
-		}
-		return createAgentEngine({
-			parentServices: this._agentToolServices,
-			getParentSnapshot: () => this._getAgentParentSnapshot(),
-			onBackgroundTerminal: (notification) => this._emitAgentCompletion(notification),
-			onBackgroundTerminalListener: (unsubscribe) => {
-				if (this._disposed) unsubscribe();
-				else this._backgroundAgentTerminalUnsubscribers.add(unsubscribe);
-			},
-		});
-	}
-
-	private _getAgentEngine(): AgentEngine {
-		// Profile/depth denial must fail closed before extension-provided engines are
-		// considered. Keeping the schema visible for fork cache identity does not
-		// grant execution capability.
-		if (!this._agentToolServices) {
-			throw new Error("Agent is not available: agent tool services are not bound to this session");
-		}
-		const processEngine = getExtensionProcessService<AgentEngine>(AGENTS_ENGINE_SERVICE_ID);
-		if (processEngine) return processEngine;
-		const engine = this._extensionRunner.getService<AgentEngine>(AGENTS_ENGINE_SERVICE_ID);
-		if (engine) return engine;
-		return this._createAgentEngine();
-	}
-
-	private async _forkAgentFromExtension(opts: ForkAgentOptions): Promise<ForkAgentResult> {
-		return this._getAgentEngine().fork(opts);
-	}
-
-	/**
-	 * Push a structured agent_completion message when a background agent
-	 * reaches a terminal status or intentionally parks between turns. Mirrors Claude Code's
-	 * <task_notification> shape: runId, status, summary, result preview,
-	 * outputPaths, sessionPaths, usage.
-	 *
-	 * Delivery strategy (intentionally no triggerTurn:true here):
-	 *   - When the parent is streaming/compacting/processing, sendCustomMessage
-	 *     routes to the followUp queue — the message lands in the next drain,
-	 *     emits message_start when the loop picks it up, and pi-goal's wake
-	 *     hook fires from there.
-	 *   - When the parent is idle, sendCustomMessage takes the "push to
-	 *     messages + emit message_start synchronously" branch, then wakeOnIdle
-	 *     schedules one debounced continuation turn so the model reads the
-	 *     notification autonomously (the race with a user prompt arriving in
-	 *     the same tick is handled by the busy re-check in _scheduleIdleWake).
-	 *     Matches Claude Code's task-notification queue semantics.
-	 */
-	private _emitAgentCompletion(notification: AgentBackgroundCompletion): void {
-		const lines: string[] = [
-			`<agent_completion>`,
-			`<run_id>${notification.runId}</run_id>`,
-			`<status>${notification.status}</status>`,
-			`<mode>${notification.mode}</mode>`,
-			`<agents>${notification.agents.join(", ")}</agents>`,
-			`<summary>${notification.summary}</summary>`,
-		];
-		if (notification.parked) lines.push(`<parked>true</parked>`);
-		if (typeof notification.durationMs === "number") {
-			lines.push(`<duration_ms>${notification.durationMs}</duration_ms>`);
-		}
-		if (typeof notification.totalTokens === "number") {
-			lines.push(`<total_tokens>${notification.totalTokens}</total_tokens>`);
-		}
-		if (typeof notification.toolCallCount === "number") {
-			lines.push(`<tool_calls>${notification.toolCallCount}</tool_calls>`);
-		}
-		for (const path of notification.outputPaths) lines.push(`<output_path>${path}</output_path>`);
-		for (const path of notification.sessionPaths) lines.push(`<session_path>${path}</session_path>`);
-		if (notification.error) lines.push(`<error>${notification.error}</error>`);
-		if (notification.result) {
-			lines.push(`<result_preview>`);
-			lines.push(notification.result);
-			lines.push(`</result_preview>`);
-		}
-		lines.push(`</agent_completion>`);
-		lines.push(
-			notification.parked
-				? `\nThe persistent background agent is idle between turns, not interrupted or terminal. Do NOT call \`agent\` action=status/detail to verify. Use \`agent\` action=inject when it should process another turn; read output_path or session_path for the transcript.`
-				: `\nThe background agent has finished. Do NOT call \`agent\` action=status/detail to verify — the run is terminal. Read output_path or session_path if you need the full transcript.`,
-		);
-		void this.sendCustomMessage(
-			{
-				customType: "agent_completion",
-				content: lines.join("\n"),
-				display: false,
-				details: notification,
-			},
-			{ deliverAs: "followUp", wakeOnIdle: true },
-		).catch(() => {
-			/* sendCustomMessage logs its own runtime errors; don't crash the lifecycle listener. */
-		});
-	}
-
-	/**
-	 * Push a task_notification message when a background bash job reaches a
-	 * terminal lifecycle event. The registry constructs the complete payload
-	 * before delivery, so output-limit stops retain their distinct notification
-	 * type instead of being flattened into ordinary completion.
-	 *
-	 * Delivery uses the same `deliverAs: "followUp", wakeOnIdle: true` strategy
-	 * as agent completions: queued when the loop is busy, picked up on the next
-	 * drain; at idle, message_start fires synchronously and wakeOnIdle drives
-	 * one debounced continuation turn.
-	 */
-	public emitBashCompletion(notification: BackgroundShellNotification): void {
-		this._emitBashNotification(notification);
-	}
-
-	/** Deliver the same structured payload for an actionable prompt stall. */
-	public emitBashStall(notification: BackgroundShellNotification): void {
-		this._emitBashNotification(notification);
-	}
-
-	private _emitBashNotification(notification: BackgroundShellNotification): void {
-		const lines: string[] = [
-			`<task_notification>`,
-			`<task_id>${notification.taskId}</task_id>`,
-			`<task_type>background_bash</task_type>`,
-			`<type>${notification.type}</type>`,
-			`<status>${notification.status}</status>`,
-			`<summary>${notification.summary}</summary>`,
-			`<output_path>${notification.outputPath}</output_path>`,
-		];
-		lines.push(`</task_notification>`);
-		lines.push(`\n${notification.summary} Its output can be inspected at output_path.`);
-		void this.sendCustomMessage(
-			{
-				customType: notification.type,
-				content: lines.join("\n"),
-				display: false,
-				details: notification,
-			},
-			{ deliverAs: "followUp", wakeOnIdle: true },
-		).catch(() => {
-			/* sendCustomMessage logs its own errors; never crash the bg lifecycle listener. */
-		});
-	}
-
-	private _transcriptAppendFromExtension(entry: TranscriptEntry): void {
-		if (!entry || typeof entry !== "object") {
-			throw new Error("transcript.append requires a TranscriptEntry object");
-		}
-		if (entry.kind === "memory_saved") {
-			const verb: "Saved" | "Improved" = entry.verb === "Improved" ? "Improved" : "Saved";
-			const paths = Array.isArray(entry.paths) ? entry.paths.filter((p): p is string => typeof p === "string") : [];
-			const summary = `${verb} ${paths.length} ${paths.length === 1 ? "memory" : "memories"}`;
-			void this.sendCustomMessage(
-				{
-					customType: "memory_saved",
-					content: paths.length > 0 ? `${summary}\n${paths.join("\n")}` : summary,
-					display: true,
-					details: { verb, paths },
-				},
-				{ triggerTurn: false },
-			).catch(() => {
-				/* sendCustomMessage logs runtime errors via emitError; do not crash the extension hook. */
-			});
-			return;
-		}
-		// Unknown kinds: ignore rather than crash; future kinds will be added as the union grows.
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
@@ -5282,23 +3301,7 @@ export class AgentSession {
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
-					// DIAG: capture caller stack at the synchronous call site so we can
-					// attribute async runtime errors to the originating extension.
-					const callerStack = new Error("sendMessage callsite").stack;
 					this.sendCustomMessage(message, options).catch((err) => {
-						try {
-							const diagPath = `${process.env.HOME}/.pi/agent/logs/runtime-errors.log`;
-							mkdirSync(dirname(diagPath), { recursive: true });
-							appendFileSync(
-								diagPath,
-								`\n[${new Date().toISOString()}] send_message error: ${err instanceof Error ? err.message : String(err)}\n` +
-									`customType=${(message as { customType?: string })?.customType ?? "?"} triggerTurn=${(options as { triggerTurn?: boolean })?.triggerTurn ?? false} deliverAs=${(options as { deliverAs?: string })?.deliverAs ?? "-"}\n` +
-									`err.stack:\n${err instanceof Error ? err.stack : "(no stack)"}\n` +
-									`caller.stack:\n${callerStack}\n`,
-							);
-						} catch {
-							/* swallow logging errors */
-						}
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_message",
@@ -5307,20 +3310,7 @@ export class AgentSession {
 					});
 				},
 				sendUserMessage: (content, options) => {
-					const callerStack = new Error("sendUserMessage callsite").stack;
 					this.sendUserMessage(content, options).catch((err) => {
-						try {
-							const diagPath = `${process.env.HOME}/.pi/agent/logs/runtime-errors.log`;
-							mkdirSync(dirname(diagPath), { recursive: true });
-							appendFileSync(
-								diagPath,
-								`\n[${new Date().toISOString()}] send_user_message error: ${err instanceof Error ? err.message : String(err)}\n` +
-									`err.stack:\n${err instanceof Error ? err.stack : "(no stack)"}\n` +
-									`caller.stack:\n${callerStack}\n`,
-							);
-						} catch {
-							/* swallow logging errors */
-						}
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_user_message",
@@ -5346,16 +3336,9 @@ export class AgentSession {
 				},
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
-				getToolDefinitions: () => this.getToolDefinitions(),
-				getCustomEntries: (customType) =>
-					this.sessionManager
-						.getBranch()
-						.filter((entry): entry is CustomEntry => entry.type === "custom" && entry.customType === customType),
 				getSettings: () => this.settingsManager.getSettings(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
-				setDeferredOverrides: (names) => this.setDeferredToolOverrides(names),
-				setToolNamespaces: (map) => this.setToolNamespaces(map),
-				refreshTools: (options) => this._refreshToolRegistry(options),
+				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
 				setModel: async (model) => {
 					if (!this._modelRuntime.hasConfiguredAuth(model.provider)) return false;
@@ -5364,8 +3347,6 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
-				setExtensionConfigValue: (namespace, key, value) =>
-					this.settingsManager.setExtensionConfigValue(namespace, key, value),
 			},
 			{
 				getModel: () => this.model,
@@ -5373,26 +3354,16 @@ export class AgentSession {
 				isIdle: () => this.isIdle,
 				isProjectTrusted: () => this.settingsManager.isProjectTrusted(),
 				getSignal: () => this.agent.signal,
-				abort: (reason?: unknown) => {
+				abort: () => {
 					if (this._extensionAbortHandler) {
-						this._extensionAbortHandler(reason);
+						this._extensionAbortHandler();
 						return;
 					}
-					this.agent.abort(reason);
-				},
-				requestStopAfterTurn: (reason) => {
-					// Latch unconditionally: a tool's execute() can call this mid-turn before
-					// this.isStreaming reflects the in-flight state (see goal-wait-failures
-					// catalog, 2026-07-09), and _extensionStopAfterTurnReason is already reset
-					// on every agent_start/agent_end, so latching outside a run is harmless.
-					this._extensionStopAfterTurnReason = reason?.trim() || "extension requested stop after turn";
+					void this.abort();
 				},
 				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {
 					this._extensionShutdownHandler?.();
-				},
-				reload: async () => {
-					await this.reload();
 				},
 				getContextUsage: () => this.getContextUsage(),
 				compact: (options) => {
@@ -5407,9 +3378,6 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
-				getEffectiveSystemPrompt: () => this.getEffectiveSystemPrompt(),
-				forkAgent: (opts) => this._forkAgentFromExtension(opts),
-				transcriptAppend: (entry) => this._transcriptAppendFromExtension(entry),
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 				executeTool: (callerId, name, args, options) => this._executeNestedToolCall(callerId, name, args, options),
 				getCallableTools: () => this._getCallableTools(),
@@ -5458,33 +3426,10 @@ export class AgentSession {
 				definition,
 				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),
 			})),
-		].filter(
-			(tool) =>
-				isAllowedTool(tool.definition.name) &&
-				isToolAvailableForModel(tool.definition, this.model) &&
-				!(tool.definition.name === "agent" && this._baseToolDefinitions.has("agent")),
-		);
-		// Extensions can fully supersede a core base builtin (e.g. native-tool-overrides
-		// provides capitalized Read/Edit/... and TaskStop, replacing core's
-		// lowercase read/edit/... and bash_output/bash_kill). Collect the declared
-		// replacements so the superseded builtins drop out of the registry — the
-		// override becomes the single tool per capability. No declaration ⇒ base tools
-		// stay, so upstream/vanilla sessions are unaffected. Deterministic per build
-		// (no per-turn state), so the tools[] prefix stays cache-stable.
-		const replacedBuiltinNames = new Set<string>();
-		for (const tool of allCustomTools) {
-			for (const builtinName of tool.definition.replacesBuiltins ?? []) {
-				replacedBuiltinNames.add(builtinName);
-			}
-		}
+		].filter((tool) => isAllowedTool(tool.definition.name));
 		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
 			Array.from(this._baseToolDefinitions.entries())
-				.filter(
-					([name, definition]) =>
-						isAllowedTool(name) &&
-						!replacedBuiltinNames.has(name) &&
-						isToolAvailableForModel(definition, this.model),
-				)
+				.filter(([name]) => isAllowedTool(name))
 				.map(([name, definition]) => [
 					name,
 					{
@@ -5520,7 +3465,7 @@ export class AgentSession {
 		const wrappedExtensionTools = wrapRegisteredTools(allCustomTools, runner);
 		const wrappedBuiltInTools = wrapRegisteredTools(
 			Array.from(this._baseToolDefinitions.values())
-				.filter((definition) => isAllowedTool(definition.name) && !replacedBuiltinNames.has(definition.name))
+				.filter((definition) => isAllowedTool(definition.name))
 				.map((definition) => ({
 					definition,
 					sourceInfo: createSyntheticSourceInfo(`${BUILTIN_PATH_PREFIX}${definition.name}`, {
@@ -5534,36 +3479,7 @@ export class AgentSession {
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
-		// Keep Agent/Task schemas byte-identical in denied fork sessions, but guard
-		// execution in this session's registry before any runtime/process engine can
-		// be resolved. The closure is live for SDK/test consumers that bind services
-		// after construction and isolated when sessions share a ResourceLoader.
-		for (const name of ["agent", "Agent", "Task"]) {
-			const tool = toolRegistry.get(name);
-			if (!tool) continue;
-			const execute = tool.execute;
-			toolRegistry.set(name, {
-				...tool,
-				execute: async (toolCallId, params, signal, onUpdate) => {
-					if (!this._agentToolServices) {
-						throw new Error("Agent is not available: agent tool services are not bound to this session");
-					}
-					return runWithAgentEngineResolver(
-						() => this._getAgentEngine(),
-						() => execute(toolCallId, params, signal, onUpdate),
-					);
-				},
-			});
-		}
 		this._toolRegistry = toolRegistry;
-		// Re-apply post-registration deferral overrides onto the freshly rebuilt
-		// registry + definitions so deferLoading stays forced across every rebuild
-		// (setDeferredToolOverrides seam). No-op when the override set is empty.
-		this._applyDeferredOverrides();
-		// Re-stamp post-registration namespace annotations (setToolNamespaces seam).
-		// No-op when the map is empty. Pure serialization metadata; order vs
-		// deferral overrides is irrelevant (disjoint fields).
-		this._applyToolNamespaces();
 
 		const nextActiveToolNames = (
 			options?.activeToolNames ? [...options.activeToolNames] : [...previousActiveToolNames]
@@ -5578,13 +3494,9 @@ export class AgentSession {
 			}
 		} else if (options?.includeAllExtensionTools) {
 			for (const tool of wrappedExtensionTools) {
-				const sourceInfo = definitionRegistry.get(tool.name)?.sourceInfo;
-				if (sourceInfo?.source === "builtin") continue;
-				nextActiveToolNames.push(tool.name);
-
 				if (this._isActivatedOnRegistration(tool.name)) nextActiveToolNames.push(tool.name);
 			}
-		} else if (!options?.activeToolNames && options?.activateNewTools !== false) {
+		} else if (!options?.activeToolNames) {
 			for (const toolName of this._toolRegistry.keys()) {
 				if (!previousActivatedOnRegistration.has(toolName) && this._isActivatedOnRegistration(toolName)) {
 					nextActiveToolNames.push(toolName);
@@ -5592,33 +3504,7 @@ export class AgentSession {
 			}
 		}
 
-		if (this._toolRegistry.has("tool_search")) {
-			nextActiveToolNames.push("tool_search");
-		}
-
-		// Fix #3 (cache-break-investigation-2026-05-16.md): preserve builtin
-		// and alwaysLoad-tagged tools that were active before this refresh.
-		// Bridge cache-break log shows Bash/Edit/Write/Grep/Read each removed
-		// ~2,560× per 18d — that churn invalidates the tools-slot cache prefix.
-		// Trigger: when a caller passes `options.activeToolNames` with a narrow
-		// list, the carry-over from previousActiveToolNames is bypassed and
-		// protected tools silently drop out. Restore them here.
-		//
-		// Constraint: only restore tools that WERE previously active. Sessions
-		// created with `noTools: "builtin"` start with builtins registered but
-		// inactive — we must not force them in. Scoped to the refresh path so
-		// direct setActiveToolsByName callers keep replacement semantics.
-		for (const name of previousActiveToolNames) {
-			if (!isAllowedTool(name)) continue;
-			const tool = this._toolRegistry.get(name);
-			if (!tool) continue;
-			if (allToolNames.has(name as ToolName) || tool.alwaysLoad === true) {
-				nextActiveToolNames.push(name);
-			}
-		}
-
 		this.setActiveToolsByName([...new Set(nextActiveToolNames)]);
-		void this._extensionRunner.emit({ type: "tools_changed" });
 	}
 
 	/** Whether activating the tool declares it to the model. */
@@ -5637,22 +3523,10 @@ export class AgentSession {
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
 	}): void {
-		// Trigger logger (Fix #3 in cache-break-investigation-2026-05-16.md).
-		// Gate on PI_LOG_BUILD_RUNTIME=1. Bucket the captured stacks to find the
-		// top 3 callers of mid-session rebuilds (extension hot-reload?
-		// sub-agent return? settings-watch?). Stderr only — no behavior change.
-		if (process.env.PI_LOG_BUILD_RUNTIME === "1") {
-			const trace = new Error("BUILD-RUNTIME").stack ?? "";
-			const caller = trace.split("\n").slice(2, 7).join(" | ");
-			process.stderr.write(
-				`[BUILD-RUNTIME] activeTools=${options.activeToolNames?.length ?? "-"} ` +
-					`includeAll=${options.includeAllExtensionTools ?? false} caller=${caller}\n`,
-			);
-		}
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
 		const shellPath = this.settingsManager.getShellPath();
-		const baseToolDefinitions: Record<string, ToolDefinition> = this._baseToolsOverride
+		const baseToolDefinitions = this._baseToolsOverride
 			? Object.fromEntries(
 					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
 						name,
@@ -5661,26 +3535,14 @@ export class AgentSession {
 				)
 			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: {
-						commandPrefix: shellCommandPrefix,
-						shellPath,
-						defaultTimeoutSeconds: this.settingsManager.getBashTimeoutSeconds(),
-					},
+					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 
-		if (!this._baseToolsOverride) {
-			delete baseToolDefinitions.BashOutput;
-			delete baseToolDefinitions.KillShell;
-			delete baseToolDefinitions.agent;
-			delete baseToolDefinitions.Agent;
-			delete baseToolDefinitions.Task;
-		}
+		this._baseToolDefinitions = new Map(
+			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
+		);
 
-		this._baseToolDefinitions = new Map(Object.entries(baseToolDefinitions));
-
-		// Use the runner accessor so built-in hook actions (agents, bashBgJobs,
-		// deferredTools) are dispatched alongside user extensions.
-		const extensionsResult = this._resourceLoader.getExtensionsForRunner();
+		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
 				extensionsResult.runtime.flagValues.set(name, value);
@@ -5689,13 +3551,10 @@ export class AgentSession {
 
 		this._extensionRunner = new ExtensionRunner(
 			extensionsResult.extensions,
-			extensionsResult.deferredExtensions,
 			extensionsResult.runtime,
-			extensionsResult.eventBus,
 			this._cwd,
 			this.sessionManager,
-			this._modelRegistry,
-			this._source,
+			new ModelRegistry(this._modelRuntime),
 		);
 		if (this._extensionRunnerRef) {
 			this._extensionRunnerRef.current = this._extensionRunner;
@@ -5703,16 +3562,10 @@ export class AgentSession {
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
 
-		// Keep extension-owned `BashOutput`/`KillShell` active by default so sessions
-		// without pi-tool-search still get the full bash job-control trio. Without
-		// them, run_in_background:true returns a bgId the model can never read or stop.
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["Read", "Bash", "BashOutput", "KillShell", "Edit", "Write", "Agent", "Task", "Grep", "Glob"];
-		const baseActiveToolNames = syncClaudeBridgeNativeTools(
-			options.activeToolNames ?? defaultActiveToolNames,
-			this.model,
-		);
+			: ["read", "bash", "edit", "write"];
+		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
 			includeAllExtensionTools: options.includeAllExtensionTools,
@@ -5744,7 +3597,6 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			this._extensionRunner.reportUnhandledMcpServers();
 			await this.extendResourcesFromExtensions("reload");
-			this._scheduleDeferredExtensionLoading();
 		}
 	}
 
@@ -5939,14 +3791,8 @@ export class AgentSession {
 			excludeFromContext: options?.excludeFromContext,
 		};
 
-		// Defer while the agent is busy, to avoid breaking tool_use/tool_result ordering.
-		// isStreaming alone is too narrow: compaction runs its own LLM calls outside
-		// agent.runWithLifecycle(), and agent.isProcessing also covers the prompt() setup
-		// window and the agent_end listener phase. A bash execution landing in one of those
-		// windows pushes a visible user message between an assistant tool_use and its
-		// tool_results, which the provider rejects for the rest of the session. Deferred
-		// messages are flushed by the enclosing run's finally block or before the next prompt.
-		if (this.isStreaming || this.isCompacting || this.agent.isProcessing) {
+		// If agent is streaming, defer adding to avoid breaking tool_use/tool_result ordering
+		if (this.isStreaming) {
 			// Queue for later - will be flushed on agent_end
 			this._pendingBashMessages.push(bashMessage);
 		} else {
@@ -6158,12 +4004,6 @@ export class AgentSession {
 				newLeafId = targetId;
 			}
 
-			// Branch summarization sets _branchSummaryAbortController, so isCompacting
-			// defers any bash executed while it runs. Persist those against the leaf
-			// they were run on — after the switch below they would land on the branch
-			// being navigated to, in front of unrelated model context.
-			this._flushPendingBashMessages();
-
 			// Switch leaf (with or without summary)
 			// Summary is attached at the navigation target position (newLeafId), not the old branch
 			let summaryEntry: BranchSummaryEntry | undefined;
@@ -6303,11 +4143,6 @@ export class AgentSession {
 		const contextWindow = model.contextWindow ?? 0;
 		if (contextWindow <= 0) return undefined;
 
-		const contextUsageService =
-			this._extensionRunner?.getService<ContextUsageSnapshotService>(CONTEXT_USAGE_SERVICE_ID);
-		const serviceUsage = contextUsageService?.get();
-		const matchingServiceUsage = serviceUsage?.contextWindow === contextWindow ? serviceUsage : undefined;
-
 		// After compaction, the last assistant usage reflects pre-compaction context size.
 		// We can only trust usage from an assistant that responded after the latest compaction.
 		// If no such assistant exists, context token count is unknown until the next LLM response.
@@ -6316,8 +4151,6 @@ export class AgentSession {
 		const latestCompaction = getLatestCompactionEntry(branch);
 
 		if (latestCompaction) {
-			// Upstream's projection-based post-compaction check: entry-id driven, so it
-			// stays correct when a compaction entry projects to zero messages.
 			const projectedAssistants = new Set(
 				projection.entries.flatMap((entry) =>
 					entry.messages.some(
@@ -6335,41 +4168,14 @@ export class AgentSession {
 			const hasPostCompactionUsage = branch
 				.slice(compactionIndex + 1)
 				.some((entry) => projectedAssistants.has(entry.id));
-			if (!hasPostCompactionUsage) {
-				// Fork-only: keep the service snapshot's details on the unknown-token path.
-				return { tokens: null, contextWindow, percent: null, details: matchingServiceUsage?.details };
-			}
+			if (!hasPostCompactionUsage) return { tokens: null, contextWindow, percent: null };
 		}
 
-		// Projection-aware estimate: unlike the fork's previous estimateContextTokens(this.messages),
-		// this invalidates provider usage recorded before a later context_edit/compaction.
 		const estimate = estimateProjectedContextTokens(projection, branch);
-		if (estimate.lastUsageIndex !== null) {
-			const tokens = estimate.tokens;
-			return {
-				tokens,
-				contextWindow,
-				percent: (tokens / contextWindow) * 100,
-				details: {
-					...matchingServiceUsage?.details,
-					source: "provider_usage",
-					providerUsageTokens: estimate.usageTokens,
-				},
-			};
-		}
-
-		if (matchingServiceUsage) return matchingServiceUsage;
-
-		// The projection materializes the system prompt as a real message, so
-		// estimate.tokens already counts it. The fork's previous
-		// estimateContextTokens(this.messages) did not, hence the old
-		// `+ estimateSystemPromptTokens(this.systemPrompt)` — adding it here now
-		// double-counts the prompt (upstream returns estimate.tokens directly).
-		const tokens = estimate.tokens;
-		const percent = (tokens / contextWindow) * 100;
+		const percent = (estimate.tokens / contextWindow) * 100;
 
 		return {
-			tokens,
+			tokens: estimate.tokens,
 			contextWindow,
 			percent,
 		};

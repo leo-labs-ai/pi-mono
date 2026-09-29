@@ -10,7 +10,6 @@
 
 import { type Api, type Context, type Model, registerApiProvider, streamSimple } from "@lue-labs/pi-ai/compat";
 import { getAgentDir } from "@lue-labs/pi-coding-agent";
-import { type Api, type Context, type Model, registerApiProvider, streamSimple } from "@lue-labs/pi-ai/compat";
 import { readFileSync } from "fs";
 import { join } from "path";
 import { MODELS, streamGitLabDuo } from "./index.ts";

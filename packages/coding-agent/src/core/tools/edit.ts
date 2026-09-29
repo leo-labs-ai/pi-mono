@@ -6,7 +6,6 @@ import { splitBom } from "../../utils/text.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
-	type DiffHunk,
 	detectLineEnding,
 	type Edit,
 	generateDiffString,
@@ -16,7 +15,7 @@ import {
 } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
-import { createEditRenderers, type EditRenderState } from "./renderers/edit.ts";
+import { type EditRenderState, editRenderers } from "./renderers/edit.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const replaceEditSchema = Type.Object(
@@ -44,13 +43,10 @@ const editSchema = Type.Object(
 export const editToolSystemPromptContribution = {
 	snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
 	guidelines: [
-		"edits[].oldText must match the file exactly, including whitespace and newlines. Prefer text copied from recent Read output or another current tool result.",
-		"When using text from Read output, preserve the actual file content exactly; do not include display-only line numbers, prefixes, or separators.",
+		"Use edit for precise changes (edits[].oldText must match exactly)",
 		"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
 		"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
-		"Keep edits[].oldText as small as possible while still being unique in the file. Prefer the shortest stable surrounding lines over large copied blocks.",
-		"If edit reports that oldText was not found, read the target region and retry with exact current text; do not repeat the same oldText.",
-		"After edit succeeds, do not re-read the file to confirm the change landed — edit returns an error if it failed. Re-read only when you need the updated content for a later change.",
+		"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
 	],
 } as const;
 
@@ -78,8 +74,6 @@ export interface EditToolDetails {
 	patch: string;
 	/** Line number of the first change in the new file (for editor navigation) */
 	firstChangedLine?: number;
-	/** Structured hunks for rich syntax-highlighted diff rendering */
-	hunks?: DiffHunk[];
 }
 
 /**
@@ -102,8 +96,6 @@ const defaultEditOperations: EditOperations = {
 };
 
 export interface EditToolOptions {
-	toolName?: "edit" | "Edit";
-	label?: string;
 	/** Custom operations for file editing. Default: local filesystem */
 	operations?: EditOperations;
 }
@@ -153,16 +145,13 @@ export function createEditToolDefinition(
 	options?: EditToolOptions,
 ): ToolDefinition<typeof editSchema, EditToolDetails | undefined, EditRenderState> {
 	const ops = options?.operations ?? defaultEditOperations;
-	const toolName = options?.toolName ?? "edit";
-	const label = options?.label ?? "Edit";
 	return {
-		name: toolName,
-		label,
+		name: "edit",
+		label: "edit",
 		description:
 			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
 		promptSnippet: editToolSystemPromptContribution.snippet,
 		promptGuidelines: [...editToolSystemPromptContribution.guidelines],
-		executionMode: "sequential",
 		parameters: editSchema,
 		constrainedSampling: { type: "json_schema", strict: "prefer" },
 		renderShell: "self",
@@ -218,16 +207,11 @@ export function createEditToolDefinition(
 							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
 						},
 					],
-					details: {
-						diff: diffResult.diff,
-						patch,
-						firstChangedLine: diffResult.firstChangedLine,
-						hunks: diffResult.hunks,
-					},
+					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
 				};
 			});
 		},
-		...createEditRenderers(label),
+		...editRenderers,
 	};
 }
 

@@ -129,14 +129,6 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 
 On native Windows, `app.suspend` has no default because Windows terminals do not support Unix job control. If you assign it manually, Pi shows a status message instead of suspending. WSL uses the normal `ctrl+z` and `fg` behavior.
 
-### Native Agents
-
-| Keybinding id | Default | Description |
-|--------|---------|-------------|
-| `app.agents.interrupt` | `i` | Interrupt selected background agent run in `/agents runs` |
-| `app.agents.cancel` | `c` | Cancel selected background agent run in `/agents runs` |
-| `app.agents.resume` | `r` | Resume selected background agent run in `/agents runs` |
-
 ### Sessions
 
 | Keybinding id | Default | Description |

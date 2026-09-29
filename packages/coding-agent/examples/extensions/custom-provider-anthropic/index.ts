@@ -45,8 +45,8 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 	type TranscriptContext,
-} from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+} from "@lue-labs/pi-ai";
+import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
 
 // =============================================================================
 // OAuth implementation adapted for the legacy extension compatibility interface.
@@ -190,15 +190,14 @@ function sanitizeSurrogates(text: string): string {
 }
 
 function convertContentBlocks(
-	content: (TextContent | ImageContent | { type: "tool_reference"; name: string })[],
+	content: (TextContent | ImageContent)[],
 ): string | Array<{ type: "text"; text: string } | { type: "image"; source: any }> {
-	const contentWithoutToolReferences = content.filter((c) => c.type !== "tool_reference");
-	const hasImages = contentWithoutToolReferences.some((c) => c.type === "image");
+	const hasImages = content.some((c) => c.type === "image");
 	if (!hasImages) {
-		return sanitizeSurrogates(contentWithoutToolReferences.map((c) => (c as TextContent).text).join("\n"));
+		return sanitizeSurrogates(content.map((c) => (c as TextContent).text).join("\n"));
 	}
 
-	const blocks = contentWithoutToolReferences.map((block) => {
+	const blocks = content.map((block) => {
 		if (block.type === "text") {
 			return { type: "text" as const, text: sanitizeSurrogates(block.text) };
 		}

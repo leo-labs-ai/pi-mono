@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { oauthErrorHtml, oauthSuccessHtml } from "@earendil-works/pi-ai/utils/oauth-page";
+import { oauthErrorHtml, oauthSuccessHtml } from "@lue-labs/pi-ai/utils/oauth-page";
 import type { AuthProvider, McpFetch } from "@earendil-works/pi-mcp";
 import {
 	authorizeMcp,
