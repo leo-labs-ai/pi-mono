@@ -736,6 +736,9 @@ describe("tier model aliases", () => {
 	test("retired GPT models are never automatic tier candidates", () => {
 		const candidates = Object.values(modelTierCandidatesPerProvider).flatMap((tiers) => Object.values(tiers).flat());
 		expect(candidates.filter((candidate) => /^gpt-5\.(4|5)(?:-|$)/.test(candidate))).toEqual([]);
+		expect(
+			candidates.filter((candidate) => candidate === "gpt-5.6-terra" || candidate === "gpt-5.6-terra-200k"),
+		).toEqual([]);
 	});
 
 	test("built-in OpenAI-family tier candidates exist in their provider catalogs", () => {

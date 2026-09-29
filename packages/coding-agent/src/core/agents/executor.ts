@@ -13,7 +13,12 @@ import type { AuthStorage } from "../auth-storage.ts";
 import { createPromptCacheAffinityKey } from "../cache-affinity.ts";
 import { DEFAULT_THINKING_LEVEL } from "../defaults.ts";
 import type { ModelRegistry } from "../model-registry.ts";
-import { normalizeAutoAliasString, parseModelPattern, tierModelCandidatesForParent } from "../model-resolver.ts";
+import {
+	isRetiredAutomaticTierModelId,
+	normalizeAutoAliasString,
+	parseModelPattern,
+	tierModelCandidatesForParent,
+} from "../model-resolver.ts";
 import type { ModelRuntime } from "../model-runtime.ts";
 import { type ReadonlySessionManager, SessionManager } from "../session-manager.ts";
 import type { SettingsManager } from "../settings-manager.ts";
@@ -421,8 +426,21 @@ function resolveTierAliasModel(
 	if (candidateIds.length === 0) return undefined;
 	const available = options.modelRegistry.getAvailable();
 	return candidateIds
+		.filter((id) => !isRetiredAutomaticTierModelId(id))
 		.map((id) => available.find((m) => m.provider === provider && m.id === id))
 		.find((model): model is Model<Api> => Boolean(model));
+}
+
+function automaticTierModelOrFailClosed(
+	reference: string,
+	hit: Model<Api> | undefined,
+	parentModel: Model<Api> | undefined,
+): Model<Api> | undefined {
+	const selected = hit ?? parentModel;
+	if (!isRetiredAutomaticTierModelId(selected?.id) || !selected) return selected;
+	throw new Error(
+		`Refusing to automatically select retired model ${selected.provider}/${selected.id} for "${reference}". Pass an explicit ${selected.provider}/${selected.id} reference to use it.`,
+	);
 }
 
 export function resolveAgentModel(options: {
@@ -443,7 +461,11 @@ export function resolveAgentModel(options: {
 	// when the router is unavailable — prefer the family-aware medium tier over
 	// silently inheriting an expensive frontier parent.
 	if (isAutoModelAlias(reference)) {
-		return resolveTierAliasModel({ tier: "medium" }, options) ?? options.parentModel;
+		return automaticTierModelOrFailClosed(
+			reference,
+			resolveTierAliasModel({ tier: "medium" }, options),
+			options.parentModel,
+		);
 	}
 
 	// Tier aliases resolve to the parent provider's mapped tier. `fast` is used by
@@ -453,15 +475,16 @@ export function resolveAgentModel(options: {
 	const tierAlias = parseTierAlias(reference);
 	if (tierAlias) {
 		const hit = resolveTierAliasModel(tierAlias, options);
+		const selected = automaticTierModelOrFailClosed(reference, hit, options.parentModel);
 		warnIfFastAgentUsesExpensiveModel({
 			reference: tierAlias.tier,
 			agent: options.agent,
-			model: hit ?? options.parentModel,
+			model: selected,
 			parentModel: options.parentModel,
 			fellBack: !hit,
 			onWarning: options.onWarning,
 		});
-		return hit ?? options.parentModel;
+		return selected;
 	}
 
 	const result = parseModelPattern(reference, options.modelRegistry.getAvailable());

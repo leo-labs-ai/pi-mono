@@ -66,7 +66,11 @@ export const modelTierCandidatesPerProvider: Record<string, TierCandidateMap> = 
 	},
 	openai: {
 		fast: ["gpt-5.6-luna"],
-		medium: ["gpt-5.6-terra"],
+		// Terra stays in the catalog for explicit provider/id requests. Automatic medium
+		// must not select it: Luna is the catalog-backed non-frontier successor, Spark
+		// is the fallback when Luna is absent. Sol stays frontier so medium cannot
+		// upcast, and an empty list would inherit a Terra parent.
+		medium: ["gpt-5.6-luna", "gpt-5.3-codex-spark"],
 		frontier: ["gpt-5.6-sol"],
 		// No ultra tier: OpenAI ships the 5.6 family as luna/terra/sol only, and a
 		// bare "gpt-5.6" has never existed in the catalog (left behind by 65eb88a7e
@@ -84,7 +88,8 @@ export const modelTierCandidatesPerProvider: Record<string, TierCandidateMap> = 
 	},
 	"azure-openai-responses": {
 		fast: ["gpt-5.6-luna"],
-		medium: ["gpt-5.6-terra"],
+		// Same catalog shape as `openai`: Luna, then Spark. Never automatic Terra.
+		medium: ["gpt-5.6-luna", "gpt-5.3-codex-spark"],
 		frontier: ["gpt-5.6-sol"],
 		// Same as `openai` above: no bare "gpt-5.6" in the Azure catalog either.
 		ultra: [],
@@ -131,7 +136,7 @@ export const modelTierCandidatesPerProvider: Record<string, TierCandidateMap> = 
 	},
 	clawrouter: {
 		fast: ["gpt-6-luna-200k", "gpt-5.6-luna", "claude-haiku-4-5"],
-		medium: ["gpt-6-luna-200k", "gpt-5.6-terra", "gpt-5.3-codex-spark", "claude-sonnet-5", "claude-sonnet-4-6"],
+		medium: ["gpt-6-luna-200k", "gpt-5.6-luna", "gpt-5.3-codex-spark", "claude-sonnet-5", "claude-sonnet-4-6"],
 		frontier: [
 			"claude-opus-5-5-200k",
 			"claude-opus-5-5",
@@ -153,7 +158,7 @@ const modelFamilyTierCandidatesByProvider: Record<
 			prefix: "gpt-",
 			candidates: {
 				fast: ["gpt-6-luna-200k", "gpt-5.6-luna"],
-				medium: ["gpt-6-luna-200k", "gpt-5.6-terra", "gpt-5.3-codex-spark"],
+				medium: ["gpt-6-luna-200k", "gpt-5.6-luna", "gpt-5.3-codex-spark"],
 				frontier: ["gpt-6-sol-200k", "gpt-5.6-sol"],
 				ultra: ["gpt-5.6"],
 			},
@@ -169,6 +174,19 @@ const modelFamilyTierCandidatesByProvider: Record<
 		},
 	],
 };
+
+/**
+ * Still defined for an explicit `provider/gpt-5.6-terra` request. Tier and auto
+ * aliases must not select these ids, including by inheriting a Terra parent.
+ * `model:resolve` cannot express this: it runs only after an auto alias already
+ * has a concrete fallback, and raw `forkAgent({ model: "medium" })` never
+ * consults it. The candidate table plus `resolveAgentModel` is the fork boundary.
+ */
+export const RETIRED_AUTOMATIC_TIER_MODEL_IDS = new Set(["gpt-5.6-terra", "gpt-5.6-terra-200k"]);
+
+export function isRetiredAutomaticTierModelId(modelId: string | undefined): boolean {
+	return modelId !== undefined && RETIRED_AUTOMATIC_TIER_MODEL_IDS.has(modelId);
+}
 
 export function tierModelCandidatesForParent(options: {
 	reference: TierModelAlias;

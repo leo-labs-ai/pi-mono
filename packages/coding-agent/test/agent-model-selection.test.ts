@@ -1,10 +1,10 @@
-import { type Api, type Model, registerFauxProvider } from "@lue-labs/pi-ai/compat";
+import { type Api, getModel, type Model, registerFauxProvider } from "@lue-labs/pi-ai/compat";
 import { afterEach, describe, expect, test } from "vitest";
 import { getBuiltinAgentDefinitions } from "../src/core/agents/definitions.ts";
 import { resolveAgentDefaults, resolveAgentModel, resolveAgentThinking } from "../src/core/agents/executor.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
-import { tierModelCandidatesForParent } from "../src/core/model-resolver.ts";
+import { modelTierCandidatesPerProvider, tierModelCandidatesForParent } from "../src/core/model-resolver.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
 
@@ -290,9 +290,10 @@ describe("agent model and thinking selection", () => {
 		expect(selected?.id).toBe("gpt-6-luna-200k");
 	});
 
-	test('"medium" alias falls back to Spark when clawrouter Terra is unavailable', () => {
+	test('"medium" alias falls back to Spark when clawrouter Luna is unavailable even if Terra is present', () => {
 		const { registry, parent } = createStaticRegistry("clawrouter", [
 			{ id: "gpt-5.6-sol", name: "GPT 5.6 Sol", reasoning: true },
+			{ id: "gpt-5.6-terra", name: "GPT 5.6 Terra", reasoning: true },
 			{ id: "gpt-5.4", name: "Retired GPT 5.4", reasoning: true },
 			{ id: "gpt-5.3-codex-spark", name: "GPT 5.3 Codex Spark", reasoning: true },
 		]);
@@ -492,7 +493,7 @@ describe("agent model and thinking selection", () => {
 		expect(selected?.id).toBe("claude-sonnet-5");
 	});
 
-	test('"clawrouter/auto" alias falls back to gpt-5.6-terra for GPT parents', () => {
+	test('"clawrouter/auto" does not fall back to gpt-5.6-terra for GPT parents', () => {
 		const { registry, parent } = createStaticRegistry("clawrouter", [
 			{ id: "gpt-5.6-sol", name: "GPT 5.6 Sol", reasoning: true },
 			{ id: "gpt-5.6-terra", name: "GPT 5.6 Terra", reasoning: true },
@@ -504,7 +505,70 @@ describe("agent model and thinking selection", () => {
 			modelRegistry: registry,
 		});
 		expect(selected?.provider).toBe("clawrouter");
-		expect(selected?.id).toBe("gpt-5.6-terra");
+		expect(selected?.id).toBe("gpt-5.6-sol");
+		expect(selected?.id).not.toBe("gpt-5.6-terra");
+	});
+
+	// forkAgent({ model }) lands in prepareChildRunContext as task.model, then resolveAgentModel.
+	// These cases are that selection, not a telemetry alias.
+	test("forkAgent medium never automatically selects Terra", () => {
+		expect(
+			Object.values(modelTierCandidatesPerProvider).flatMap((tiers) => Object.values(tiers).flat()),
+		).not.toContain("gpt-5.6-terra");
+		expect(
+			tierModelCandidatesForParent({
+				reference: "medium",
+				parentProvider: "clawrouter",
+				parentModelId: "gpt-5.6-sol",
+			}),
+		).toEqual(["gpt-6-luna-200k", "gpt-5.6-luna", "gpt-5.3-codex-spark", "claude-sonnet-5", "claude-sonnet-4-6"]);
+
+		const agent = { ...getBuiltinAgentDefinitions()[0], model: "medium" };
+		for (const provider of ["openai", "azure-openai-responses"] as const) {
+			const luna = getModel(provider, "gpt-5.6-luna");
+			const spark = getModel(provider, "gpt-5.3-codex-spark");
+			const terra = getModel(provider, "gpt-5.6-terra");
+			const sol = getModel(provider, "gpt-5.6-sol");
+			if (!luna || !spark || !terra || !sol) throw new Error(`catalog missing medium fixture for ${provider}`);
+
+			const preferred = resolveAgentModel({
+				agent,
+				parentModel: sol,
+				modelRegistry: { getAvailable: () => [sol, luna, spark, terra] } as unknown as ModelRegistry,
+			});
+			expect(preferred?.id, provider).toBe("gpt-5.6-luna");
+
+			const sparkFallback = resolveAgentModel({
+				agent,
+				parentModel: terra,
+				modelRegistry: { getAvailable: () => [terra, spark] } as unknown as ModelRegistry,
+			});
+			expect(sparkFallback?.id, provider).toBe("gpt-5.3-codex-spark");
+
+			expect(() =>
+				resolveAgentModel({
+					agent,
+					parentModel: terra,
+					modelRegistry: { getAvailable: () => [terra] } as unknown as ModelRegistry,
+				}),
+			).toThrow(/Refusing to automatically select retired model/);
+
+			const explicit = resolveAgentModel({
+				modelReference: `${provider}/gpt-5.6-terra`,
+				agent: getBuiltinAgentDefinitions()[0],
+				parentModel: sol,
+				modelRegistry: { getAvailable: () => [sol, terra] } as unknown as ModelRegistry,
+			});
+			expect(explicit?.provider).toBe(provider);
+			expect(explicit?.id).toBe("gpt-5.6-terra");
+		}
+
+		const { registry, parent } = createStaticRegistry("clawrouter", [
+			{ id: "gpt-5.6-terra", name: "GPT 5.6 Terra", reasoning: true },
+		]);
+		expect(() => resolveAgentModel({ agent, parentModel: parent, modelRegistry: registry })).toThrow(
+			/Refusing to automatically select retired model clawrouter\/gpt-5.6-terra/,
+		);
 	});
 
 	test("auto alias falls back to the parent when no medium tier candidate exists", () => {
