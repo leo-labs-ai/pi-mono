@@ -159,9 +159,10 @@ jobs:
           - windows-latest
     permissions:
       actions: read
+      contents: read
     env:
       RELEASE_TAG: ${{ inputs.tag || github.event.inputs.tag || github.ref_name }}
-      SOURCE_REF: ${{ github.event.inputs.source_ref || github.event.inputs.tag || github.ref_name }}
+      SOURCE_REF: ${{ inputs.source_ref || github.event.inputs.source_ref || inputs.tag || github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Checkout smoke tests
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
