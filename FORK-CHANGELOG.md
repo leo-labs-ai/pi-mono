@@ -6,6 +6,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linked extension entries resolve relative imports beside their targets.** Canonicalize the module path before Jiti imports it, matching Node’s default module resolution. This keeps the configured/user-visible link identity while allowing the Tokenjuice policy wrapper to find its existing sibling policy module. A linked-entry regression is red before the fix and green afterward.
+- **Upstream-scoped extensions reuse the fork’s host modules.** Restore `@earendil-works/pi-{coding-agent,agent-core,tui,ai}` aliases (including existing compat/oauth/providers-all entries) in both the unbundled Node loader and embedded virtual modules. Third-party extensions such as the pinned Codex adapter and pi-fff no longer fail to resolve host imports; aliases point at the same module instances, not a second installed runtime.
+
 ### Changed
 
 - **Upstream sync (2026-10-02): integrated exact upstream Pi 1.0.0 (`a13d35a74`, carries 0.99.2).** Adopts `pi-durable` (replaces `packages/session-backends/sqlite-node` and the `pi-agent-core` experimental harness; built in the workspace as `@lue-labs/pi-durable`, not wired into `pii`), fullscreen as the default TUI mode, header-only `quietStartup`, the MCP OAuth/conformance work, Radius, and the 1.0.0 ai/tui/mcp fixes. Fork packages lockstep **1.0.0**; chord/codemode/mcp stay `@earendil-works/*@1.0.0`. Workflow files stay at origin (no `workflow` token scope): upstream's `mcp-conformance` CI job and binary smoke checkout are a captain follow-up, as is the stale `session-backends` build line in `agentic-review.yml`. Classification and conflict log: `docs/fork-merge-conflict-log-2026-10-02.md`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.

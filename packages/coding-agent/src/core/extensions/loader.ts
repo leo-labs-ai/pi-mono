@@ -95,6 +95,13 @@ function getAliases(): Record<string, string> {
 	const piAiProvidersEntry = resolveWorkspaceOrImport("ai/dist/providers/all.js", "@lue-labs/pi-ai/providers/all");
 
 	_aliases = {
+		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
+		"@earendil-works/pi-agent-core": piAgentCoreEntry,
+		"@earendil-works/pi-tui": piTuiEntry,
+		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
+		"@earendil-works/pi-ai/compat": piAiCompatEntry,
+		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@lue-labs/pi-coding-agent": piCodingAgentEntry,
 		"@lue-labs/pi-agent-core": piAgentCoreEntry,
 		"@lue-labs/pi-tui": piTuiEntry,
@@ -568,7 +575,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		...resolutionOptions,
 	});
 
-	const module = await jiti.import(extensionPath, { default: true });
+	const module = await jiti.import(fs.realpathSync(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;
