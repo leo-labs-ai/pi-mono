@@ -8,6 +8,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Changed
 
+- **Upstream sync (2026-09-30): integrated exact upstream Pi 0.99.2 (`005af57d8`) from reviewed base 0.99.1 (`d86654abb`).** Adopts lazy default-codemode MCP discovery/startup, MCP OAuth client names and provider-token authentication, Anthropic workload identity federation, newly configured tools on reload, image signature validation, bundled codemode worker support, and upstream durable/rendering fixes. Retains fork package identity, exact workspace pins, optional koffi, and reusable release-workflow inputs; chord/codemode/mcp remain upstream-scoped. Existing 0.99.0 fork-seam re-graft limitations are unchanged.
+
+### Changed
+
 - **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.1 (`d86654abb`).** GPT-6.1 Sol (Codex default) + ChatGPT login OAuth bundle fix. Fork packages lockstep **0.99.1**; chord/codemode/mcp stay `@earendil-works/*@0.99.1`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.
 
 
