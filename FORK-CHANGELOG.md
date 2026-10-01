@@ -8,6 +8,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Changed
 
+- **Upstream sync (2026-10-02): integrated exact upstream Pi 1.0.0 (`a13d35a74`, carries 0.99.2).** Adopts `pi-durable` (replaces `packages/session-backends/sqlite-node` and the `pi-agent-core` experimental harness; built in the workspace as `@lue-labs/pi-durable`, not wired into `pii`), fullscreen as the default TUI mode, header-only `quietStartup`, the MCP OAuth/conformance work, Radius, and the 1.0.0 ai/tui/mcp fixes. Fork packages lockstep **1.0.0**; chord/codemode/mcp stay `@earendil-works/*@1.0.0`. Workflow files stay at origin (no `workflow` token scope): upstream's `mcp-conformance` CI job and binary smoke checkout are a captain follow-up, as is the stale `session-backends` build line in `agentic-review.yml`. Classification and conflict log: `docs/fork-merge-conflict-log-2026-10-02.md`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.
 - **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.1 (`d86654abb`).** GPT-6.1 Sol (Codex default) + ChatGPT login OAuth bundle fix. Fork packages lockstep **0.99.1**; chord/codemode/mcp stay `@earendil-works/*@0.99.1`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.
 
 
