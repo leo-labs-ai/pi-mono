@@ -5,8 +5,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai";
-import { createRegistry, defineTask, Harness } from "../../src/index.ts";
+import { createModels } from "@lue-labs/pi-ai/models";
+import { createRegistry, defineExtension, defineTask, Harness } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -52,7 +52,7 @@ const Ticker = defineTask<{ to: number }, { phase: "tick"; n: number }, string>(
 	},
 });
 const registry = createRegistry();
-registry.tasks.add(Ticker);
+registry.install(defineExtension({ name: "ticker", tasks: [Ticker] }));
 const open = async () =>
 	Harness.open(await openNodeSqliteStorage(databasePath), { models: createModels(), registry }, context);
 
@@ -60,7 +60,10 @@ const open = async () =>
 // printed, before its next checkpoint is saved. That is the same situation as
 // a crash between the effect and saving its outcome.
 const firstRun = await open();
-const tickerId = await (await firstRun.root(context)).commit((tx) => tx.createTask(Ticker, { to: 5 }), context);
+const tickerId = await (await firstRun.root(context)).commit(
+	(tx) => tx.createTask(Ticker, { to: 5 }, { ownership: { kind: "conversation" } }),
+	context,
+);
 const tickTwo = new Promise<void>((resolve) => {
 	reachedTick = (n) => {
 		if (n === 2) resolve();

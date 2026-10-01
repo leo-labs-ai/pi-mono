@@ -12,7 +12,7 @@ import {
 	type StorageBenchmarkScale,
 	seedStorageBenchmark,
 	storageBenchmarkPrimaryRecordCount,
-} from "@earendil-works/pi-durable/testing";
+} from "@lue-labs/pi-durable/testing";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
