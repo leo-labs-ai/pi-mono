@@ -4,7 +4,10 @@ Worktree: `~/.herdr/worktrees/pi-mono-fork/lue-sync-upstream-1-0-0`, branch `lue
 Base (fork): `origin/main` = 6a3c92b25 (PR #565, carries upstream 0.99.1).
 Upstream: tag `v1.0.0` = a13d35a74 (carries v0.99.2). Merge-base (last reviewed
 upstream): d86654abb (Release v0.99.1). Range d86654abb..v1.0.0 = 88 commits,
-682 files. Merge commit: `Merge upstream Pi v1.0.0 into the fork`.
+682 files. Merge commit: `Merge upstream Pi v1.0.0 into the fork`, followed by
+`docs(sync)`, `chore(sync): adopt upstream 1.0.0 workflow changes` and the
+cherry-pick `fix(extensions): reuse upstream host aliases and canonicalize
+linked entries` (from `de1fffac4`, PR #568).
 
 ## Method
 
@@ -56,13 +59,14 @@ real parents (6a3c92b25, v1.0.0), so history is an ordinary two-parent merge.
 | adapt | `package-lock.json`, `packages/coding-agent/npm-shrinkwrap.json`, `packages/coding-agent/install-lock/` | Regenerated with the fork generators (`npm install --package-lock-only --ignore-scripts`, `generate-coding-agent-{shrinkwrap,install-lock}.mjs`); no new external deps. |
 | equivalent | `fix(tui): preserve ANSI order at slice boundaries`, `reduce memory retained per rendered message` | Land in `packages/tui/src/utils.ts` next to the fork's own `utils.ts` patch; both kept, no overlap. |
 | equivalent | Package `CHANGELOG.md` files | Fork-owned stubs (`merge=ours`, docs/adr/0002); upstream text continues to live in `CHANGELOG.upstream.md`. |
-| reject | `.github/workflows/ci.yml` (+`mcp-conformance` job), `.github/workflows/build-binaries.yml` (+`SOURCE_REF` smoke-test checkout and codemode binary smoke) | Kept byte-identical to origin: the push token lacks the `workflow` scope. Captain follow-up below. |
+| adapt | `.github/workflows/ci.yml` (+`mcp-conformance` job), `.github/workflows/build-binaries.yml` (+`SOURCE_REF` smoke-test checkout and codemode binary smoke) | First resolved as ours (the `gh` token lacks the `workflow` scope), then adopted in a follow-up commit once SSH push was confirmed: `ci.yml` gains the `mcp-conformance` job in the fork's install shape (node 24, GitHub Packages registry, `NODE_AUTH_TOKEN`, `contents: read` / `packages: read`; upstream's `npm test` step dropped); `build-binaries.yml` taken from PR #568's resolution (`64afbaefa`: `contents: read`, `inputs.*` `SOURCE_REF` fallbacks, smoke checkout, codemode binary smoke); `agentic-review.yml` builds `packages/durable` instead of the removed `session-backends/sqlite-node`. `actionlint` clean; `npm run test:mcp-conformance` passes locally. |
+| adopt (sibling lane) | `de1fffac4` from `lue/pi-upstream-0992-0930` (PR #568): `@earendil-works/pi-{coding-agent,agent-core,tui,ai,ai/providers/all,ai/compat,ai/oauth}` host aliases in the extension loader and bundled virtual modules; linked extension entries canonicalized with `realpathSync` before Jiti; `test/extension-host-aliases.test.ts` | Required, not optional: without it the 1.0.0 build's `pii -p` smoke printed nothing and failed two profile extensions (`tokenjuice.js: Cannot find module './policy.mjs'`, `@howaboua/pi-codex-conversion: Cannot find module '@earendil-works/pi-ai'`). Cherry-picked with `-x`; applies cleanly on 1.0.0. PR #568 itself is left untouched (its upstream content is a subset of this branch). |
 | defer | Fork-seam re-graft residual from the 0.99.0 reset (`shouldStopAfterTurn`, cache-safe compaction, `adoptInheritedForkMessages`, deferred-tool Anthropic patches, TUI focus gate and background continuity sources, …) | Unchanged by this sync. Fork-only tests `packages/tui/test/{tui-focus-gate,background-continuity}.test.ts` fail on `origin/main` and still fail here (7 subtests); everything else in the tui suite passes serially. |
 
 ## Conflict resolutions (35, normalized)
 
 - 10 modify/delete → `git rm` (upstream deletions, see adopt rows).
-- `.github/workflows/{build-binaries,ci}.yml` → ours (reject row).
+- `.github/workflows/{build-binaries,ci}.yml` → ours in the merge commit, upstream changes re-applied in `chore(sync): adopt upstream 1.0.0 workflow changes` (adapt row).
 - 9 `packages/durable/test/*`, `scripts/local-release.mjs`, `packages/ai/README.md`, `packages/server/README.md` → theirs, then scope rename.
 - `tsconfig.json`, root `package.json`, `packages/{agent,ai,client,coding-agent,durable,evals,server}/package.json` → hand-merged (adapt rows).
 - `packages/coding-agent/{npm-shrinkwrap.json,install-lock/package-lock.json}` → regenerated.
@@ -73,8 +77,17 @@ real parents (6a3c92b25, v1.0.0), so history is an ordinary two-parent merge.
 - `npm run build:offline` green; `dist/cli.js --version` → `1.0.0`.
 - `test:system-prompt` 148/148, `test:cache-stability` 32 passed / 4 skipped, `test:e2e` (suite) 96 files / 431 tests passed.
 - `packages/durable` 853 passed / 1 skipped; `packages/agent` 90 passed; `packages/ai` 1237 passed / 853 skipped (no keys); `packages/tui` serial run: only the two pre-existing fork-seam files fail (same on `origin/main`).
+- `npm run test:mcp-conformance`: no regressions against the baseline. Cherry-pick: `tsc --noEmit` clean, `extension-host-aliases` + regression tests 8237/9540 pass (3 files / 5 tests).
+- my-pi extension gate (`npm run test:extension-gate`, my-pi `fc48b0f5` in an isolated lane with `@lue-labs/pi-*` repointed at this build): **96/107 suites**. None of the 11 failures is a 0.99.1 → 1.0.0 regression:
+  - 8 are fork-API drift from the 0.99.0 green-path reset — `createBashBgJobStore` (`native-tool-overrides` ×5), `isTerminalTaskStatus` (`agent-panel`), `SettingsManager.getExtensionConfig` (`pi-worktree` deps test, `skill-workshop`) exist only on the pre-reset fork (`206aef83d`) and are absent on `origin/main`, `v1.0.0` and this branch alike.
+  - 2 are lane environment — `pi-memory:cache` re-fetched `@lue-labs/pi-coding-agent@0.87.1` from GitHub Packages via pnpm (`ERR_PNPM_IGNORED_BUILDS`) and `psyche-cli:smoke` cascades from it (better-sqlite3 binding never built).
+  - 1 is anchor drift — `vanilla-wake-pin` fails identically against the canonical my-pi checkout because vanilla `pi` is already 1.0.0.
+- `pii -p` smoke (profile `@valkyriweb/my-pi-full`, `PI_BIN` → this build's `dist/cli.js`): before the cherry-pick, empty stdout and two extension load failures; after it, `OK` with exit 0 and only the two warnings the promoted 0.99.2 build also emits (builtin `mcp` skipped for pi-mcp-adapter's `/mcp`; typebox peer warning). `--list-models` shows the same clawrouter `claude-fable-5*`, `claude-haiku-4-5`, `gpt-6-astra(-200k)`, `gpt-6-sol` entries as the promoted build, and a tools-list prompt returns the identical tool set. `supportsMidConvoEffort` (ai `types.ts`, `anthropic-messages.ts`, coding-agent `model-config.ts`) is unchanged by the merge; `configuration_update`, `adoptInheritedForkMessages`, `shouldStopAfterTurn` and `clawrouter` have no source occurrences on `origin/main` either (reset residual, not a regression).
 
-## Captain follow-ups (cannot be pushed from this lane)
+## Follow-ups
 
-- Apply upstream's `ci.yml` `mcp-conformance` job and `build-binaries.yml` smoke-test checkout to the fork workflows (needs a token with `workflow` scope).
-- `.github/workflows/agentic-review.yml:127` still builds `packages/session-backends/sqlite-node`, which no longer exists; replace with `npm --prefix packages/durable run build` (after `ai`, before `agent`).
+- `.github/workflows/release.yml:118` comment still mentions `session-backends` (comment only).
+- `packages/coding-agent/src/experimental/**` imports `pi-durable` without declaring it in `package.json` (same as upstream; `check:runtime-deps` passes because the entry graph excludes it).
+- my-pi still pins to the pre-reset fork API in 8 gate suites (see above); the gate only passes on the canonical checkout because that checkout's `@lue-labs/pi-*` links still point at the old fork main. Re-graft or retire those suites with the fork-seam re-graft.
+- PR #568 (`lue/pi-upstream-0992-0930`, 0.99.2) is superseded by this branch for upstream content; its two fork commits are carried here (`64afbaefa` folded into the workflow commit, `de1fffac4` cherry-picked).
+- `packages/tui/test/{tui-focus-gate,background-continuity}.test.ts` still fail (pre-existing); `terminal.ts` enables DEC 1004 but `tui.ts` has no focus-gate consumer since the reset.
