@@ -302,6 +302,42 @@ describe("generateSummary reasoning options", () => {
 		);
 	});
 
+	it("disables parent xhigh reasoning for compaction summaries", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [],
+			isSplitTurn: false,
+			tokensBefore: 190000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
+		};
+
+		await compact(preparation, createModel(true), "test-key", undefined, undefined, undefined, "xhigh");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
+	});
+
+	it("keeps split-turn compaction requests reasoning-free too", async () => {
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: [{ ...mockSummaryResponse, content: [{ type: "text", text: "early turn work" }] }],
+			isSplitTurn: true,
+			tokensBefore: 190000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
+		};
+
+		await compact(preparation, createModel(true), "test-key", undefined, undefined, undefined, "xhigh");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+		for (const call of completeSimpleMock.mock.calls) {
+			expect(call[2]).not.toHaveProperty("reasoning");
+		}
+	});
+
 	it("rejects a length-limited history summary", async () => {
 		completeSimpleMock.mockResolvedValueOnce({
 			...mockSummaryResponse,

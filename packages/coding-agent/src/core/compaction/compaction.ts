@@ -1146,7 +1146,7 @@ export async function compact(
 	headers?: Record<string, string>,
 	customInstructions?: string,
 	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -1154,6 +1154,12 @@ export async function compact(
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<CompactionResult> {
+	// Fork: compaction summaries run with thinking off regardless of the session's level. The
+	// summary is a bounded rewrite of text already in context; at "xhigh" the reasoning alone
+	// exhausted reserveTokens and the response stopped with "length", which
+	// getSummarizationFailure rejects, so compaction never completed. Callers that want
+	// reasoning on a standalone summary use generateSummaryWithUsage directly.
+	const compactionThinkingLevel: ThinkingLevel = "off";
 	const {
 		firstKeptEntryId,
 		messagesToSummarize,
@@ -1182,7 +1188,7 @@ export async function compact(
 				signal,
 				customInstructions,
 				previousSummary,
-				thinkingLevel,
+				compactionThinkingLevel,
 				streamFn,
 				env,
 				retry,
@@ -1201,7 +1207,7 @@ export async function compact(
 			headers,
 			env,
 			signal,
-			thinkingLevel,
+			compactionThinkingLevel,
 			streamFn,
 			retry,
 			callbacks,
@@ -1222,7 +1228,7 @@ export async function compact(
 			signal,
 			customInstructions,
 			previousSummary,
-			thinkingLevel,
+			compactionThinkingLevel,
 			streamFn,
 			env,
 			retry,
