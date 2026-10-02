@@ -62,7 +62,49 @@ real parents (6a3c92b25, v1.0.0), so history is an ordinary two-parent merge.
 | equivalent | Package `CHANGELOG.md` files | Fork-owned stubs (`merge=ours`, docs/adr/0002); upstream text continues to live in `CHANGELOG.upstream.md`. |
 | adapt | `.github/workflows/ci.yml` (+`mcp-conformance` job), `.github/workflows/build-binaries.yml` (+`SOURCE_REF` smoke-test checkout and codemode binary smoke) | First resolved as ours (the `gh` token lacks the `workflow` scope), then adopted in a follow-up commit once SSH push was confirmed: `ci.yml` gains the `mcp-conformance` job in the fork's install shape (node 24, GitHub Packages registry, `NODE_AUTH_TOKEN`, `contents: read` / `packages: read`; upstream's `npm test` step dropped); `build-binaries.yml` taken from PR #568's resolution (`64afbaefa`: `contents: read`, `inputs.*` `SOURCE_REF` fallbacks, smoke checkout, codemode binary smoke); `agentic-review.yml` builds `packages/durable` instead of the removed `session-backends/sqlite-node`. `actionlint` clean; `npm run test:mcp-conformance` passes locally. |
 | adopt (sibling lane) | `de1fffac4` from `lue/pi-upstream-0992-0930` (PR #568): `@earendil-works/pi-{coding-agent,agent-core,tui,ai,ai/providers/all,ai/compat,ai/oauth}` host aliases in the extension loader and bundled virtual modules; linked extension entries canonicalized with `realpathSync` before Jiti; `test/extension-host-aliases.test.ts` | Required, not optional: without it the 1.0.0 build's `pii -p` smoke printed nothing and failed two profile extensions (`tokenjuice.js: Cannot find module './policy.mjs'`, `@howaboua/pi-codex-conversion: Cannot find module '@earendil-works/pi-ai'`). Cherry-picked with `-x`; applies cleanly on 1.0.0. PR #568 itself is left untouched (its upstream content is a subset of this branch). |
-| defer | Fork-seam re-graft residual from the 0.99.0 reset (`shouldStopAfterTurn`, cache-safe compaction, `adoptInheritedForkMessages`, deferred-tool Anthropic patches, TUI focus gate and background continuity sources, …) | Unchanged by this sync. Fork-only tests `packages/tui/test/{tui-focus-gate,background-continuity}.test.ts` fail on `origin/main` and still fail here (7 subtests); everything else in the tui suite passes serially. |
+| re-graft (review repair) | Fork behaviours dropped by the 0.99.0 green-path reset (`c059384c9`) that the independent review of PR #571 required back, compared against the actual pre-reset fork main `206aef83d` | Five patch-level fork commits, each with provenance and a FORK-CHANGELOG bullet; see "Review repair" below. |
+| defer | Remaining fork-seam residual from the 0.99.0 reset (`shouldStopAfterTurn`, `adoptInheritedForkMessages`, deferred-tool Anthropic patches, ThinkingLevel `ultra`/`adaptive`, footer usage-cache, bash background jobs, task registry, `extensionConfig`, `ToolPanel`, …) | Unchanged by this sync; itemized with sizes under "Open seams" below. |
+
+## Review repair (against fork main `206aef83d`)
+
+The different-family review of PR #571 (`harbor/state/reviews/pm571.md`) failed
+the sync because it compared against the reset fork main rather than the real
+one (`206aef83d`, "chore(release): version fork packages (#544)", coding-agent
+0.87.1), and found fork behaviours missing that the sync had classified as
+`defer`. Each is now a patch-level fork commit on top of the merge:
+
+| # | Behaviour | Commit | Re-grafted from | Deviation from `206aef83d` |
+| --- | --- | --- | --- | --- |
+| 1 | Opaque Codex gateway credentials (ClawRouter): `sendChatgptAccountId`, `supportsWebSocketTransport`, `supportsZstdRequestCompression` compat flags | `bb428acd6` | `454ae229b` (#298), `077913c02` (#299), `a41aa35fa` (#459) | Patch-level, not whole-file: cache-affinity keying, thread-id headers, websocket continuations, deferred tools and the debug snapshot of the fork's Codex transport are not ported (open seams). #298's agent-session tool-name filter not ported. |
+| 2 | Provider-qualified model references resolve only through that provider | `238b04920` | `ab9170a79` (#162), `858a331d5`, tests `bd83bcacb` | None; upstream's bare-vendor-id tests replaced by the fork's policy tests. |
+| 3 | `modelVisible: false` custom messages stay out of provider context | `36493530a` | #528 | Threaded through 1.0.0's new surfaces (`_applyBoundaryDrafts`, `message_end` persistence, branch summaries); `wakeOnIdle` and `packages/agent/src/harness` out of scope. |
+| 4 | Cache-safe compaction + summary grounding rules | `86b621a7e` | `cff1cf52c`, `9b3a20591`, `144632035`, `703283830`, `894a613ed` (#549) | `CacheSafeCompactionContext = { messages }` (1.0.0 transcripts carry the system message and tool declarations; `normalizeContext` is branded). Context built via the agent's `transformContext` + `convertToLlm` (the fork skipped `transformContext`; at 1.0.0 `AgentSession` chains projections into it that change the cached prefix). Retention mirrors the live loop (`PI_CACHE_RETENTION=long` → long, else short) instead of the fork's hardcoded `"long"`, because 1.0.0's loop sends no retention. `stripModelFacingContextImages` not ported (fork-only `tool-artifacts.ts`). Legacy standalone path keeps upstream's `TURN_PREFIX_SUMMARIZATION_PROMPT`. |
+| 4b | Compaction summaries run with thinking off | `e4c0002bb` + follow-up | `39a3a49fa` | Applied at the `AgentSession` seam, not inside `compact()`: the fork's unconditional override broke upstream's virtual-model routing (`virtual-models.test.ts` expects the router's level on compaction summaries). A routed level is kept; the inherited session level is replaced by `off`; direct `compact()` callers keep the level they pass. `getSummarizationFailure`'s length-stop guard had survived the reset. |
+| 5 | TUI DEC 1004 focus gate consumer; `Box` background continuity | `3101f5874` | `38110b709`, `d40e64763` (#442) | `Box.applyBg` keeps upstream `54c19a252`'s single measurement by letting `applyBackgroundToLine` pad. Fork-only `ToolPanel` (`tool-panel.ts`) not ported. |
+
+Each commit carries a regression test that fails with the source change
+stashed (negative control) and passes with it. Tests moved from pinning the
+reset behaviour to pinning the fork behaviour: `test/suite/agent-session-compaction.test.ts`
+"uses the standalone compaction request context" (asserted `transformContext`
+not called and `cacheRetention: "none"`) is now "uses the cache-safe compaction
+request context without the active agent transport"; `test/model-resolver.test.ts`
+bare-vendor-id matches replaced by the slash-means-provider tests;
+`test/compaction-summary-reasoning.test.ts` "honors caller-supplied routing
+session and tool choice without prompt caching" now expects caller retention
+to be honored.
+
+### Open seams (still dropped by the reset; not addressed here)
+
+| Seam | Where on `206aef83d` | Size | my-pi consumer |
+| --- | --- | --- | --- |
+| Bash background jobs (`createBashBgJobStore`, `bash-kill`/`bash-output` tools, extension bridge) | `core/bash-bg-jobs.ts`, `core/extensions/bash-bg-jobs.ts`, `core/tools/bash-{kill,output}.ts` | ~1500 lines | `native-tool-overrides` (5 gate suites) |
+| Task registry (`TaskStatus`, `isTerminalTaskStatus`, `TaskSnapshot`) | `core/tasks/{index,types}.ts` | ~180 lines + consumers | `agent-panel` (1 suite) |
+| `extensionConfig` settings namespace (`SettingsManager.getExtensionConfig`/`setExtensionConfigValue`, `ExtensionAPI.getExtensionConfig`) | `core/settings-manager.ts`, `core/extensions/extension-api-fork.ts` (392 lines), `resource-loader.ts` | ~450 lines | `skill-workshop`, `pi-worktree` deps test (2 suites) |
+| Fork-only `ToolPanel` component | `modes/interactive/components/tool-panel.ts` (96 lines) + `tool-execution.ts` wiring | ~170 lines | none direct |
+| Codex transport remainder: cache-affinity keying, thread-id headers, websocket continuations, deferred tools, debug snapshot | `packages/ai/src/api/openai-codex-responses.ts` | fork delta +323/−65 vs its upstream base | clawrouter routing (works without them) |
+| Fork `cache-retention.ts` (`"long"` default for the main loop) | `packages/ai/src/utils/cache-retention.ts` | ~40 lines | behaviour: 1.0.0 defaults to short retention unless `PI_CACHE_RETENTION=long` |
+| Mid-run tool-result cap + `stripModelFacingContextImages` image budget | `core/tool-artifacts.ts` | 385 lines | compaction continuation |
+| `shouldStopAfterTurn`, `adoptInheritedForkMessages`, deferred-tool Anthropic patches, ThinkingLevel `ultra`/`adaptive`, footer usage-cache | various | — | listed by the reset's own FORK-CHANGELOG entry |
 
 ## Conflict resolutions (35, normalized)
 
@@ -77,7 +119,8 @@ real parents (6a3c92b25, v1.0.0), so history is an ordinary two-parent merge.
 - `npm run check` green (biome, changelog, pinned-deps, runtime-deps, ts-imports, entry-graphs, shrinkwrap, install-lock, `tsc --noEmit`, browser smoke).
 - `npm run build:offline` green; `dist/cli.js --version` → `1.0.0`.
 - `test:system-prompt` 148/148, `test:cache-stability` 32 passed / 4 skipped, `test:e2e` (suite) 96 files / 431 tests passed.
-- `packages/durable` 853 passed / 1 skipped; `packages/agent` 90 passed; `packages/ai` 1237 passed / 853 skipped (no keys); `packages/tui` serial run: only the two pre-existing fork-seam files fail (same on `origin/main`).
+- `packages/durable` 853 passed / 1 skipped; `packages/agent` 90 passed; `packages/ai` 1237 passed / 853 skipped (no keys); `packages/tui` serial run: only the two pre-existing fork-seam files fail (same on `origin/main`) — after the review repair (`3101f5874`) the tui suite is **1061 passed / 1 skipped / 0 failed** serially.
+- Review repair: `npm run check` and `npm run build:offline` green on `3101f5874`; coding-agent compaction/session files (56 files) 471 passed / 28 skipped; `packages/ai` `openai-codex-stream.test.ts` 43/43; `model-resolver` 52/52.
 - `npm run test:mcp-conformance`: no regressions against the baseline. Cherry-pick: `tsc --noEmit` clean, `extension-host-aliases` + regression tests 8237/9540 pass (3 files / 5 tests).
 - my-pi extension gate (`npm run test:extension-gate`, my-pi `fc48b0f5` in an isolated lane with `@lue-labs/pi-*` repointed at this build): **96/107 suites**. None of the 11 failures is a 0.99.1 → 1.0.0 regression:
   - 8 are fork-API drift from the 0.99.0 green-path reset — `createBashBgJobStore` (`native-tool-overrides` ×5), `isTerminalTaskStatus` (`agent-panel`), `SettingsManager.getExtensionConfig` (`pi-worktree` deps test, `skill-workshop`) exist only on the pre-reset fork (`206aef83d`) and are absent on `origin/main`, `v1.0.0` and this branch alike.
@@ -108,4 +151,5 @@ that main has too.
 - `packages/coding-agent/src/experimental/**` imports `pi-durable` without declaring it in `package.json` (same as upstream; `check:runtime-deps` passes because the entry graph excludes it).
 - my-pi still pins to the pre-reset fork API in 8 gate suites (see above); the gate only passes on the canonical checkout because that checkout's `@lue-labs/pi-*` links still point at the old fork main. Re-graft or retire those suites with the fork-seam re-graft.
 - PR #568 (`lue/pi-upstream-0992-0930`, 0.99.2) is superseded by this branch for upstream content; its two fork commits are carried here (`64afbaefa` folded into the workflow commit, `de1fffac4` cherry-picked).
-- `packages/tui/test/{tui-focus-gate,background-continuity}.test.ts` still fail (pre-existing); `terminal.ts` enables DEC 1004 but `tui.ts` has no focus-gate consumer since the reset.
+- ~~`packages/tui/test/{tui-focus-gate,background-continuity}.test.ts` still fail (pre-existing); `terminal.ts` enables DEC 1004 but `tui.ts` has no focus-gate consumer since the reset.~~ Fixed by `3101f5874` (review repair item 5).
+- The three CHANGELOG-visible fork entries in `packages/coding-agent/CHANGELOG.md` (`merge=ours`) describe fork behaviour as present; after the review repair the compaction entries are true again, the others still describe reset-dropped seams.

@@ -2703,6 +2703,12 @@ export class AgentSession {
 		// the conversation. Both manual and automatic paths route through here, so the context is
 		// built in one place.
 		const cacheSafeContext = await this._buildCacheSafeCompactionContext(signal);
+		// Fork: the session's own thinking level does not reach the summary request. The summary
+		// is a bounded rewrite of text already in context; at "xhigh" the reasoning alone
+		// exhausted reserveTokens, the response stopped with "length" and
+		// getSummarizationFailure rejected it, so compaction never completed. A virtual model's
+		// router chose its level for this very request (reason "direct"), so that one is kept.
+		const thinkingLevel = isVirtualModel(model) ? request.thinkingLevel : "off";
 		return compact(
 			preparation,
 			request.model,
@@ -2710,7 +2716,7 @@ export class AgentSession {
 			request.headers,
 			customInstructions,
 			signal,
-			request.thinkingLevel,
+			thinkingLevel,
 			this.agent.streamFunction,
 			request.env,
 			this.settingsManager.getRetrySettings(),

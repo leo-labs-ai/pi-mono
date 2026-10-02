@@ -333,6 +333,33 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
+	it("keeps the session's thinking level out of compaction summaries", async () => {
+		// Fork: at "xhigh" the summary's reasoning alone exhausted reserveTokens and the
+		// length-stopped summary was rejected, so compaction never completed. The session level
+		// is inherited, not chosen for this request; a virtual model's router is (see
+		// virtual-models.test.ts "routes compaction summaries before sizing them").
+		const harness = await createHarness({
+			models: [{ id: "faux-reasoning", reasoning: true }],
+			settings: { compaction: { keepRecentTokens: 1 } },
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.session.setThinkingLevel("high");
+		expect(harness.session.thinkingLevel).toBe("high");
+
+		const requestOptions: Array<SimpleStreamOptions | undefined> = [];
+		useSummaryStreamFn(harness, "summary without reasoning", (_context, options) => {
+			requestOptions.push(options);
+		});
+
+		await harness.session.compact();
+
+		expect(requestOptions.length).toBeGreaterThan(0);
+		for (const options of requestOptions) {
+			expect(options?.reasoning).toBeUndefined();
+		}
+	});
+
 	it("uses the cache-safe compaction request context without the active agent transport", async () => {
 		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
 		harnesses.push(harness);
