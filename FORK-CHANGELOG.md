@@ -8,6 +8,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Fixed
 
+- **Source internal processes resolve the fork scope from source.** `packages/coding-agent/src/experimental/source-resolver.ts` only applied the `@earendil-works/*` tsconfig aliases, so `@lue-labs/pi-*` imports fell through to package `dist` files — absent on a fresh checkout, which made every `test:mcp-conformance` case fail in CI with `client.ts wrote no report`. It now honors both scopes. The `extensions-discovery` regression for #9863 also creates its fake dependency under `node_modules/@lue-labs/`, matching the name it imports.
 - **Linked extension entries resolve relative imports beside their targets.** Canonicalize the module path before Jiti imports it, matching Node’s default module resolution. This keeps the configured/user-visible link identity while allowing the Tokenjuice policy wrapper to find its existing sibling policy module. A linked-entry regression is red before the fix and green afterward.
 - **Upstream-scoped extensions reuse the fork’s host modules.** Restore `@earendil-works/pi-{coding-agent,agent-core,tui,ai}` aliases (including existing compat/oauth/providers-all entries) in both the unbundled Node loader and embedded virtual modules. Third-party extensions such as the pinned Codex adapter and pi-fff no longer fail to resolve host imports; aliases point at the same module instances, not a second installed runtime.
 
