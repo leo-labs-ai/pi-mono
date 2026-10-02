@@ -7,7 +7,8 @@ upstream): d86654abb (Release v0.99.1). Range d86654abb..v1.0.0 = 88 commits,
 682 files. Merge commit: `Merge upstream Pi v1.0.0 into the fork`, followed by
 `docs(sync)`, `chore(sync): adopt upstream 1.0.0 workflow changes` and the
 cherry-pick `fix(extensions): reuse upstream host aliases and canonicalize
-linked entries` (from `de1fffac4`, PR #568).
+linked entries` (from `de1fffac4`, PR #568). Two CI fixes followed the first
+PR run (see "CI vs baseline" below).
 
 ## Method
 
@@ -83,6 +84,23 @@ real parents (6a3c92b25, v1.0.0), so history is an ordinary two-parent merge.
   - 2 are lane environment — `pi-memory:cache` re-fetched `@lue-labs/pi-coding-agent@0.87.1` from GitHub Packages via pnpm (`ERR_PNPM_IGNORED_BUILDS`) and `psyche-cli:smoke` cascades from it (better-sqlite3 binding never built).
   - 1 is anchor drift — `vanilla-wake-pin` fails identically against the canonical my-pi checkout because vanilla `pi` is already 1.0.0.
 - `pii -p` smoke (profile `@valkyriweb/my-pi-full`, `PI_BIN` → this build's `dist/cli.js`): before the cherry-pick, empty stdout and two extension load failures; after it, `OK` with exit 0 and only the two warnings the promoted 0.99.2 build also emits (builtin `mcp` skipped for pi-mcp-adapter's `/mcp`; typebox peer warning). `--list-models` shows the same clawrouter `claude-fable-5*`, `claude-haiku-4-5`, `gpt-6-astra(-200k)`, `gpt-6-sol` entries as the promoted build, and a tools-list prompt returns the identical tool set. `supportsMidConvoEffort` (ai `types.ts`, `anthropic-messages.ts`, coding-agent `model-config.ts`) is unchanged by the merge; `configuration_update`, `adoptInheritedForkMessages`, `shouldStopAfterTurn` and `clawrouter` have no source occurrences on `origin/main` either (reset residual, not a regression).
+
+## CI vs baseline
+
+The first PR run (36986153227, head `4d5217193`) was red on `unit-tests`,
+`fork-safety-check` and `mcp-conformance`. A dispatched baseline run on
+`origin/main` `6a3c92b25` (36988317541) is red on the first two with the same
+failures; `mcp-conformance` has no baseline because the job is new on this
+branch (adopted from upstream 1.0.0). After `521114aca` + `7d7608a19` the rerun
+(36989421571, head `7d7608a19`) is green on `fork-safety-check` and
+`mcp-conformance`; `unit-tests` is left with only the `packages/tui` failures
+that main has too.
+
+| Job | main `6a3c92b25` (36988317541) | #571 `4d5217193` (36986153227) | #571 `7d7608a19` (36989421571) | Cause | Fix |
+| --- | --- | --- | --- | --- | --- |
+| unit-tests | red: `pi-coding-agent` (`extensions-discovery` #9863 test), `pi-ai` (`together-models`), `pi-tui` (`tui-focus-gate` 2 + `background-continuity` 5 subtests) | red: same three workspaces | red: `pi-tui` only, same 7 subtests as main | #9863 test created its fake dependency under `node_modules/@earendil-works` while importing `@lue-labs/pi-coding-agent` (since the 0.99.0 scope rename; also red on #564/#565/#568). Together removed `deepseek-ai/DeepSeek-V4-Pro`, so CI's freshly generated catalog (`generate-models` runs at CI time; data is gitignored) no longer has it. tui: fork-seam residual from the 0.99.0 reset — DEC 1004 is enabled in `terminal.ts` but the focus-gate and background-continuity consumers were not re-grafted (`defer` above) | `521114aca` (test scope), `7d7608a19` (upstream `28eaccb8e`, #10336, cherry-picked `-x`); tui left as `defer` — needs the consumers re-grafted or the tests retired, not a sync-lane change |
+| fork-safety-check | red: `tsc` TS2345 `DeepSeek-V4-Pro` in `together-models.test.ts` | red: same | green | catalog drift as above (passed on #565/#568 on 2026-09-29/30, before the catalog changed) | `7d7608a19` |
+| mcp-conformance | n/a (job absent) | red: every case `client.ts wrote no report` | green | `source-resolver.ts` only applied `@earendil-works/*` tsconfig aliases, so `@lue-labs/pi-*` imports fell through to `dist`, absent in CI (`npm ci --ignore-scripts`, no build). Latent on main; surfaced by the new job | `521114aca`; verified locally with every `packages/*/dist` hidden: no regressions |
 
 ## Follow-ups
 
