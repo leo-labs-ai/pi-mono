@@ -145,6 +145,13 @@ that main has too.
 | fork-safety-check | red: `tsc` TS2345 `DeepSeek-V4-Pro` in `together-models.test.ts` | red: same | green | catalog drift as above (passed on #565/#568 on 2026-09-29/30, before the catalog changed) | `7d7608a19` |
 | mcp-conformance | n/a (job absent) | red: every case `client.ts wrote no report` | green | `source-resolver.ts` only applied `@earendil-works/*` tsconfig aliases, so `@lue-labs/pi-*` imports fell through to `dist`, absent in CI (`npm ci --ignore-scripts`, no build). Latent on main; surfaced by the new job | `521114aca`; verified locally with every `packages/*/dist` hidden: no regressions |
 
+After the review repair, the run on head `3bb6679ca` (37031454690) is green on
+all three jobs: `unit-tests` (110919037878 — the `pi-tui` subtests main fails
+are fixed by `3101f5874`), `fork-safety-check` (110919037583) and
+`mcp-conformance` (110919038021); Changelog, Workflow Sanity, Labeler and
+Agentic PR Review are green too. First fully green CI on a fork PR since the
+0.99.0 scope rename.
+
 ## Follow-ups
 
 - `.github/workflows/release.yml:118` comment still mentions `session-backends` (comment only).
