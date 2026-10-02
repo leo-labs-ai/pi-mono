@@ -929,6 +929,7 @@ export class AgentSession {
 						draft.content,
 						draft.display,
 						draft.details,
+						draft.modelVisible,
 					);
 					break;
 				case "context_edit":
@@ -1122,6 +1123,7 @@ export class AgentSession {
 					event.message.content,
 					event.message.display,
 					event.message.details,
+					event.message.modelVisible,
 				);
 			} else if (
 				event.message.role === "system" ||
@@ -2045,7 +2047,7 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 
 		for (const msg of result.messages) {
-			messages.push({
+			const extraMessage: CustomMessage = {
 				role: "custom",
 				customType: msg.customType,
 				// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -2053,7 +2055,9 @@ export class AgentSession {
 				display: msg.display,
 				details: msg.details,
 				timestamp: Date.now(),
-			});
+			};
+			if (msg.modelVisible !== undefined) extraMessage.modelVisible = msg.modelVisible;
+			messages.push(extraMessage);
 		}
 		const updateMessage = this._preparePromptAndToolLoadout(result.systemPromptOptions);
 		this._runSystemPromptOptions = result.systemPromptOptions;
@@ -2239,15 +2243,15 @@ export class AgentSession {
 	 * - Not streaming + triggerTurn: appends to state/session, starts new turn
 	 * - Not streaming + no trigger: appends to state/session, no turn
 	 *
-	 * @param message Custom message with customType, content, display, details
+	 * @param message Custom message with customType, content, display, details, and optional model visibility
 	 * @param options.triggerTurn If true and not streaming, triggers a new LLM turn
 	 * @param options.deliverAs Delivery mode: "steer", "followUp", or "nextTurn"
 	 */
 	async sendCustomMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void> {
-		const appMessage = {
+		const appMessage: CustomMessage<T> = {
 			role: "custom" as const,
 			customType: message.customType,
 			// Untyped extensions can pass null/missing content; normalize at ingestion.
@@ -2255,7 +2259,8 @@ export class AgentSession {
 			display: message.display,
 			details: message.details,
 			timestamp: Date.now(),
-		} satisfies CustomMessage<T>;
+		};
+		if (message.modelVisible !== undefined) appMessage.modelVisible = message.modelVisible;
 		if (options?.deliverAs === "nextTurn") {
 			this._pendingNextTurnMessages.push(appMessage);
 		} else if (this.isStreaming && options?.triggerTurn !== false) {
@@ -2287,6 +2292,7 @@ export class AgentSession {
 			appMessage.content,
 			appMessage.display,
 			appMessage.details,
+			appMessage.modelVisible,
 		);
 		this._refreshFinalizedContext();
 		this._emit({ type: "message_start", message: appMessage });

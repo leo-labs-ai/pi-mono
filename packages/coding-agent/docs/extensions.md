@@ -224,6 +224,7 @@ Choose storage based on how state participates in the conversation:
 | Tool state that follows the active branch | Tool-result `details` |
 | Durable data excluded from model context | `pi.appendEntry()` |
 | Custom content stored and sent to the model | `pi.sendMessage()` |
+| Custom content stored and rendered, but kept out of model context | `pi.sendMessage({ ..., modelVisible: false })` |
 | Data outside one session | External storage |
 
 Reconstruct branch-sensitive state from `ctx.sessionManager.getBranch()` during `session_start`.
