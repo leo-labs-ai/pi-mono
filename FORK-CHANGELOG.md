@@ -6,6 +6,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Unfocused terminals stop repainting and focus events stay out of components again.** Re-grafts the consumer side of the fork's DEC mode 1004 focus gate dropped by the 0.99.0 green-path reset (`terminal.ts` kept enabling `?1004h`, so every focus switch leaked `ESC[I`/`ESC[O` into the focused component as keystrokes and the spinner kept repainting a terminal nobody was looking at): `TuiBase` tracks `terminalFocused`, defers scheduled and immediate renders while unfocused, flushes exactly one catch-up render on focus-in, and drops focus sequences that no input listener consumed. `tui-focus-gate.test.ts` is green again. Re-grafted from `38110b709`.
+- **Panel backgrounds stay continuous under content that resets its styling again.** Upstream's `Box` memory fix (`54c19a252`) wrapped the padded line in `bgFn` directly, bypassing the fork's `applyBackgroundToLine`, so any `ESC[0m`/`ESC[49m` inside a child line (Edit's diff colouring, syntax highlighting, raw command output) dropped the panel background for the rest of the row. `Box` routes through `applyBackgroundToLine` again, which pads once and re-opens the background after each reset; the non-background path keeps the single measurement. `background-continuity.test.ts` is green again (TUI suite 1061/1062, 1 skipped). Not re-ported: the fork-only `ToolPanel` component (`tool-panel.ts`, also deleted by the reset) — logged as an open seam. Re-grafted from lue-labs/pi-mono#442.
+
 ### Changed
 
 - **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.1 (`d86654abb`).** GPT-6.1 Sol (Codex default) + ChatGPT login OAuth bundle fix. Fork packages lockstep **0.99.1**; chord/codemode/mcp stay `@earendil-works/*@0.99.1`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.
