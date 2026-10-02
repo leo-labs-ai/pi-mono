@@ -20,7 +20,7 @@ Pi has two summarization mechanisms:
 | Compaction | Context exceeds threshold, or `/compact` | Summarize old messages to free up context |
 | Branch summarization | `/tree` navigation | Preserve context when switching branches |
 
-Both use closely related structured formats and track file operations cumulatively. Summarization requests disable prompt-cache writes because these one-off prompts are unlikely to be reused.
+Both use closely related structured formats and track file operations cumulatively. Branch summaries and standalone summarization requests (`generateSummary` without a cache-safe context) disable prompt-cache writes because those one-off prompts are unlikely to be reused. The session's own compaction is cache-safe instead: it replays the live transcript and reads the prompt cache the main loop already wrote (see [Cache-safe compaction](#cache-safe-compaction)).
 
 ## Compaction
 
@@ -288,6 +288,20 @@ Before summarization, messages are serialized to text via [`serializeConversatio
 This prevents the model from treating it as a conversation to continue.
 
 Tool results are truncated to 2000 characters during serialization. Content beyond that limit is replaced with a marker indicating how many characters were truncated. This keeps summarization requests within reasonable token budgets, since tool results (especially from `read` and `bash`) are typically the largest contributors to context size.
+
+Serialization is used by branch summaries and by `generateSummary`/`compact` callers that do not pass a cache-safe context. The session's own compaction does not serialize; see below.
+
+### Cache-safe compaction
+
+Fork behavior. When `AgentSession` compacts, the summarization request replays the live transcript instead of a serialized copy of it:
+
+1. The session runs the agent's `transformContext` and `convertToLlm` over `agent.state.messages`, exactly as the main loop does before a provider call, and passes the result to `compact()` as `cacheSafeContext: { messages }`.
+2. `compact()` appends one user message with the summary instruction (`CACHE_SAFE_SUMMARIZATION_PROMPT`, or `CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT` with a short boundary excerpt for split turns) and sends that context unchanged.
+3. The request keeps the agent's `sessionId` and uses the same cache retention as the main loop (`PI_CACHE_RETENTION=long` or the default short retention), so providers that key cache affinity on the session read the prefix the main loop already wrote.
+
+Why: a serialized copy of a long session is a fresh prompt. On providers that bill cache writes, every compaction then pays a full cache write for bytes that were already cached under the live prefix and are never read again. Replaying the live transcript turns that into a cache read of the existing prefix plus one small uncached instruction.
+
+Extensions and SDK users that call `generateSummary`/`generateSummaryWithUsage`/`compact`/`generateTurnPrefixSummary` directly get the standalone, serialized request unless they pass a `cacheSafeContext`. `CacheSafeCompactionContext` and `generateTurnPrefixSummary` are exported from the package entry point.
 
 ## Custom Summarization via Extensions
 

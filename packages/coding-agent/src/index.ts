@@ -29,6 +29,7 @@ export type { CacheWarmingDecision, CacheWarmingStatus } from "./core/cache-warm
 export {
 	type BranchPreparation,
 	type BranchSummaryResult,
+	type CacheSafeCompactionContext,
 	type CollectEntriesResult,
 	type CompactionResult,
 	type CutPointResult,
@@ -44,6 +45,7 @@ export {
 	generateBranchSummary,
 	generateSummary,
 	generateSummaryWithUsage,
+	generateTurnPrefixSummary,
 	getLastAssistantUsage,
 	prepareBranchEntries,
 	serializeConversation,

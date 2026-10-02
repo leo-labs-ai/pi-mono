@@ -65,6 +65,7 @@ import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
 import { generateBugReportSummary } from "./bug-report.ts";
 import type { CacheWarmer, CacheWarmingStatus } from "./cache-warmer.ts";
 import {
+	type CacheSafeCompactionContext,
 	type CompactionPreparation,
 	type CompactionResult,
 	calculateContextTokens,
@@ -2674,6 +2675,19 @@ export class AgentSession {
 	// Compaction
 	// =========================================================================
 
+	/**
+	 * The live model-facing transcript, built the way the agent loop builds every request:
+	 * the agent's `transformContext` (extension context handlers, hidden tool declarations,
+	 * forced prompt) followed by its `convertToLlm`. The summary request replays it verbatim,
+	 * so the leading system message and tool declarations match the cached prefix byte for byte.
+	 */
+	private async _buildCacheSafeCompactionContext(signal: AbortSignal): Promise<CacheSafeCompactionContext> {
+		const messages = this.agent.transformContext
+			? await this.agent.transformContext(this.agent.state.messages, signal)
+			: this.agent.state.messages;
+		return { messages: await this.agent.convertToLlm(messages) };
+	}
+
 	/** Generate Pi's built-in compaction summary for manual and automatic compaction. */
 	private async _runDefaultCompaction(
 		preparation: CompactionPreparation,
@@ -2684,6 +2698,11 @@ export class AgentSession {
 	): Promise<CompactionResult> {
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
 		const request = await this._getSummarizationRequestAuth(model, signal);
+		// Cache-safe compaction (fork): replay the live transcript for the summary request so it
+		// reads the prefix the main loop just cached instead of cold-writing a serialized copy of
+		// the conversation. Both manual and automatic paths route through here, so the context is
+		// built in one place.
+		const cacheSafeContext = await this._buildCacheSafeCompactionContext(signal);
 		return compact(
 			preparation,
 			request.model,
@@ -2696,7 +2715,11 @@ export class AgentSession {
 			request.env,
 			this.settingsManager.getRetrySettings(),
 			this._summarizationRetryCallbacks({ source: "compaction", reason }),
-			undefined, // sessionId
+			// Route the summary with the live routing session: the prefix above is only cached on
+			// the node that served this session's turns, and providers key cache affinity off this
+			// ID. This is the ID the main loop sends on every turn (`Agent.sessionId`).
+			this.agent.sessionId,
+			cacheSafeContext,
 		);
 	}
 
