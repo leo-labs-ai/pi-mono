@@ -177,3 +177,9 @@ Complete the provider's headless authentication flow when available. Some provid
 ### A compatible endpoint rejects requests
 
 Check its API type and compatibility settings in `models.json`. The upstream server must support the corresponding request fields and behavior.
+
+### Codex Responses gateway compatibility
+
+Gateways implementing the ChatGPT Codex wire contract may use `openai-codex-responses`. For opaque bearer credentials, set provider/model compatibility flags such as `sendChatgptAccountId: false`; gateways may also disable WebSocket transport with `supportsWebSocketTransport: false`.
+
+zstd request compression follows the base URL: it stays on for the official ChatGPT Codex backend and is off for every other base URL, because gateways generally reject a `Content-Encoding: zstd` request body. Set `supportsZstdRequestCompression: true` on a gateway that does decode zstd, or `false` to force it off anywhere.

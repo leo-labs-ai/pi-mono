@@ -892,7 +892,19 @@ export interface OpenAIResponsesCompat {
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
+	/** Whether to derive and send the ChatGPT account header (Codex Responses only). Opaque gateway credentials carry no account claim. Default: true. */
+	sendChatgptAccountId?: boolean;
+	/** Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only). Default: true. */
+	supportsWebSocketTransport?: boolean;
+	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
+	supportsZstdRequestCompression?: boolean;
 }
+
+/**
+ * Compatibility settings for OpenAI Codex Responses APIs. Codex lanes share
+ * {@link OpenAIResponsesCompat}; the Codex-only flags live there as optional fields.
+ */
+export type OpenAICodexResponsesCompat = OpenAIResponsesCompat;
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
