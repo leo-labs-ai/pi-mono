@@ -504,6 +504,13 @@ export abstract class TuiBase extends Container implements TUI {
 	private immediateRenderScheduled = false;
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
+	/**
+	 * Whether the host terminal currently has focus (DEC mode 1004). When false,
+	 * renders are deferred (the last frame stays on screen) so an unfocused or
+	 * switched-away terminal does not burn CPU repainting; a single render flushes on
+	 * focus-in. Defaults true so terminals without 1004 support behave normally.
+	 */
+	private terminalFocused = true;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private showHardwareCursor = false;
 	private clearOnShrink = false;
@@ -1006,6 +1013,10 @@ export abstract class TuiBase extends Container implements TUI {
 		process.nextTick(() => {
 			this.immediateRenderScheduled = false;
 			if (this.stopped || !this.renderRequested) return;
+			if (!this.terminalFocused) {
+				// Defer while unfocused; full-redraw state is retained and focus-in flushes it.
+				return;
+			}
 			// A previously queued scheduleRender() can create a timer before this
 			// callback runs. User input must preempt that throttled frame.
 			this.cancelRenderTimer();
@@ -1025,6 +1036,10 @@ export abstract class TuiBase extends Container implements TUI {
 		if (this.stopped || this.renderTimer || !this.renderRequested) {
 			return;
 		}
+		if (!this.terminalFocused) {
+			// Defer while unfocused; renderRequested stays true so focus-in catches up.
+			return;
+		}
 		const elapsed = performance.now() - this.lastRenderAt;
 		const delay = Math.max(0, TuiBase.MIN_RENDER_INTERVAL_MS - elapsed);
 		this.renderTimer = setTimeout(() => {
@@ -1042,6 +1057,10 @@ export abstract class TuiBase extends Container implements TUI {
 	}
 
 	private handleTerminalInput(data: string): void {
+		// Update the render-throttling focus state as a side effect, but don't swallow the
+		// event here: input listeners (e.g. TuiAltScreen's selection cancel-on-focus-loss)
+		// need to see raw focus-in/focus-out sequences too.
+		const isFocusEvent = this.updateFocusState(data);
 		if (this.consumeTerminalColorResponse(data)) {
 			return;
 		}
@@ -1064,6 +1083,11 @@ export abstract class TuiBase extends Container implements TUI {
 				return;
 			}
 			data = current;
+		}
+
+		// No listener consumed a focus sequence; don't forward it to keybindings/components.
+		if (isFocusEvent) {
+			return;
 		}
 
 		// Consume terminal cell size responses without blocking unrelated input.
@@ -1116,6 +1140,35 @@ export abstract class TuiBase extends Container implements TUI {
 			// Keyboard input is latency-sensitive. Avoid the throttled timer path,
 			// where even setTimeout(0) can take a full 16 ms tick on Windows.
 			this.requestImmediateRender();
+		}
+	}
+
+	/**
+	 * Handle DEC mode 1004 focus events (ESC[I focus-in, ESC[O focus-out). On
+	 * focus-out we stop scheduling renders so spinner/idle repaints pause and the last
+	 * painted frame stays on screen; on focus-in we render once to catch up. Returns
+	 * whether `data` was a focus sequence; input listeners still get to see and react
+	 * to it (e.g. cancel an active selection), so this does not consume the event.
+	 */
+	private updateFocusState(data: string): boolean {
+		if (data === "\x1b[I") {
+			this.setTerminalFocused(true);
+			return true;
+		}
+		if (data === "\x1b[O") {
+			this.setTerminalFocused(false);
+			return true;
+		}
+		return false;
+	}
+
+	private setTerminalFocused(focused: boolean): void {
+		if (this.terminalFocused === focused) {
+			return;
+		}
+		this.terminalFocused = focused;
+		if (focused && this.renderRequested) {
+			this.scheduleRender();
 		}
 	}
 
