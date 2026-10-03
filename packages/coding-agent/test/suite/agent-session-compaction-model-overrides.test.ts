@@ -102,7 +102,7 @@ describe("AgentSession compaction model overrides", () => {
 		},
 	);
 
-	it.each(["manual", "automatic"] as const)("passes resolved budgets to built-in %s summarization", async (path) => {
+	it.each(["manual", "automatic"] as const)("does not cap built-in %s summary output by reserveTokens", async (path) => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 4000, maxTokens: 3000 }],
 			tools: [],
@@ -125,7 +125,8 @@ describe("AgentSession compaction model overrides", () => {
 		]);
 		if (path === "manual") await harness.session.compact();
 		else await harness.session.prompt("continue");
-		expect(budgets).toEqual([1600]);
+		// reserveTokens moves the trigger only. pi-ai applies the model's output limit to the summary.
+		expect(budgets).toEqual([undefined]);
 		expect(harness.sessionManager.getEntries().find((entry) => entry.type === "compaction")).toMatchObject({
 			firstKeptEntryId: recentUserId,
 			summary: "built-in summary",
@@ -201,6 +202,6 @@ describe("AgentSession compaction model overrides", () => {
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual([{ id: "first", maxTokens: 1600 }]);
+		expect(requests).toEqual([{ id: "first", maxTokens: undefined }]);
 	});
 });

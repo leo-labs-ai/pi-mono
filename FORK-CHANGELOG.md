@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Compaction no longer fails with "generation hit the token cap".** Summary requests used to cap output at `0.8 × reserveTokens` (`0.5 ×` for a split-turn prefix), i.e. 25.6k tokens on 200k-class Claude routes. Providers count thinking inside `max_tokens`, so long summaries written at the session's thinking level stopped with `length`, and the session stayed above its threshold. The cap predates pi-ai's `clampMaxTokensToContext`, which now does the job correctly. Summaries therefore set no output cap of their own: like a normal turn, they get the model's output limit, clamped to the context window. The thinking level is unchanged, and `reserveTokens` now sets only the trigger. Verified on a 212k-token session at thinking `high`: 0.99.2 failed, the fix succeeded with 28.8k output tokens. Supersedes the forced-`off` summary thinking from #509, which PR #571 re-grafts with cache-safe compaction.
+
 ### Changed
 
 - **Upstream sync (2026-09-29): integrated exact upstream Pi 0.99.1 (`d86654abb`).** GPT-6.1 Sol (Codex default) + ChatGPT login OAuth bundle fix. Fork packages lockstep **0.99.1**; chord/codemode/mcp stay `@earendil-works/*@0.99.1`. Fork-seam re-graft residual from the 0.99.0 green-path reset remains.

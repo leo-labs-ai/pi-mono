@@ -391,7 +391,8 @@ describe("AgentSession virtual models", () => {
 
 		expect(result.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
-		// The router's thinking level applies, and the output budget respects the large model's 4000 tokens.
-		expect(summaries).toEqual(["large:low:4000", "large:low:4000"]);
+		// The router's thinking level applies. Summaries set no output cap of their own, so pi-ai sizes
+		// them from the routed large model.
+		expect(summaries).toEqual(["large:low:undefined", "large:low:undefined"]);
 	});
 });
