@@ -48,7 +48,13 @@ export {
 	type LayoutLine,
 } from "./components/editor.ts";
 export { HStack } from "./components/h-stack.ts";
-export { Image, type ImageOptions, type ImageTheme } from "./components/image.ts";
+export {
+	Image,
+	type ImageOptions,
+	type ImageTheme,
+	type ImageTranscoder,
+	setImageTranscoder,
+} from "./components/image.ts";
 export { Input } from "./components/input.ts";
 export {
 	LAYOUT_GRAPH_VERSION,
