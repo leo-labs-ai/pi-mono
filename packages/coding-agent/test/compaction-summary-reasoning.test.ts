@@ -402,7 +402,37 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
 	});
 
-	it("clamps compaction summary maxTokens to the model output cap", async () => {
+	it("sets no compaction-specific output cap, so thinking cannot starve the summary", async () => {
+		// reserveTokens only moves the trigger. It used to cap output at 0.8 × 32000 = 25600 (and the
+		// turn prefix at 16000), which thinking at the session level could exhaust before the
+		// summary finished. pi-ai now applies the model's output limit, clamped to the context window.
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 210000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 32000, keepRecentTokens: 20000 },
+		};
+
+		const result = await compact(
+			preparation,
+			createModel(true, 128000, { forceAdaptiveThinking: true }),
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			"high",
+		);
+
+		const options = completeSimpleMock.mock.calls.map((call) => call[2]);
+		expect(options.map((o) => o?.maxTokens)).toEqual([undefined, undefined]);
+		expect(options.map((o) => o?.reasoning)).toEqual(["high", "high"]);
+		expect(result.summary).toContain("Test summary");
+	});
+
+	it("leaves summary maxTokens to pi-ai for large reserves too", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
@@ -422,7 +452,7 @@ describe("generateSummary reasoning options", () => {
 			totalTokens: 40,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		});
-		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([undefined, undefined]);
 	});
 
 	it("uses split-turn format for cache-safe turn-prefix summaries", async () => {

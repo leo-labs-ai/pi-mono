@@ -32,7 +32,7 @@ Auto-compaction triggers when:
 contextTokens > contextWindow - reserveTokens
 ```
 
-By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response.
+By default, `reserveTokens` is 16384 tokens (configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`). This leaves room for the LLM's response. It does not cap the summary itself: summary requests use the model's normal output limit, clamped to the room left in the context window, because providers count thinking inside that limit.
 
 During a multi-turn agent run, Pi checks the canonical projected context after tools finish and their results are appended, before starting the next assistant response. If the threshold is crossed, Pi compacts during `prepareNextTurn`, then performs the existing catch-up steering poll before `turn_start`. It skips this between-turn check when the completed tool batch terminates the run and no queued message requires another response. Pi also checks before a new user prompt and performs final-attempt overflow recovery after the low-level run ends.
 
@@ -299,7 +299,7 @@ Fork behavior. When `AgentSession` compacts, the summarization request replays t
 2. `compact()` appends one user message with the summary instruction (`CACHE_SAFE_SUMMARIZATION_PROMPT`, or `CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT` with a short boundary excerpt for split turns) and sends that context unchanged.
 3. The request keeps the agent's `sessionId` and uses the same cache retention as the main loop (`PI_CACHE_RETENTION=long` or the default short retention), so providers that key cache affinity on the session read the prefix the main loop already wrote.
 
-The session's own thinking level does not reach compaction summaries (fork behavior): `AgentSession` requests them with thinking off. The summary is a bounded rewrite of text already in context; at high reasoning levels the reasoning alone can exhaust `reserveTokens`, the response stops with `length`, and the summary is rejected as incomplete. Two exceptions keep explicit choices: a virtual model's router picks the thinking level for the summary request itself (reason `direct`) and that level is used, and `compact`/`generateSummary`/`generateSummaryWithUsage` honor the `thinkingLevel` a direct caller passes.
+Compaction summaries keep the session's thinking level, and a virtual model's router may pick its own level for the summary request (reason `direct`). Summary requests set no output cap of their own: pi-ai applies the model's output limit, clamped to the room left in the context window, so thinking cannot use up a smaller compaction-specific cap and fail the summary with `length`. Keeping the level also keeps the cache-safe request's thinking settings identical to the turn that wrote the cached prefix.
 
 Why: a serialized copy of a long session is a fresh prompt. On providers that bill cache writes, every compaction then pays a full cache write for bytes that were already cached under the live prefix and are never read again. Replaying the live transcript turns that into a cache read of the existing prefix plus one small uncached instruction.
 
@@ -447,7 +447,7 @@ Configure compaction in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settin
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enable auto-compaction |
-| `reserveTokens` | `16384` | Tokens to reserve for LLM response |
+| `reserveTokens` | `16384` | Tokens to reserve for LLM response; sets the trigger only |
 | `keepRecentTokens` | `20000` | Recent tokens to keep (not summarized) |
 
 Disable auto-compaction with `"enabled": false`. You can still compact manually with `/compact`.
@@ -470,7 +470,7 @@ Use `compaction.modelOverrides` to tune token budgets for different models:
 }
 ```
 
-For a model with a 1M context window, this override triggers compaction above 600K tokens and keeps the ordinary 20000 recent tokens. Other models retain the ordinary 16384-token reserve. `reserveTokens` also influences summarization output limits, capped by the model's maximum output tokens; it is not solely a trigger threshold.
+For a model with a 1M context window, this override triggers compaction above 600K tokens and keeps the ordinary 20000 recent tokens. Other models retain the ordinary 16384-token reserve. `reserveTokens` does not limit summary output.
 
 Keys are exact, case-sensitive `provider/modelId` values, including any slashes within the model ID. Each `reserveTokens` and `keepRecentTokens` value falls back independently from the model override to the ordinary setting to the built-in default. Values must be non-negative safe integers. Invalid values in the matching model override produce an error when read; only omitted fields fall back to the ordinary setting. Model override entries must be objects. Invalid ordinary token settings produce an error when read, even if the active model has a valid override. Only omitted ordinary values use built-in defaults. `enabled` remains global, not model-specific.
 

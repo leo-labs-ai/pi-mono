@@ -704,10 +704,15 @@ export function getSummarizationFailure(response: AssistantMessage, label: strin
  * - Standalone: the conversation is serialized into a `<conversation>` text blob that shares
  *   no prefix with any live session, so there is nothing to hit and caching would only pay
  *   for a write that is never read. `"none"` is correct there, and stays the default.
+ *
+ * Summary requests set no output cap of their own. Like a normal turn, pi-ai sends the model's
+ * output limit, clamped to the room left in the context window. Providers count thinking inside
+ * max_tokens, so a smaller compaction-specific cap (formerly 0.8 × reserveTokens) let thinking
+ * starve the summary and fail compaction with a length stop. The summary prompt, not
+ * max_tokens, governs summary length.
  */
 function createSummarizationOptions(
 	model: Model<any>,
-	maxTokens: number,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
@@ -718,7 +723,6 @@ function createSummarizationOptions(
 ): SimpleStreamOptions {
 	const liveRetention = getProviderEnvValue("PI_CACHE_RETENTION", env) === "long" ? "long" : "short";
 	const options: SimpleStreamOptions = {
-		maxTokens,
 		signal,
 		apiKey,
 		headers,
@@ -849,11 +853,16 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 	});
 }
 
-/** Generate or update a conversation summary and return its provider usage. */
+/**
+ * Generate or update a conversation summary and return its provider usage.
+ *
+ * `_reserveTokens` is kept for API compatibility. It no longer caps summary output; see
+ * {@link createSummarizationOptions}.
+ */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	reserveTokens: number,
+	_reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -867,14 +876,8 @@ export async function generateSummaryWithUsage(
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<{ text: string; usage: Usage }> {
-	const maxTokens = Math.min(
-		Math.floor(0.8 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
-	);
-
 	const completionOptions = createSummarizationOptions(
 		model,
-		maxTokens,
 		apiKey,
 		headers,
 		env,
@@ -1282,7 +1285,7 @@ function buildTurnBoundaryExcerpt(turnPrefixMessages: AgentMessage[]): string {
 export async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
-	reserveTokens: number,
+	_reserveTokens: number,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
@@ -1294,10 +1297,6 @@ export async function generateTurnPrefixSummary(
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<{ text: string; usage: Usage }> {
-	const maxTokens = Math.min(
-		Math.floor(0.5 * reserveTokens),
-		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
-	); // Smaller budget for turn prefix
 	// Cache-safe path: the split-turn prefix messages are ALREADY present verbatim in
 	// cacheSafeContext.messages (the live model-facing transcript). Re-serializing them into the
 	// prompt would send the same conversation twice in one request -- once as structured
@@ -1323,7 +1322,6 @@ export async function generateTurnPrefixSummary(
 		context,
 		createSummarizationOptions(
 			model,
-			maxTokens,
 			apiKey,
 			headers,
 			env,
