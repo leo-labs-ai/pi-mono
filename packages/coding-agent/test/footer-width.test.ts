@@ -26,6 +26,7 @@ function createSession(options: {
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
 	routedModel?: { model: { id: string }; thinkingLevel?: string };
+	contextTokens?: number | null;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -82,7 +83,7 @@ function createSession(options: {
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
-		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
+		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3, tokens: options.contextTokens ?? null }),
 		routedModel: options.routedModel,
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
@@ -235,6 +236,18 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("CH25.0%");
+	});
+
+	it("shows used context tokens beside the context percentage", () => {
+		const session = createSession({ sessionName: "", contextTokens: 24_600 });
+		const statsLine = stripAnsi(new FooterComponent(session, createFooterData(1)).render(120)[1]);
+		expect(statsLine).toContain("12.3% 25k/200k");
+	});
+
+	it("omits used context tokens when they are unknown", () => {
+		const session = createSession({ sessionName: "" });
+		const statsLine = stripAnsi(new FooterComponent(session, createFooterData(1)).render(120)[1]);
+		expect(statsLine).toContain("12.3%/200k");
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {
