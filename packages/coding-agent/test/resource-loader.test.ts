@@ -1332,6 +1332,23 @@ export default function(pi: ExtensionAPI) {
 			expect(files.map((f) => f.content)).toEqual(["outer instructions", "repo instructions", "leaf instructions"]);
 		});
 
+		it("should load a global context file once when it symlinks to an ancestor's file", () => {
+			const shared = join(tempDir, "shared-AGENTS.md");
+			writeFileSync(shared, "overlay instructions");
+			const home = join(tempDir, "home");
+			const project = join(home, "project");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(agentDir, { recursive: true });
+			symlinkSync(shared, join(agentDir, "AGENTS.md"));
+			symlinkSync(shared, join(home, "AGENTS.md"));
+			writeFileSync(join(project, "AGENTS.md"), "project instructions");
+
+			const files = loadProjectContextFiles({ cwd: project, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["overlay instructions", "project instructions"]);
+			expect(files[0]?.path).toBe(join(agentDir, "AGENTS.md"));
+		});
+
 		it("should climb normally when the gitdir: target does not exist", () => {
 			const repo = join(tempDir, "corrupt");
 			const src = join(repo, "src");

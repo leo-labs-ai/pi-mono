@@ -237,12 +237,14 @@ export function loadProjectContextFiles(options: {
 	const resolvedAgentDir = resolvePath(options.agentDir);
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
+	// Keyed by realpath: a global AGENTS.md that symlinks to an ancestor's file (or two
+	// ancestors linking one shared file) is the same instructions and must load once.
 	const seenPaths = new Set<string>();
 
 	const globalContext = loadContextFileFromDir(resolvedAgentDir);
 	if (globalContext) {
 		contextFiles.push(globalContext);
-		seenPaths.add(globalContext.path);
+		seenPaths.add(canonicalizePath(globalContext.path));
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
@@ -254,9 +256,10 @@ export function loadProjectContextFiles(options: {
 		const contextFile = loadContextFileFromDir(currentDir);
 		const isShadowed =
 			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
-		if (contextFile && !isShadowed && !seenPaths.has(contextFile.path)) {
+		const canonicalPath = contextFile ? canonicalizePath(contextFile.path) : undefined;
+		if (contextFile && canonicalPath && !isShadowed && !seenPaths.has(canonicalPath)) {
 			ancestorContextFiles.unshift(contextFile);
-			seenPaths.add(contextFile.path);
+			seenPaths.add(canonicalPath);
 		}
 
 		const parentDir = dirname(currentDir);
