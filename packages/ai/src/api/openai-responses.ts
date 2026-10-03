@@ -91,6 +91,10 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		// Fork: Codex Responses transport flags share the compat type; default on.
+		sendChatgptAccountId: model.compat?.sendChatgptAccountId ?? true,
+		supportsWebSocketTransport: model.compat?.supportsWebSocketTransport ?? true,
+		supportsZstdRequestCompression: model.compat?.supportsZstdRequestCompression ?? true,
 	};
 }
 

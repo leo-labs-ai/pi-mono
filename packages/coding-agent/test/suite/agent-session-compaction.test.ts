@@ -4,7 +4,6 @@ import {
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	fauxToolCall,
-	getCurrentSystemPrompt,
 	getCurrentTools,
 	type Model,
 	type SimpleStreamOptions,
@@ -334,32 +333,84 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
-	it("uses the standalone compaction request context", async () => {
+	it("keeps the session's thinking level for compaction summaries, with no reserve-based output cap", async () => {
+		// Summaries used to force thinking "off" because thinking could use up the
+		// 0.8 × reserveTokens output cap and fail compaction with a length stop. The cap is gone
+		// (pi-ai applies the model limit, clamped to the context window), so the summary keeps the
+		// session's level and the same thinking settings as the turn that wrote the cached prefix.
+		const harness = await createHarness({
+			models: [{ id: "faux-reasoning", reasoning: true }],
+			settings: { compaction: { keepRecentTokens: 1 } },
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.session.setThinkingLevel("high");
+		expect(harness.session.thinkingLevel).toBe("high");
+
+		const requestOptions: Array<SimpleStreamOptions | undefined> = [];
+		useSummaryStreamFn(harness, "summary with reasoning", (_context, options) => {
+			requestOptions.push(options);
+		});
+
+		await harness.session.compact();
+
+		expect(requestOptions.length).toBeGreaterThan(0);
+		for (const options of requestOptions) {
+			expect(options?.reasoning).toBe("high");
+			expect(options?.maxTokens).toBeUndefined();
+		}
+	});
+
+	it("uses the cache-safe compaction request context without the active agent transport", async () => {
 		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
 
-		const transformContext = vi.fn(async (messages: AgentMessage[]) => messages);
+		// The live request runs the agent's transformContext before convertToLlm, so the summary
+		// request must too: a projection that hides tool declarations or rewrites a message
+		// changes the replayed bytes, and a prefix that differs from the live one is cached nowhere.
+		const transformContext = vi.fn(async (messages: AgentMessage[]) =>
+			messages.map((message) =>
+				message.role === "user"
+					? { ...message, content: [{ type: "text" as const, text: "PROJECTED message to compact" }] }
+					: message,
+			),
+		);
 		harness.session.agent.transformContext = transformContext;
 		harness.session.agent.sessionId = "active-routing-session";
 		harness.session.agent.transport = "websocket";
+		const liveMessages = await harness.session.agent.convertToLlm(
+			await transformContext(harness.session.agent.state.messages),
+		);
 
 		let requestContext: TranscriptContext | undefined;
 		let requestOptions: SimpleStreamOptions | undefined;
-		useSummaryStreamFn(harness, "standalone summary", (context, options) => {
+		useSummaryStreamFn(harness, "cache-safe summary", (context, options) => {
 			requestContext = context;
 			requestOptions = options;
 		});
 
 		await harness.session.compact();
 
-		expect(transformContext).not.toHaveBeenCalled();
-		expect(getCurrentSystemPrompt(requestContext?.messages ?? [])).not.toBe(harness.session.agent.state.systemPrompt);
-		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual([]);
-		// Regression test for #9652: split-turn summaries use a clear Markdown conversation boundary.
-		expect(JSON.stringify(requestContext?.messages)).toContain("# Conversation\\n[User]: message to compact");
-		expect(requestOptions).toMatchObject({ cacheRetention: "none" });
-		expect(requestOptions?.sessionId).not.toBe("active-routing-session");
+		// Fork: the summary request replays the live transcript verbatim (system message, tool
+		// declarations, conversation) and appends only the summary instruction. That prefix is
+		// already cached by the main loop, so the request keeps caching on to read it and keeps the
+		// live routing session so it lands on the node holding it. Asserting "none" here would
+		// assert the bug: build a cache-reusable prefix, then forbid the reuse and cold-write it.
+		expect(transformContext).toHaveBeenCalledTimes(2);
+		expect(requestContext?.messages.slice(0, liveMessages.length)).toEqual(liveMessages);
+		expect(requestContext?.messages).toHaveLength(liveMessages.length + 1);
+		expect(JSON.stringify(requestContext?.messages)).toContain("PROJECTED message to compact");
+		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(getCurrentTools(liveMessages));
+		// The split-turn prefix is already in the replayed messages; the request must not
+		// re-serialize it as a text blob after the cached prefix (see generateTurnPrefixSummary).
+		const summaryAsk = JSON.stringify(requestContext?.messages.at(-1));
+		expect(summaryAsk).toContain("active session context");
+		expect(summaryAsk).toContain("<boundary>");
+		expect(summaryAsk).not.toContain("# Conversation");
+		expect(summaryAsk).not.toContain("[User]:");
+		expect(requestOptions?.cacheRetention).not.toBe("none");
+		expect(requestOptions?.sessionId).toBe("active-routing-session");
 		expect(requestOptions?.transport).toBeUndefined();
 	});
 

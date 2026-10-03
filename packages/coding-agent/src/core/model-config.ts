@@ -120,6 +120,9 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	supportsStrictMode: Type.Optional(Type.Boolean()),
 	supportsOpenAIGrammarTools: Type.Optional(Type.Boolean()),
 	supportsMaxOutputTokens: Type.Optional(Type.Boolean()),
+	sendChatgptAccountId: Type.Optional(Type.Boolean()),
+	supportsWebSocketTransport: Type.Optional(Type.Boolean()),
+	supportsZstdRequestCompression: Type.Optional(Type.Boolean()),
 });
 
 const ModelCostRatesSchema = {

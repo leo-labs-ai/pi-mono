@@ -149,8 +149,9 @@ export interface SessionInfoEntry extends SessionEntryBase {
  * Use customType to identify your extension's entries.
  *
  * Unlike CustomEntry, this DOES participate in LLM context.
- * The content is converted to a user message in buildSessionContext().
+ * The content is converted to a user message in buildSessionContext() unless modelVisible is false.
  * Use details for extension-specific metadata (not sent to LLM).
+ * modelVisible controls whether the content is sent to the provider; omitted means true.
  *
  * display controls TUI rendering:
  * - false: hidden entirely
@@ -162,6 +163,8 @@ export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
 	content: string | (TextContent | ImageContent)[];
 	details?: T;
 	display: boolean;
+	/** If false, retain/render the entry but omit it from provider context. */
+	modelVisible?: boolean;
 }
 
 /** Content that an append-only context edit may replace without changing message metadata. */
@@ -452,7 +455,14 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 	}
 	if (entry.type === "custom_message") {
 		return [
-			createCustomMessage(entry.customType, entry.content ?? [], entry.display, entry.details, entry.timestamp),
+			createCustomMessage(
+				entry.customType,
+				entry.content ?? [],
+				entry.display,
+				entry.details,
+				entry.timestamp,
+				entry.modelVisible,
+			),
 		];
 	}
 	if (entry.type === "branch_summary" && entry.summary) {
@@ -1334,6 +1344,7 @@ export class SessionManager {
 	 * @param content Message content (string or TextContent/ImageContent array)
 	 * @param display Whether to show in TUI (true = styled display, false = hidden)
 	 * @param details Optional extension-specific metadata (not sent to LLM)
+	 * @param modelVisible Whether to include the content in provider context (default true)
 	 * @returns Entry id
 	 */
 	appendCustomMessageEntry<T = unknown>(
@@ -1341,6 +1352,7 @@ export class SessionManager {
 		content: string | (TextContent | ImageContent)[],
 		display: boolean,
 		details?: T,
+		modelVisible?: boolean,
 	): string {
 		const entry: CustomMessageEntry<T> = {
 			type: "custom_message",
@@ -1352,6 +1364,7 @@ export class SessionManager {
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
 		};
+		if (modelVisible !== undefined) entry.modelVisible = modelVisible;
 		this._appendEntry(entry);
 		return entry.id;
 	}

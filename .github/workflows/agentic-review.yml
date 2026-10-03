@@ -123,8 +123,8 @@ jobs:
           npm --prefix packages/tui run build
           npm --prefix packages/telemetry run build
           npm --prefix packages/ai run build
+          npm --prefix packages/durable run build
           npm --prefix packages/agent run build
-          npm --prefix packages/session-backends/sqlite-node run build
           npm --prefix packages/protocol run build
           npm --prefix packages/client run build
           npm --prefix packages/server run build
