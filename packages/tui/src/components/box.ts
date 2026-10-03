@@ -1,5 +1,5 @@
 import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
-import { visibleWidth } from "../utils.ts";
+import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
@@ -157,10 +157,14 @@ export class Box implements Component {
 	}
 
 	private applyBg(line: string, width: number): string {
+		// applyBackgroundToLine pads to width itself (one measurement either way) and re-opens
+		// the background after any reset inside the content, so a child line that emits
+		// ESC[0m or ESC[49m (diffs, syntax highlighting, raw command output) cannot punch a
+		// hole in the panel background. Wrapping the padded line in bgFn alone does not.
+		if (this.bgFn) {
+			return applyBackgroundToLine(line, width, this.bgFn);
+		}
 		const visLen = visibleWidth(line);
-		const padNeeded = Math.max(0, width - visLen);
-		const padded = line + " ".repeat(padNeeded);
-		// Already padded to width, so apply the background directly instead of measuring the line again.
-		return this.bgFn ? this.bgFn(padded) : padded;
+		return line + " ".repeat(Math.max(0, width - visLen));
 	}
 }
