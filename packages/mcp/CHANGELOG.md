@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.0.1] - 2026-10-03
+
+### Breaking Changes
+
+- `OAuthClientProvider.clientMetadataUrl` is replaced by `clientMetadataDocument(metadata)`, which returns the document URL and its redirect URI per authorization server, or `undefined` to register dynamically. It is called whenever no client information is stored, also when the server does not advertise support, and the document is no longer stored as client information ([#10302](https://github.com/earendil-works/pi/issues/10302))
+
+### Added
+
+- `McpOAuthProviderOptions.clientMetadataDocument`, `OAuthCallbackServerOptions.extraPaths`, and a `path` argument for `OAuthCallbackServer.waitForCallback` that rejects responses on other paths ([#10302](https://github.com/earendil-works/pi/issues/10302))
+
 ## [1.0.0] - 2026-10-01
 
 ### Added

@@ -514,6 +514,26 @@ describe("OAuthCallbackServer pages", () => {
 		}
 	});
 
+	// #10302
+	it("rejects a response on another path than the expected one", async () => {
+		const callback = await OAuthCallbackServer.listen({ extraPaths: ["/callback/server-id"] });
+		try {
+			const origin = new URL(callback.redirectUrl).origin;
+			const mixedUp = callback.waitForCallback("s1", "/callback/server-id");
+			mixedUp.catch(() => undefined);
+			const wrong = await fetch(`${origin}/callback?code=abc&state=s1`);
+			expect(wrong.status).toBe(400);
+			await expect(mixedUp).rejects.toThrow("arrived on another redirect URI");
+
+			const pending = callback.waitForCallback("s2", "/callback/server-id");
+			const right = await fetch(`${origin}/callback/server-id?code=abc&state=s2`);
+			expect(right.status).toBe(200);
+			expect((await pending).code).toBe("abc");
+		} finally {
+			await callback.close();
+		}
+	});
+
 	it("renders pages through renderPage", async () => {
 		const pages: OAuthCallbackPage[] = [];
 		const callback = await OAuthCallbackServer.listen({

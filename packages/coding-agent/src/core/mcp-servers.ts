@@ -77,6 +77,12 @@ export interface McpOAuthConfig {
 	 */
 	clientName?: string;
 	/**
+	 * How pi identifies itself without `clientId`. `dcr` (default): dynamic client registration. `cimd`:
+	 * pi's Client ID Metadata Document on pi.dev, for authorization servers that allow pi by that URL. The
+	 * server must support it for public clients, and the callback must use the default path `/callback`.
+	 */
+	clientRegistration?: "dcr" | "cimd";
+	/**
 	 * Authorization server metadata document (RFC 8414 or OpenID Connect discovery) to use instead of
 	 * discovery through the server, for servers that advertise a wrong authorization server or none.
 	 * The document is trusted as configured. Must use https, except on loopback hosts.
@@ -146,6 +152,16 @@ function validateOAuth(value: unknown): string | undefined {
 	if (value.scope !== undefined && typeof value.scope !== "string") return "oauth.scope must be a string";
 	if (value.clientName !== undefined && (typeof value.clientName !== "string" || !value.clientName.trim())) {
 		return "oauth.clientName must be a non-empty string";
+	}
+	if (value.clientRegistration !== undefined && value.clientRegistration !== "dcr") {
+		if (value.clientRegistration !== "cimd") return 'oauth.clientRegistration must be "dcr" or "cimd"';
+		if (value.clientId !== undefined || value.clientName !== undefined) {
+			return 'oauth.clientRegistration "cimd" cannot be combined with oauth.clientId or oauth.clientName';
+		}
+		const callback = typeof value.callbackUrl === "string" ? new URL(value.callbackUrl) : undefined;
+		if (callback && (callback.hostname === "[::1]" || callback.pathname !== "/callback")) {
+			return 'oauth.clientRegistration "cimd" requires oauth.callbackUrl on localhost or 127.0.0.1 with path /callback';
+		}
 	}
 	const metadataUrl = value.authServerMetadataUrl;
 	if (metadataUrl !== undefined) {
