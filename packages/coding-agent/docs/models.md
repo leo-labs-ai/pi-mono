@@ -100,6 +100,23 @@ Choose the conservative end of any published range. A model without a lifetime f
 
 Compatibility settings should describe verified differences in the endpoint's request or response behavior. Do not enable them based only on an endpoint advertising OpenAI or Anthropic compatibility.
 
+<a id="mid-conversation-effort"></a>
+
+### Keep the prompt cache when the thinking level changes
+
+By default, a `/thinking` change mid-session changes the request-level effort, which invalidates the cached prompt prefix. Set `compat.supportsMidConvoEffort: true` on a model whose endpoint accepts per-message effort, and Pi sends each change inside the conversation instead:
+
+| API | What Pi sends | Verified endpoints |
+|---|---|---|
+| `anthropic-messages` | effort-only system messages with `output_config.effort` | Claude Opus 5 and 5.5, Sonnet 5.5, Fable 5.1, Mythos 5.1 (built-in `anthropic` and `openrouter` entries set the flag, except OpenRouter Opus 5) |
+| `openai-responses`, `openai-codex-responses` | `configuration_update` input items; request-level `reasoning.effort` stays at the first level | GPT-6 Luna, Sol, and Astra (not Pro) through ClawRouter |
+
+```json
+{ "id": "gpt-6-luna-200k", "api": "openai-responses", "compat": { "supportsMidConvoEffort": true } }
+```
+
+The flag is off by default. An endpoint that does not accept the item rejects the request, so enable it only after a test request succeeds. On the OpenAI APIs, switching reasoning off (`none`) is not covered: OpenAI does not document `none` in `configuration_update`, so turning reasoning off and on again still invalidates the cache.
+
 ## Use classifier models
 
 Classifier models do not chat. They answer typed questions about JSON state: pick one of several choices, answer yes or no, or give a score, each with probabilities. Pi includes TypeSafe's Jev model from these providers, and Cloudflare's Clef and Clef Flash models from Workers AI:

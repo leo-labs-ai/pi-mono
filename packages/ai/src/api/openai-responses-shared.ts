@@ -140,32 +140,32 @@ export interface ConvertResponsesMessagesOptions {
  * thinking-level change keeps the cached prompt prefix. Changing the request-level
  * value instead invalidates the whole prefix.
  * https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation
+ *
+ * Opt-in per model through `compat.supportsMidConvoEffort`. Turning reasoning off
+ * (`none`) is not managed: OpenAI does not document `none` in `configuration_update`,
+ * so that switch still changes the request-level effort.
  */
 export interface MidConvoEffort {
-	/** Request-level effort: the level of the first managed response from this model. */
+	/** Request-level effort: the level of the first replayed managed response from this model. */
 	baseline: string;
 	/** Provider-native effort for the next response. */
 	active: string;
 }
 
-// GPT-6 family in standard (non-Pro) mode accepts `configuration_update` items.
-const MID_CONVO_EFFORT_MODEL_ID = /^gpt-6(?:[.-]|$)(?!.*-pro(?:-|$))/;
-
-export function supportsMidConvoEffort(model: Model<Api>): boolean {
-	const explicit = (model.compat as { supportsMidConvoEffort?: boolean } | undefined)?.supportsMidConvoEffort;
-	return explicit ?? MID_CONVO_EFFORT_MODEL_ID.test(model.id);
-}
-
-/** Returns undefined when the model or the requested effort is not managed. */
+/** Returns undefined when the model is not opted in or the requested effort is not managed. */
 export function resolveMidConvoEffort(
+	enabled: boolean,
 	model: Model<Api>,
 	messages: TranscriptContext["messages"],
 	activeEffort: string | undefined,
 ): MidConvoEffort | undefined {
-	if (activeEffort === undefined || activeEffort === "none" || !supportsMidConvoEffort(model)) return undefined;
+	if (!enabled || activeEffort === undefined || activeEffort === "none") return undefined;
 	for (const message of messages) {
 		if (
 			message.role === "assistant" &&
+			// transformMessages drops these, so they never reach the replayed input.
+			message.stopReason !== "error" &&
+			message.stopReason !== "aborted" &&
 			message.provider === model.provider &&
 			message.api === model.api &&
 			message.model === model.id &&
@@ -177,9 +177,15 @@ export function resolveMidConvoEffort(
 	return { baseline: activeEffort, active: activeEffort };
 }
 
-function configurationUpdate(effort: string): ResponseInputItem {
+/** Appends an update, merging into a directly preceding one: the API rejects adjacent updates. */
+function pushConfigurationUpdate(messages: ResponseInput, effort: string): void {
+	const last = messages.at(-1) as { type?: string; reasoning?: { effort?: string } } | undefined;
+	if (last?.type === "configuration_update" && last.reasoning) {
+		last.reasoning.effort = effort;
+		return;
+	}
 	// Not yet in the OpenAI SDK types.
-	return { type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem;
+	messages.push({ type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem);
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -380,13 +386,14 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 				}
 			}
-			if (output.length === 0) continue;
 			const level = assistantMsg.providerThinkingLevel;
 			if (effectiveEffort !== undefined && isSameModel && typeof level === "string" && level !== effectiveEffort) {
 				// Replay the update where it was sent: right before the response it configured.
-				messages.push(configurationUpdate(level));
+				// Emit it even when the response converts to nothing, so later items keep their positions.
+				pushConfigurationUpdate(messages, level);
 				effectiveEffort = level;
 			}
+			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
 			const [callId] = msg.toolCallId.split("|");
@@ -411,7 +418,7 @@ export function convertResponsesMessages<TApi extends Api>(
 
 	const activeEffort = options?.midConvoEffort?.active;
 	if (activeEffort !== undefined && activeEffort !== effectiveEffort) {
-		messages.push(configurationUpdate(activeEffort));
+		pushConfigurationUpdate(messages, activeEffort);
 	}
 
 	return messages;

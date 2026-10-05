@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { stream as streamCodex } from "../src/api/openai-codex-responses.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { closeOpenAICodexWebSocketSessions, stream as streamCodex } from "../src/api/openai-codex-responses.ts";
 import { stream as streamResponses } from "../src/api/openai-responses.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
@@ -12,10 +12,17 @@ interface CapturedPayload {
 	reasoning?: { effort?: string };
 }
 
+afterEach(() => {
+	vi.unstubAllGlobals();
+	closeOpenAICodexWebSocketSessions();
+});
+
 function gpt6(
 	api: ResponsesApi,
+	compat: { supportsMidConvoEffort?: boolean; supportsWebSocketTransport?: boolean } = {
+		supportsMidConvoEffort: true,
+	},
 	id = "gpt-6-luna-200k",
-	compat?: { supportsMidConvoEffort?: boolean },
 ): Model<ResponsesApi> {
 	return {
 		id,
@@ -65,8 +72,7 @@ async function turn(
 }
 
 /** Runs one user prompt per effort level, appending each reply, and returns every payload. */
-async function conversation(model: Model<ResponsesApi>, efforts: Effort[]) {
-	const context: Context = { systemPrompt: "You are terse.", messages: [] };
+async function conversation(model: Model<ResponsesApi>, efforts: Effort[], context = newContext()) {
 	const payloads: CapturedPayload[] = [];
 	const replies: AssistantMessage[] = [];
 	for (const [index, effort] of efforts.entries()) {
@@ -77,6 +83,20 @@ async function conversation(model: Model<ResponsesApi>, efforts: Effort[]) {
 		context.messages.push(reply);
 	}
 	return { payloads, replies };
+}
+
+function newContext(): Context {
+	return { systemPrompt: "You are terse.", messages: [] };
+}
+
+const serialize = (value: unknown) => JSON.stringify(value);
+
+/** Each request must replay the previous one byte-for-byte so the cached prefix survives. */
+function expectStablePrefixes(payloads: CapturedPayload[]): void {
+	for (let index = 1; index < payloads.length; index++) {
+		const previous = payloads[index - 1].input;
+		expect(serialize(payloads[index].input.slice(0, previous.length))).toBe(serialize(previous));
+	}
 }
 
 const updates = (payload: CapturedPayload) =>
@@ -95,27 +115,141 @@ describe.each<ResponsesApi>(["openai-responses", "openai-codex-responses"])("%s 
 		]);
 		expect(replies.map((reply) => reply.providerThinkingLevel)).toEqual(["xhigh", "xhigh", "high", "high", "xhigh"]);
 		expect(payloads.map(updates)).toEqual([[], [], ["high"], ["high"], ["high", "xhigh"]]);
-		// Each request replays the previous one byte-for-byte, so the cached prefix survives.
-		for (let index = 1; index < payloads.length; index++) {
-			const previous = payloads[index - 1].input;
-			expect(payloads[index].input.slice(0, previous.length)).toEqual(previous);
-		}
+		expectStablePrefixes(payloads);
 		// The update sits after the prompt it applies to, never next to another update.
 		const last = payloads[2].input.at(-1);
 		expect(last?.type).toBe("configuration_update");
 		expect(payloads[2].input.at(-2)?.role).toBe("user");
 	});
 
-	it("leaves non-GPT-6, Pro, and opted-out models on request-level effort", async () => {
-		for (const model of [
-			gpt6(api, "gpt-5.5"),
-			gpt6(api, "gpt-6-astra-pro"),
-			gpt6(api, "gpt-6-luna", { supportsMidConvoEffort: false }),
-		]) {
+	it("leaves models without the opt-in on request-level effort", async () => {
+		for (const model of [gpt6(api, {}), gpt6(api, { supportsMidConvoEffort: false })]) {
 			const { payloads, replies } = await conversation(model, ["xhigh", "high"]);
 			expect(payloads.map((payload) => payload.reasoning?.effort)).toEqual(["xhigh", "high"]);
 			expect(payloads.flatMap(updates)).toEqual([]);
 			expect(replies.map((reply) => reply.providerThinkingLevel)).toEqual([undefined, undefined]);
 		}
+	});
+
+	it("takes the baseline from a replayed response, not an aborted one", async () => {
+		const model = gpt6(api);
+		const context = newContext();
+		context.messages.push({ role: "user", content: "prompt 0", timestamp: 0 });
+		const { reply } = await turn(model, context, "xhigh");
+		context.messages.push({ ...reply, stopReason: "aborted" });
+
+		const { payload, reply: retry } = await turn(model, context, "high");
+
+		expect(payload.reasoning?.effort).toBe("high");
+		expect(updates(payload)).toEqual([]);
+		expect(retry.providerThinkingLevel).toBe("high");
+	});
+
+	it("keeps an update in place when its response converts to no input items", async () => {
+		const model = gpt6(api);
+		const context = newContext();
+		const payloads: CapturedPayload[] = [];
+		for (const [index, effort] of (["xhigh", "high", "high"] as const).entries()) {
+			context.messages.push({ role: "user", content: `prompt ${index}`, timestamp: index });
+			const { payload, reply } = await turn(model, context, effort);
+			payloads.push(payload);
+			// The high response carried only an unsigned thinking block, which replays as nothing.
+			context.messages.push(index === 1 ? { ...reply, content: [{ type: "thinking", thinking: "..." }] } : reply);
+		}
+
+		expect(payloads.map(updates)).toEqual([[], ["high"], ["high"]]);
+		expectStablePrefixes(payloads);
+		const roles = payloads[2].input.map((item) => item.type ?? item.role);
+		expect(roles.slice(-3)).toEqual(["user", "configuration_update", "user"]);
+	});
+});
+
+describe("openai-codex-responses WebSocket continuation", () => {
+	it("sends only [user, configuration_update] after an effort change", async () => {
+		const sent: Array<CapturedPayload & { previous_response_id?: string }> = [];
+		let responseId = 0;
+
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor() {
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				const listeners = this.listeners.get(type) ?? new Set();
+				listeners.add(listener);
+				this.listeners.set(type, listeners);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(data: string): void {
+				sent.push(JSON.parse(data));
+				const id = ++responseId;
+				const item = {
+					type: "message",
+					id: `msg_${id}`,
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: `answer ${id}`, annotations: [] }],
+				};
+				queueMicrotask(() => {
+					for (const event of [
+						{ type: "response.output_item.added", item: { ...item, status: "in_progress", content: [] } },
+						{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+						{ type: "response.output_text.delta", delta: `answer ${id}` },
+						{ type: "response.output_item.done", item },
+						{
+							type: "response.completed",
+							response: {
+								id: `resp_${id}`,
+								status: "completed",
+								usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+							},
+						},
+					]) {
+						this.dispatch("message", { data: JSON.stringify(event) });
+					}
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("unexpected fetch", { status: 500 })),
+		);
+
+		const model = gpt6("openai-codex-responses", { supportsMidConvoEffort: true, supportsWebSocketTransport: true });
+		const context = newContext();
+		for (const [index, effort] of (["xhigh", "high"] as const).entries()) {
+			context.messages.push({ role: "user", content: `prompt ${index}`, timestamp: index });
+			const reply = await streamCodex(model as Model<"openai-codex-responses">, normalizeContext(context), {
+				apiKey: "test-key",
+				sessionId: "effort-ws",
+				transport: "websocket-cached",
+				reasoningEffort: effort,
+			}).result();
+			expect(reply.stopReason).toBe("stop");
+			context.messages.push(reply);
+		}
+
+		expect(sent.map((body) => body.reasoning?.effort)).toEqual(["xhigh", "xhigh"]);
+		expect(sent[1].previous_response_id).toBe("resp_1");
+		expect(sent[1].input.map((item) => item.type ?? item.role)).toEqual(["user", "configuration_update"]);
+		expect(updates(sent[1])).toEqual(["high"]);
 	});
 });

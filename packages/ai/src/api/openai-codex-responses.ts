@@ -299,6 +299,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
 			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
 			const midConvoEffort = resolveMidConvoEffort(
+				model.compat?.supportsMidConvoEffort === true,
 				model,
 				normalizedContext.messages,
 				getRequestedEffort(model, options),
@@ -572,7 +573,12 @@ function buildRequestBody(
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
 	const transcriptTools = resolveTranscriptTools(context.messages, supportsAdditionalTools || supportsToolSearch);
-	const midConvoEffort = resolveMidConvoEffort(model, context.messages, getRequestedEffort(model, options));
+	const midConvoEffort = resolveMidConvoEffort(
+		model.compat?.supportsMidConvoEffort === true,
+		model,
+		context.messages,
+		getRequestedEffort(model, options),
+	);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
 		midConvoEffort,
 		includeSystemPrompt: false,

@@ -30,7 +30,6 @@ import {
 	convertResponsesTools,
 	processResponsesStream,
 	resolveMidConvoEffort,
-	supportsMidConvoEffort,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -101,7 +100,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		sendChatgptAccountId: model.compat?.sendChatgptAccountId ?? true,
 		supportsWebSocketTransport: model.compat?.supportsWebSocketTransport ?? true,
 		supportsZstdRequestCompression: model.compat?.supportsZstdRequestCompression ?? true,
-		supportsMidConvoEffort: supportsMidConvoEffort(model),
+		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
 	};
 }
 
@@ -183,6 +182,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			);
 			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
 			const midConvoEffort = resolveMidConvoEffort(
+				compat.supportsMidConvoEffort,
 				model,
 				normalizedContext.messages,
 				getRequestedEffort(model, options),
@@ -331,7 +331,12 @@ function buildParams(
 		compat.supportsAdditionalTools || compat.supportsToolSearch,
 	);
 	const requestedEffort = getRequestedEffort(model, options);
-	const midConvoEffort = resolveMidConvoEffort(model, context.messages, requestedEffort);
+	const midConvoEffort = resolveMidConvoEffort(
+		compat.supportsMidConvoEffort,
+		model,
+		context.messages,
+		requestedEffort,
+	);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
 		midConvoEffort,
 		grammarToolInputProperties,
