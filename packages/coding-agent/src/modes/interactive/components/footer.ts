@@ -201,9 +201,7 @@ export class FooterComponent implements Component {
 		const contextPercentDisplay =
 			contextPercent === "?"
 				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: typeof contextUsage?.tokens === "number"
-					? `${contextPercent}% ${formatTokens(contextUsage.tokens)}/${formatTokens(contextWindow)}${autoIndicator}`
-					: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
+				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
 		if (contextPercentValue > 90) {
 			contextPercentStr = theme.fg("error", contextPercentDisplay);
 		} else if (contextPercentValue > 70) {
