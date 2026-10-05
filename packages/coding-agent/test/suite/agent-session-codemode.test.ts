@@ -791,6 +791,41 @@ describe("codemode models", () => {
 		);
 	});
 
+	it("keeps the unshown-image note when a script fails without showing generated images", async () => {
+		const { harness } = await setup();
+		const result = await run(
+			harness,
+			`
+			const [model] = await models.getAvailableOfType("image", "scorer");
+			await models.generateImages(model, { input: [{ type: "text", text: "a fox" }] });
+			throw new Error("boom");
+		`,
+		);
+		expect(result.isError).toBe(true);
+		const text = resultText(result);
+		expect(text).toContain("returned 1 image that the script did not show");
+		expect(text).not.toContain("omitted");
+		expect(result.content.some((block) => block.type === "image")).toBe(false);
+	});
+
+	it("drops shown images from a failed script and counts them once", async () => {
+		const { harness } = await setup();
+		const result = await run(
+			harness,
+			`
+			const [model] = await models.getAvailableOfType("image", "scorer");
+			const generated = await models.generateImages(model, { input: [{ type: "text", text: "a fox" }] });
+			for (const block of generated.output) if (block.type === "image") image(block);
+			throw new Error("boom");
+		`,
+		);
+		expect(result.isError).toBe(true);
+		const text = resultText(result);
+		expect(text).toContain("(1 image omitted: the script failed)");
+		expect(text).not.toContain("did not show");
+		expect(result.content.some((block) => block.type === "image")).toBe(false);
+	});
+
 	it("reports provider errors as results and invalid arguments as exceptions", async () => {
 		const { harness } = await setup();
 		const result = await run(

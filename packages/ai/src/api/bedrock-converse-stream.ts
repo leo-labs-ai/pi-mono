@@ -951,7 +951,7 @@ function sanitizeBedrockDocument(value: JsonValue): DocumentType {
 	return value;
 }
 
-function convertToolResultContent(content: (TextContent | ImageContent)[], isError = false): ToolResultContentBlock[] {
+function convertToolResultContent(content: (TextContent | ImageContent)[], isError: boolean): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
 		if (c.type === "image") {
