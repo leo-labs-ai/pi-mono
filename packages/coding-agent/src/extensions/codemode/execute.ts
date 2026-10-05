@@ -411,6 +411,16 @@ export async function executeCodemode(
 		// pi extension: a returned value is appended like text().
 		if (result.value !== undefined) items.push({ type: "text", text: valueText(result.value) });
 	} else {
+		// Providers reject image blocks in error results (Anthropic 400s on every later request).
+		const dropped = items.filter((item) => item.type === "image").length;
+		if (dropped > 0) {
+			const kept = items.filter((item) => item.type !== "image");
+			items.length = 0;
+			items.push(...kept, {
+				type: "text",
+				text: `(${dropped} image${dropped === 1 ? "" : "s"} omitted: the script failed)`,
+			});
+		}
 		items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
 	}
 	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
