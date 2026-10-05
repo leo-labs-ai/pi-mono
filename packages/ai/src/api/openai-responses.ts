@@ -25,7 +25,12 @@ import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveMidConvoEffort,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -95,6 +100,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		sendChatgptAccountId: model.compat?.sendChatgptAccountId ?? true,
 		supportsWebSocketTransport: model.compat?.supportsWebSocketTransport ?? true,
 		supportsZstdRequestCompression: model.compat?.supportsZstdRequestCompression ?? true,
+		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
 	};
 }
 
@@ -175,6 +181,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				cacheSessionId,
 			);
 			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
+			const midConvoEffort = resolveMidConvoEffort(
+				compat.supportsMidConvoEffort,
+				model,
+				normalizedContext.messages,
+				getRequestedEffort(model, options),
+			);
+			if (midConvoEffort) output.providerThinkingLevel = midConvoEffort.active;
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -317,7 +330,15 @@ function buildParams(
 		context.messages,
 		compat.supportsAdditionalTools || compat.supportsToolSearch,
 	);
+	const requestedEffort = getRequestedEffort(model, options);
+	const midConvoEffort = resolveMidConvoEffort(
+		compat.supportsMidConvoEffort,
+		model,
+		context.messages,
+		requestedEffort,
+	);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+		midConvoEffort,
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
@@ -366,9 +387,7 @@ function buildParams(
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = options?.reasoningEffort
-				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+			const effort = midConvoEffort?.baseline ?? requestedEffort ?? "medium";
 			params.reasoning = {
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
@@ -386,6 +405,14 @@ function buildParams(
 	Object.assign(params, model.samplingParams, options?.samplingParams);
 
 	return params;
+}
+
+function getRequestedEffort(
+	model: Model<"openai-responses">,
+	options: OpenAIResponsesOptions | undefined,
+): string | undefined {
+	if (!model.reasoning || !options?.reasoningEffort) return undefined;
+	return model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 }
 
 function getServiceTierCostMultiplier(

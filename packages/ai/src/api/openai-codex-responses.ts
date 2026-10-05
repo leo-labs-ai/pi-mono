@@ -42,7 +42,12 @@ import {
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveMidConvoEffort,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -293,6 +298,13 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
 			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
+			const midConvoEffort = resolveMidConvoEffort(
+				model.compat?.supportsMidConvoEffort === true,
+				model,
+				normalizedContext.messages,
+				getRequestedEffort(model, options),
+			);
+			if (midConvoEffort) output.providerThinkingLevel = midConvoEffort.active;
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -561,7 +573,14 @@ function buildRequestBody(
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
 	const transcriptTools = resolveTranscriptTools(context.messages, supportsAdditionalTools || supportsToolSearch);
+	const midConvoEffort = resolveMidConvoEffort(
+		model.compat?.supportsMidConvoEffort === true,
+		model,
+		context.messages,
+		getRequestedEffort(model, options),
+	);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+		midConvoEffort,
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
@@ -610,7 +629,7 @@ function buildRequestBody(
 				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
 		if (effort !== null) {
 			body.reasoning = {
-				effort,
+				effort: midConvoEffort?.baseline ?? effort,
 				summary: options.reasoningSummary ?? "auto",
 			};
 		}
@@ -619,6 +638,15 @@ function buildRequestBody(
 	}
 
 	return body;
+}
+
+function getRequestedEffort(
+	model: Model<"openai-codex-responses">,
+	options: OpenAICodexResponsesOptions | undefined,
+): string | undefined {
+	const level = options?.reasoningEffort;
+	if (level === undefined || level === "none") return undefined;
+	return model.thinkingLevelMap?.[level] ?? level;
 }
 
 function getServiceTierCostMultiplier(

@@ -898,6 +898,13 @@ export interface OpenAIResponsesCompat {
 	supportsWebSocketTransport?: boolean;
 	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
 	supportsZstdRequestCompression?: boolean;
+	/**
+	 * Whether the exact model transport accepts `configuration_update` input items, so a thinking-level
+	 * change keeps request-level `reasoning.effort` and the cached prefix. Switching reasoning off (`none`)
+	 * is not covered. Same intent as {@link AnthropicMessagesCompat.supportsMidConvoEffort}.
+	 * Default: false; enable only for endpoints verified to accept the item (GPT-6 family, non-Pro).
+	 */
+	supportsMidConvoEffort?: boolean;
 }
 
 /**
@@ -956,7 +963,7 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
-	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Same intent as {@link OpenAIResponsesCompat.supportsMidConvoEffort}. Default: false. */
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
