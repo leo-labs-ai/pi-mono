@@ -70,6 +70,7 @@ describe("Anthropic errored tool_result with image", () => {
 		const text = typeof content === "string" ? content : (content ?? []).map((c) => c.text ?? "").join("\n");
 		if (Array.isArray(content)) expect(content.every((c) => c.type === "text")).toBe(true);
 		expect(text).toContain("script failed");
+		expect(text).toContain("1 image omitted");
 	});
 
 	it("keeps images for successful tool results", async () => {
