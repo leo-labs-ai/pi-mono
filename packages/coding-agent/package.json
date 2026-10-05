@@ -1,6 +1,6 @@
 {
 	"name": "@lue-labs/pi-coding-agent",
-	"version": "1.0.1",
+	"version": "1.0.3",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -49,12 +49,12 @@
 		"memory:audit": "node scripts/pi-claude-rss-audit.mjs"
 	},
 	"dependencies": {
-		"@earendil-works/chord": "^1.0.1",
-		"@earendil-works/pi-codemode": "1.0.1",
-		"@earendil-works/pi-mcp": "1.0.1",
-		"@lue-labs/pi-agent-core": "1.0.1",
-		"@lue-labs/pi-ai": "1.0.1",
-		"@lue-labs/pi-tui": "1.0.1",
+		"@earendil-works/chord": "^1.0.3",
+		"@earendil-works/pi-codemode": "1.0.3",
+		"@earendil-works/pi-mcp": "1.0.3",
+		"@lue-labs/pi-agent-core": "1.0.3",
+		"@lue-labs/pi-ai": "1.0.3",
+		"@lue-labs/pi-tui": "1.0.3",
 		"@pierre/diffs": "1.2.12",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"brace-expansion": "5.0.12",
@@ -79,6 +79,7 @@
 		"protobufjs": "7.6.6"
 	},
 	"devDependencies": {
+
 		"@types/cross-spawn": "6.0.6",
 		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "22.19.19",
@@ -87,9 +88,9 @@
 		"shx": "0.4.0",
 		"typescript": "7.0.2",
 		"vitest": "4.1.11",
-		"@lue-labs/pi-client": "1.0.1",
-		"@lue-labs/pi-protocol": "1.0.1",
-		"@lue-labs/pi-server": "1.0.1",
+		"@lue-labs/pi-client": "1.0.3",
+		"@lue-labs/pi-protocol": "1.0.3",
+		"@lue-labs/pi-server": "1.0.3",
 		"marked": "18.0.11"
 	},
 	"keywords": [
