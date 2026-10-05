@@ -37,4 +37,4 @@ Range `v1.0.1..v1.0.3` = 29 commits, 140 files. Operation: ordinary two-parent m
 
 ## Not done here
 
-No PR, push, merge, post-merge build, local `pii` promotion, or Harbor completion report has been made.
+No branch push, PR, PR merge, post-merge build, local `pii` promotion, or Harbor completion report has been made.
