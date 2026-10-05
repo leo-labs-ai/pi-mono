@@ -423,7 +423,7 @@ export async function executeCodemode(
 		}
 		items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
 	}
-	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
+	if (result.ok && generatedImages > 0 && !items.some((item) => item.type === "image")) {
 		items.push({
 			type: "text",
 			text: `Note: models.generateImages() returned ${generatedImages} image${generatedImages === 1 ? "" : "s"} that the script did not show. Show each image block of result.output with image(block).`,
