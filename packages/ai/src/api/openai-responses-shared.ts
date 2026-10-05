@@ -129,6 +129,57 @@ export interface ConvertResponsesMessagesOptions {
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+	/** Effort levels to express as positional `configuration_update` items. See {@link resolveMidConvoEffort}. */
+	midConvoEffort?: MidConvoEffort;
+}
+
+/**
+ * Mid-conversation reasoning effort for GPT-6 Responses models. The request-level
+ * `reasoning.effort` stays at `baseline` for the whole conversation, and every change
+ * is replayed as a `configuration_update` input item in its original position, so a
+ * thinking-level change keeps the cached prompt prefix. Changing the request-level
+ * value instead invalidates the whole prefix.
+ * https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation
+ */
+export interface MidConvoEffort {
+	/** Request-level effort: the level of the first managed response from this model. */
+	baseline: string;
+	/** Provider-native effort for the next response. */
+	active: string;
+}
+
+// GPT-6 family in standard (non-Pro) mode accepts `configuration_update` items.
+const MID_CONVO_EFFORT_MODEL_ID = /^gpt-6(?:[.-]|$)(?!.*-pro(?:-|$))/;
+
+export function supportsMidConvoEffort(model: Model<Api>): boolean {
+	const explicit = (model.compat as { supportsMidConvoEffort?: boolean } | undefined)?.supportsMidConvoEffort;
+	return explicit ?? MID_CONVO_EFFORT_MODEL_ID.test(model.id);
+}
+
+/** Returns undefined when the model or the requested effort is not managed. */
+export function resolveMidConvoEffort(
+	model: Model<Api>,
+	messages: TranscriptContext["messages"],
+	activeEffort: string | undefined,
+): MidConvoEffort | undefined {
+	if (activeEffort === undefined || activeEffort === "none" || !supportsMidConvoEffort(model)) return undefined;
+	for (const message of messages) {
+		if (
+			message.role === "assistant" &&
+			message.provider === model.provider &&
+			message.api === model.api &&
+			message.model === model.id &&
+			typeof message.providerThinkingLevel === "string"
+		) {
+			return { baseline: message.providerThinkingLevel, active: activeEffort };
+		}
+	}
+	return { baseline: activeEffort, active: activeEffort };
+}
+
+function configurationUpdate(effort: string): ResponseInputItem {
+	// Not yet in the OpenAI SDK types.
+	return { type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -213,6 +264,8 @@ export function convertResponsesMessages<TApi extends Api>(
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+
+	let effectiveEffort = options?.midConvoEffort?.baseline;
 
 	let msgIndex = 0;
 	let sourceIndex = 0;
@@ -328,6 +381,12 @@ export function convertResponsesMessages<TApi extends Api>(
 				}
 			}
 			if (output.length === 0) continue;
+			const level = assistantMsg.providerThinkingLevel;
+			if (effectiveEffort !== undefined && isSameModel && typeof level === "string" && level !== effectiveEffort) {
+				// Replay the update where it was sent: right before the response it configured.
+				messages.push(configurationUpdate(level));
+				effectiveEffort = level;
+			}
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
 			const [callId] = msg.toolCallId.split("|");
@@ -348,6 +407,11 @@ export function convertResponsesMessages<TApi extends Api>(
 			}
 		}
 		if (!isLeadingSystemMessage) msgIndex++;
+	}
+
+	const activeEffort = options?.midConvoEffort?.active;
+	if (activeEffort !== undefined && activeEffort !== effectiveEffort) {
+		messages.push(configurationUpdate(activeEffort));
 	}
 
 	return messages;

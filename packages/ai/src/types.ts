@@ -898,6 +898,8 @@ export interface OpenAIResponsesCompat {
 	supportsWebSocketTransport?: boolean;
 	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
 	supportsZstdRequestCompression?: boolean;
+	/** Whether the model accepts `configuration_update` input items, so a thinking-level change keeps request-level `reasoning.effort` and the cached prefix. Default: true for GPT-6 family ids except Pro, false otherwise. */
+	supportsMidConvoEffort?: boolean;
 }
 
 /**

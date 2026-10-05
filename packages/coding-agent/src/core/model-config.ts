@@ -123,6 +123,7 @@ const OpenAIResponsesCompatSchema = Type.Object({
 	sendChatgptAccountId: Type.Optional(Type.Boolean()),
 	supportsWebSocketTransport: Type.Optional(Type.Boolean()),
 	supportsZstdRequestCompression: Type.Optional(Type.Boolean()),
+	supportsMidConvoEffort: Type.Optional(Type.Boolean()),
 });
 
 const ModelCostRatesSchema = {
