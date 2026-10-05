@@ -951,10 +951,12 @@ function sanitizeBedrockDocument(value: JsonValue): DocumentType {
 	return value;
 }
 
-function convertToolResultContent(content: (TextContent | ImageContent)[]): ToolResultContentBlock[] {
+function convertToolResultContent(content: (TextContent | ImageContent)[], isError: boolean): ToolResultContentBlock[] {
 	const result: ToolResultContentBlock[] = [];
 	for (const c of content) {
 		if (c.type === "image") {
+			// Error results must stay text-only (Claude rejects images there).
+			if (isError) continue;
 			result.push({ image: createImageBlock(c.mimeType, c.data) });
 		} else {
 			const textBlock = createNonBlankTextBlock(c.text);
@@ -1091,7 +1093,7 @@ function convertMessages(
 				toolResults.push({
 					toolResult: {
 						toolUseId: m.toolCallId,
-						content: convertToolResultContent(m.content),
+						content: convertToolResultContent(m.content, m.isError),
 						status: m.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 					},
 				});
@@ -1103,7 +1105,7 @@ function convertMessages(
 					toolResults.push({
 						toolResult: {
 							toolUseId: nextMsg.toolCallId,
-							content: convertToolResultContent(nextMsg.content),
+							content: convertToolResultContent(nextMsg.content, nextMsg.isError),
 							status: nextMsg.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 						},
 					});

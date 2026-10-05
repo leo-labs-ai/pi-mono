@@ -442,6 +442,8 @@ export async function executeCodemode(
 	const items: (TextContent | ImageContent)[] = result.output.map((item) =>
 		item.type === "text" ? { type: "text", text: item.text } : item,
 	);
+	// Taken before a failure drops images, so a billed generation is reported once: as omitted or as unshown.
+	const showedImage = items.some((item) => item.type === "image");
 	if (result.ok) {
 		const { set, delete: deleted } = result.storeWrites;
 		if (Object.keys(set).length > 0 || deleted.length > 0) {
@@ -450,9 +452,19 @@ export async function executeCodemode(
 		// pi extension: a returned value is appended like text().
 		if (result.value !== undefined) items.push({ type: "text", text: valueText(result.value) });
 	} else {
+		// Providers reject image blocks in error results (Anthropic 400s on every later request).
+		const dropped = items.filter((item) => item.type === "image").length;
+		if (dropped > 0) {
+			const kept = items.filter((item) => item.type !== "image");
+			items.length = 0;
+			items.push(...kept, {
+				type: "text",
+				text: `(${dropped} image${dropped === 1 ? "" : "s"} omitted: the script failed)`,
+			});
+		}
 		items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
 	}
-	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
+	if (generatedImages > 0 && !showedImage) {
 		items.push({
 			type: "text",
 			text: `Note: models.generateImages() returned ${generatedImages} image${generatedImages === 1 ? "" : "s"} that the script did not show. Show each image block of result.output with image(block).`,

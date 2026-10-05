@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: an errored tool result that carries an image no longer wedges the session. Anthropic returns a permanent 400 (`all content must be type text if is_error is true`) on every later request; Bedrock Claude had the same risk. Both converters now drop the image blocks from errored results and, for Anthropic, add a text note.
 - Fix: a mid-session thinking-level change on GPT-6 Responses models (`openai-responses`, `openai-codex-responses`) can keep the prompt cache. With `compat.supportsMidConvoEffort: true` on the model, the request-level `reasoning.effort` stays at the conversation's first replayed level and each change is replayed as a positional `configuration_update` input item, recorded per response in `providerThinkingLevel`. Measured on ClawRouter: a request-level switch read 0 cached tokens in 5 of 5 runs (Luna, Sol, Astra); the `configuration_update` form read the cached prefix in 7 of 8. The flag is opt-in, because an endpoint that rejects the item would turn a cache miss into a 400. Switching reasoning off (`none`) is not covered: OpenAI does not document `none` in `configuration_update`.
 
 - Fix: Together renamed `deepseek-ai/DeepSeek-V4-Pro` to `deepseek-ai/DeepSeek-V4-Pro-0813`. The generator and the Together model test now use the new ID (cherry-picked from upstream `28eaccb8e`, #10336). Without this, every fork PR failed `tsc --noEmit` in `fork-safety-check` and the Together test in `unit-tests`, because CI regenerates the catalog from the live Together API.
