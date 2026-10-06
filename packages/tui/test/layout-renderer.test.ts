@@ -298,3 +298,46 @@ describe("LayoutRenderer / input — focus + cancel", () => {
 		assert.equal(cancels, 2);
 	});
 });
+
+// #588: graph-supplied values and duplicate group IDs.
+describe("LayoutRenderer / initial values", () => {
+	function submitOf(graph: LayoutGraph): unknown {
+		let submitted: unknown = null;
+		const r = new LayoutRenderer(graph, {
+			onSubmit: (resp) => {
+				submitted = resp;
+			},
+		});
+		r.handleInput(KEY.enter);
+		return submitted;
+	}
+
+	it("keeps a pre-populated radio value and puts the cursor on it", () => {
+		const graph = radioGraph();
+		if (graph.root.type !== "card" || graph.root.children[1].type !== "radio_group") assert.fail("fixture shape");
+		graph.root.children[1].value = "none";
+		const r = new LayoutRenderer(graph, { onSubmit: () => {} });
+		assert.equal(r.getCursor("strategy"), 2);
+		assert.deepEqual(submitOf(graph), { strategy: "none" });
+	});
+
+	it("keeps pre-populated checkbox values and drops unknown ones", () => {
+		const graph = checkboxGraph();
+		if (graph.root.type !== "card" || graph.root.children[1].type !== "checkbox_group") assert.fail("fixture shape");
+		graph.root.children[1].value = ["linux", "bogus", "win"];
+		assert.deepEqual(submitOf(graph), { targets: ["linux", "win"] });
+	});
+
+	it("falls back to the first radio option when the value is unknown", () => {
+		const graph = radioGraph();
+		if (graph.root.type !== "card" || graph.root.children[1].type !== "radio_group") assert.fail("fixture shape");
+		graph.root.children[1].value = "bogus";
+		assert.deepEqual(submitOf(graph), { strategy: "exp" });
+	});
+
+	it("rejects duplicate group IDs", () => {
+		const group = { type: "radio_group" as const, id: "dup", options: [{ value: "a", label: "A" }] };
+		const graph: LayoutGraph = { version: "0.1", root: { type: "col", children: [group, { ...group }] } };
+		assert.throws(() => new LayoutRenderer(graph, { onSubmit: () => {} }), /duplicate group id "dup"/);
+	});
+});
