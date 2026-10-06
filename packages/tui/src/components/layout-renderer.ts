@@ -63,7 +63,7 @@ interface GroupInfo {
 	type: "radio_group" | "checkbox_group";
 	optionCount: number;
 	optionValues: string[];
-	/** Initial selection from the graph's `value`, restricted to known options. */
+	/** Initial selection from the graph's `value` (validated against the options). */
 	initialSelection: string[];
 }
 
@@ -388,12 +388,16 @@ export class LayoutRenderer implements Component {
 			if (n.type === "radio_group" || n.type === "checkbox_group") {
 				const optionValues = n.options.map((o) => o.value);
 				const requested = n.type === "radio_group" ? (n.value === undefined ? [] : [n.value]) : (n.value ?? []);
+				const unknown = requested.find((v) => !optionValues.includes(v));
+				if (unknown !== undefined) {
+					throw new Error(`LayoutRenderer: group "${n.id}" value "${unknown}" is not one of its options`);
+				}
 				out.push({
 					id: n.id,
 					type: n.type,
 					optionCount: n.options.length,
 					optionValues,
-					initialSelection: [...new Set(requested.filter((v) => optionValues.includes(v)))],
+					initialSelection: [...new Set(requested)],
 				});
 				return;
 			}
