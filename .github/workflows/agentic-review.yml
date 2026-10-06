@@ -117,8 +117,11 @@ jobs:
           npm --prefix packages/chord run build
           npm --prefix packages/tui run build
           npm --prefix packages/telemetry run build
+          npm --prefix packages/codemode run build
+          npm --prefix packages/mcp run build
           npm --prefix packages/ai run build
           npm --prefix packages/durable run build
+          npm --prefix packages/env run build
           npm --prefix packages/agent run build
           npm --prefix packages/protocol run build
           npm --prefix packages/client run build
