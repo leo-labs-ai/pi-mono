@@ -1511,6 +1511,97 @@ describe("openai-codex streaming", () => {
 		});
 	});
 
+	it("scopes cached websockets to the gateway endpoint when the account ID is not sent", async () => {
+		// Opaque gateway credentials have no account ID; two gateways on one session must not share a socket.
+		const connectedUrls: string[] = [];
+		let responseId = 0;
+
+		class MockWebSocket {
+			static OPEN = 1;
+			readyState = MockWebSocket.OPEN;
+			private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+			constructor(url: string) {
+				connectedUrls.push(url);
+				queueMicrotask(() => this.dispatch("open", {}));
+			}
+
+			addEventListener(type: string, listener: (event: unknown) => void): void {
+				let listeners = this.listeners.get(type);
+				if (!listeners) {
+					listeners = new Set();
+					this.listeners.set(type, listeners);
+				}
+				listeners.add(listener);
+			}
+
+			removeEventListener(type: string, listener: (event: unknown) => void): void {
+				this.listeners.get(type)?.delete(listener);
+			}
+
+			send(): void {
+				queueMicrotask(() => {
+					this.dispatch("message", {
+						data: JSON.stringify({
+							type: "response.completed",
+							response: {
+								id: `resp_${++responseId}`,
+								status: "completed",
+								usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+							},
+						}),
+					});
+				});
+			}
+
+			close(): void {
+				this.readyState = 3;
+			}
+
+			private dispatch(type: string, event: unknown): void {
+				for (const listener of this.listeners.get(type) ?? []) listener(event);
+			}
+		}
+
+		vi.stubGlobal("WebSocket", MockWebSocket);
+		vi.stubGlobal(
+			"fetch",
+			vi.fn(async () => new Response("unexpected fetch", { status: 500 })),
+		);
+
+		const gateway = (baseUrl: string): Model<"openai-codex-responses"> => ({
+			id: "gateway-codex-model",
+			name: "Gateway Codex model",
+			api: "openai-codex-responses",
+			provider: "arbitrary-codex-gateway",
+			baseUrl,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 16384,
+			compat: { sendChatgptAccountId: false },
+		});
+		const context = normalizeContext({ systemPrompt: "", messages: [] });
+		const options = {
+			sessionId: "shared-gateway-session",
+			transport: "websocket-cached" as const,
+			apiKey: "gateway-opaque-bearer-credential",
+		};
+
+		await streamOpenAICodexResponses(gateway("http://127.0.0.1:8798/v1"), context, options).result();
+		await streamOpenAICodexResponses(gateway("http://127.0.0.1:8799/v1"), context, options).result();
+		await streamOpenAICodexResponses(gateway("http://127.0.0.1:8798/v1"), context, options).result();
+
+		expect(connectedUrls).toHaveLength(2);
+		expect(connectedUrls[0]).toContain(":8798");
+		expect(connectedUrls[1]).toContain(":8799");
+		expect(getOpenAICodexWebSocketDebugStats("shared-gateway-session")).toMatchObject({
+			connectionsCreated: 2,
+			connectionsReused: 1,
+		});
+	});
+
 	it("closes one-shot websockets when cacheRetention is none", async () => {
 		const token = mockToken();
 		const sentBodies: Array<{ prompt_cache_key?: string }> = [];
