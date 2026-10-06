@@ -238,10 +238,10 @@ jobs:
           # pi.getExtensionConfig, pi.tools deferral) that fork 1.0.x does not have,
           # and the review does not use them (#591).
           PROFILE="$GITHUB_WORKSPACE/my-pi/packages/my-pi-actions"
-          EXTENSIONS=$(jq -c --arg base "$PROFILE/" \
-            '[.pi.extensions[] | select(test("/(native-tool-overrides|tool-search)/") | not) | $base + .]' \
+          EXTENSIONS=$(jq -ec --arg base "$PROFILE/" \
+            '(.pi.extensions | if type == "array" then . else error("my-pi-actions package.json has no pi.extensions array") end)
+             | [.[] | select(test("(^|/)(native-tool-overrides|tool-search)(/|$)") | not) | $base + .]' \
             "$PROFILE/package.json")
-          echo "review extensions: $EXTENSIONS"
           cat > "$HOME/.pi/agent/settings.json" <<EOF
           {
             "defaultProvider": "claude-bridge",
@@ -250,6 +250,23 @@ jobs:
             "extensions": $EXTENSIONS
           }
           EOF
+          # Check the staged list, so a manifest change or a bad filter cannot
+          # let the boot smoke pass without the Workflow tool.
+          STAGED=$(jq -c '.extensions' "$HOME/.pi/agent/settings.json")
+          echo "staged review extensions:"
+          jq -r '.[]' <<<"$STAGED"
+          if ! jq -e 'type == "array" and length > 0' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list is empty"; exit 1
+          fi
+          if jq -e 'any(.[]; test("native-tool-overrides|tool-search"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list still contains native-tool-overrides or tool-search"; exit 1
+          fi
+          if ! jq -e 'any(.[]; test("/pi-workflow/"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list lacks pi-workflow (the review's Workflow tool)"; exit 1
+          fi
+          while IFS= read -r ext; do
+            [ -f "$ext" ] || { echo "::error::staged extension not found: $ext"; exit 1; }
+          done < <(jq -r '.[]' <<<"$STAGED")
           ln -sfn "$GITHUB_WORKSPACE/skills-sot" "$HOME/.pi/agent/skills"
           # The extensions load in place from my-pi@main source (including the
           # Workflow tool). Local paths need no `pi install`/download.
