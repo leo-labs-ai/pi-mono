@@ -57,7 +57,7 @@ jobs:
             } catch { /* not a collaborator */ }
             core.setOutput('authorized', ['admin', 'maintain', 'write'].includes(perm) ? 'true' : 'false');
 
-      - name: Decide scope (code changed? fork? labelled?)
+      - name: Decide scope (code changed? fork?)
         id: scope
         uses: actions/github-script@v9
         with:
@@ -65,11 +65,6 @@ jobs:
             const pr = context.payload.pull_request;
             // Fork PRs degrade to advisory: a base-repo token can't push to a fork head.
             core.setOutput('advisory_only', pr.head.repo.full_name !== pr.base.repo.full_name ? 'true' : 'false');
-            // CANARY GUARD (temporary): only run on PRs explicitly labelled `agentic-review`.
-            // Remove this block to enable the gate on every code PR once the fork
-            // canary is proven (mirrors how my-pi was rolled out).
-            const labels = (pr.labels || []).map((l) => l.name);
-            if (!labels.includes('agentic-review')) { core.setOutput('should_run', 'false'); return; }
             // Skip the changesets "Version Packages" branch.
             if (pr.head.ref === 'changeset-release/main') { core.setOutput('should_run', 'false'); return; }
             // Skip docs-only / version-bump PRs.
