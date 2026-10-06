@@ -178,9 +178,9 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
         with:
-          repository: valkyriweb/pi-claude-bridge
+          repository: leo-labs-ai/pi-claude-bridge
           path: pi-claude-bridge
-          token: ${{ secrets.GH_CLONE_TOKEN }}
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
 
       # Detect the rusty-review engine across the SoT layouts instead of hardcoding
       # one path, and FAIL LOUDLY if it is absent — a missing engine must break the
@@ -217,10 +217,10 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
         with:
-          repository: valkyriweb/my-pi
+          repository: leo-labs-ai/my-pi
           ref: main
           path: my-pi
-          token: ${{ secrets.GH_CLONE_TOKEN }}
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
       - name: Install my-pi workspace deps (extension imports must resolve)
         if: env.RUN_REVIEW == 'true'
         # Source extensions (pi-workflow etc.) import third-party + @valkyriweb
