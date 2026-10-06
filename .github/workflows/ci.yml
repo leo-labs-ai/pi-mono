@@ -44,6 +44,9 @@ jobs:
       - name: Build workspace declarations
         run: npm run build
 
+      - name: Build the pi-env daemon
+        run: npm run build:daemon --workspace packages/env
+
       # test.sh runs the suite in an isolated HOME with every provider credential
       # blanked, so live-API tests skip rather than flake or leak.
       - name: Unit tests

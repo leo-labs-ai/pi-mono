@@ -71,6 +71,9 @@
 				"./packages/durable/src/*/index.ts",
 				"./packages/durable/src/*"
 			],
+			"@earendil-works/pi-env": [
+				"./packages/env/src/index.ts"
+			],
 			"@earendil-works/pi-agent-core": [
 				"./packages/agent/src/index.ts"
 			],

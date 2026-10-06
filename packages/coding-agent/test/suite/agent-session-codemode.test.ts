@@ -1,4 +1,5 @@
-import { readFileSync, rmSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentTool } from "@lue-labs/pi-agent-core";
 import {
 	type AssistantImages,
@@ -174,10 +175,32 @@ describe("AgentSession codemode tool", () => {
 		expect(requestPrompts[1]).not.toContain("\n- read: ");
 		expect(requestPrompts[1]).toContain("\n- codemode: ");
 		expect(harness.session.systemPrompt).not.toContain("\n- read: ");
+		// Hidden tools' guidelines move from the rules to their codemode sections (#10343).
+		expect(requestPrompts[1]).not.toContain("Use read to examine files");
+		expect(description("codemode")).toContain("- Use read to examine files instead of cat or sed.");
 
 		// Without codemode, tools keep their plain descriptions.
 		harness.session.setActiveToolsByName(["echo"]);
 		expect(description("echo")).toBe("Echo text back.\n\nSecond paragraph.");
+	});
+
+	// #10343
+	it("shows the guidelines of tools that do not fit the inline budget through describeTool()", async () => {
+		const harness = await setup();
+		harness.settingsManager.applyOverrides({ codemode: { mode: "only", inlineBudget: 0 } });
+		harness.session.setActiveToolsByName(["read", "codemode"]);
+		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(codemode?.description).not.toContain("### `read`");
+		harness.setResponses([
+			fauxAssistantMessage([fauxToolCall("codemode", { code: 'text(await describeTool("read"))' })], {
+				stopReason: "toolUse",
+			}),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("go");
+
+		expect(resultText(codemodeResult(harness))).toContain("- Use read to examine files instead of cat or sed.");
 	});
 
 	it("runs nested calls in parallel and returns only the script result", async () => {
@@ -495,6 +518,24 @@ describe("codemode options and store", () => {
 		);
 		expect(result.isError).toBe(false);
 		expect(resultText(result)).toBe('["out\\n",3,"number"]');
+	});
+
+	// https://github.com/earendil-works/pi/issues/10251
+	it("resolves read calls to text for text files and to image blocks that image() shows", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "read"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		writeFileSync(join(harness.tempDir, "notes.txt"), "hello");
+		writeFileSync(join(harness.tempDir, "pixel.png"), Buffer.from(TINY_PNG_BASE64, "base64"));
+		const result = await run(
+			harness,
+			'text(await tools.read({ path: "notes.txt" }));\nconst shot = await tools.read({ path: "pixel.png" });\ntext(shot.note);\nimage(shot);',
+		);
+		expect(result.isError).toBe(false);
+		expect(checkSavedImages(resultText(result))).toBe("hello\nRead image file [image/png]\n<saved>\n<image>");
+		expect(result.content.at(-1)).toEqual({ type: "image", data: TINY_PNG_BASE64, mimeType: "image/png" });
 	});
 
 	it("persists store() writes as custom entries for later calls", async () => {

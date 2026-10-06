@@ -13,6 +13,7 @@ const packages = [
 	{ directory: "packages/mcp", name: "@earendil-works/pi-mcp" },
 	{ directory: "packages/ai", name: "@lue-labs/pi-ai" },
 	{ directory: "packages/durable", name: "@lue-labs/pi-durable" },
+	{ directory: "packages/env", name: "@earendil-works/pi-env" },
 	{ directory: "packages/tui", name: "@lue-labs/pi-tui" },
 	{ directory: "packages/agent", name: "@lue-labs/pi-agent-core" },
 	{ directory: "packages/protocol", name: "@lue-labs/pi-protocol" },
