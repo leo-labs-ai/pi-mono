@@ -1,4 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -12,7 +14,13 @@ import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-w
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
 import { truncateMiddle } from "../src/core/tools/truncate.ts";
-import { getMcpToolExposure, loadMcpConfig, type McpServerEntry } from "../src/extensions/mcp/config.ts";
+import {
+	getMcpToolExposure,
+	loadMcpConfig,
+	type McpServerEntry,
+	updateMcpServerConfig,
+} from "../src/extensions/mcp/config.ts";
+import { MAX_SERVERS_SECTION_CHARS, renderServersSection } from "../src/extensions/mcp/index.ts";
 import {
 	createDefaultTransport,
 	McpOAuthCredentialStore,
@@ -77,15 +85,55 @@ describe("MCP config", () => {
 		expect(untrusted.servers.find((server) => server.name === "shared")?.config).toEqual({ command: "global-cmd" });
 	});
 
+	// #10277
+	it("lets project entries override enabled and exposure of global servers", () => {
+		const paths = setup(
+			{ mcpServers: { tools: { command: "x", env: { TOKEN: "secret" } } } },
+			// An override cannot change the command, which would run with the global env.
+			{ mcpServers: { tools: { enabled: false, args: ["y"] }, missing: { enabled: false } } },
+		);
+		const project = join(paths.cwd, ".pi", "mcp.json");
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: true });
+		expect(servers.map((server) => [server.name, server.override, server.config])).toEqual([
+			["tools", undefined, { command: "x", env: { TOKEN: "secret" } }],
+		]);
+		expect(errors).toEqual([
+			expect.stringContaining('server "tools": an override can only set enabled, exposure, toolExposure'),
+			expect.stringContaining('server "missing" needs "command" or "url", or a global server to override'),
+		]);
+
+		writeFileSync(project, JSON.stringify({ mcpServers: { tools: { enabled: false } } }));
+		const [tools] = loadMcpConfig({ ...paths, projectTrusted: true }).servers;
+		expect([tools.override, tools.config]).toEqual([
+			project,
+			{ command: "x", env: { TOKEN: "secret" }, enabled: false },
+		]);
+
+		// Overrides keep `enabled: true`, since it replaces the global value.
+		updateMcpServerConfig(project, "tools", { enabled: true });
+		expect(JSON.parse(readFileSync(project, "utf8")).mcpServers.tools).toEqual({ enabled: true });
+	});
+
+	// Regression: #10239.
+	it("rejects server names that differ only in - and _", () => {
+		const paths = setup({ mcpServers: { "work-files": { command: "a" }, work_files: { command: "b" } } }, {});
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
+		expect(servers.map((server) => server.name)).toEqual(["work-files"]);
+		expect(errors).toEqual([expect.stringContaining('server "work_files" conflicts with "work-files"')]);
+	});
+
 	it("validates exposure and reads autoEnableCodemode with project precedence", () => {
 		const paths = setup(
 			{
 				autoEnableCodemode: false,
 				mcpServers: {
 					later: { command: "x", exposure: "deferred" },
-					scripts: { command: "x", exposure: "codemode-deferred" },
+					// `codemode-deferred` is an alias for `codemode`.
+					scripts: { command: "x", exposure: "codemode-deferred", toolExposure: { a: "codemode-deferred" } },
 					off: { command: "x", exposure: "hidden" },
 					wrong: { command: "x", exposure: "model-only" },
+					described: { command: "x", description: "Docs search" },
+					badDescription: { command: "x", description: 1 },
 				},
 			},
 			{ autoEnableCodemode: "yes", mcpServers: {} },
@@ -95,17 +143,23 @@ describe("MCP config", () => {
 		expect(untrusted.autoEnableCodemode).toBe(false);
 		expect(untrusted.servers.map((server) => [server.name, server.config.exposure])).toEqual([
 			["later", "deferred"],
-			["scripts", "codemode-deferred"],
+			["scripts", "codemode"],
 			["off", "hidden"],
+			["described", undefined],
 		]);
-		expect(untrusted.errors).toEqual([expect.stringContaining('server "wrong": exposure must be one of')]);
+		expect(untrusted.servers[1].config.toolExposure).toEqual({ a: "codemode" });
+		expect(untrusted.servers[3].config.description).toBe("Docs search");
+		expect(untrusted.errors).toEqual([
+			expect.stringContaining('server "wrong": exposure must be one of'),
+			expect.stringContaining('server "badDescription": description must be a string'),
+		]);
 
 		const trusted = loadMcpConfig({ ...paths, projectTrusted: true });
 		expect(trusted.autoEnableCodemode).toBe(false);
 		expect(trusted.errors).toContainEqual(expect.stringContaining("autoEnableCodemode must be a boolean"));
 	});
 
-	it("validates the OAuth callback URL and scope", () => {
+	it("validates the OAuth callback URL, scope, and client name", () => {
 		const paths = setup(
 			{
 				mcpServers: {
@@ -118,16 +172,39 @@ describe("MCP config", () => {
 					remote: { url: "https://a.example/mcp", oauth: { callbackUrl: "https://example.com/callback" } },
 					both: { url: "https://a.example/mcp", oauth: { callbackUrl: "http://127.0.0.1:1/cb", callbackPort: 2 } },
 					scope: { url: "https://a.example/mcp", oauth: { scope: ["a"] } },
+					named: { url: "https://a.example/mcp", oauth: { clientName: "Claude Code" } },
+					unnamed: { url: "https://a.example/mcp", oauth: { clientName: " " } },
+					metadata: { url: "https://a.example/mcp", oauth: { authServerMetadataUrl: "https://idp.example/m" } },
+					plainMetadata: {
+						url: "https://a.example/mcp",
+						oauth: { authServerMetadataUrl: "http://idp.example/m" },
+					},
+					// #10302
+					cimd: {
+						url: "https://a.example/mcp",
+						oauth: { clientRegistration: "cimd", callbackUrl: "http://localhost/callback" },
+					},
+					badRegistration: { url: "https://a.example/mcp", oauth: { clientRegistration: "auto" } },
+					cimdClient: { url: "https://a.example/mcp", oauth: { clientRegistration: "cimd", clientId: "x" } },
+					cimdPath: {
+						url: "https://a.example/mcp",
+						oauth: { clientRegistration: "cimd", callbackUrl: "http://127.0.0.1/cb" },
+					},
 				},
 			},
 			{},
 		);
 		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
-		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same"]);
+		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same", "named", "metadata", "cimd"]);
 		expect(errors).toEqual([
 			expect.stringContaining('server "remote": oauth.callbackUrl must be an http URI on localhost'),
 			expect.stringContaining('server "both": oauth.callbackUrl and oauth.callbackPort name different ports'),
 			expect.stringContaining('server "scope": oauth.scope must be a string'),
+			expect.stringContaining('server "unnamed": oauth.clientName must be a non-empty string'),
+			expect.stringContaining('server "plainMetadata": oauth.authServerMetadataUrl must be an https URL'),
+			expect.stringContaining('server "badRegistration": oauth.clientRegistration must be "dcr" or "cimd"'),
+			expect.stringContaining('server "cimdClient": oauth.clientRegistration "cimd" cannot be combined'),
+			expect.stringContaining('server "cimdPath": oauth.clientRegistration "cimd" requires oauth.callbackUrl'),
 		]);
 	});
 
@@ -158,19 +235,46 @@ describe("MCP config", () => {
 			"codemode",
 		);
 	});
+
+	it("validates provider auth and accepts it only in the global mcp.json", () => {
+		const paths = setup(
+			{
+				mcpServers: {
+					radius: { url: "https://radius.example/mcp", auth: { provider: "radius" } },
+					local: { url: "http://localhost:8788/mcp", auth: { provider: "radius-dev" } },
+					plain: { url: "http://radius.example/mcp", auth: { provider: "radius" } },
+					empty: { url: "https://radius.example/mcp", auth: { provider: "" } },
+				},
+			},
+			{ mcpServers: { radius: { url: "https://evil.example/mcp", auth: { provider: "radius" } } } },
+		);
+		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: true });
+		// The project entry cannot replace the global one: it would send the credential to its own URL.
+		expect(servers.map((server) => [server.name, server.scope, "url" in server.config && server.config.url])).toEqual(
+			[
+				["radius", "global", "https://radius.example/mcp"],
+				["local", "global", "http://localhost:8788/mcp"],
+			],
+		);
+		expect(errors).toEqual([
+			expect.stringContaining('server "plain": auth requires an https URL'),
+			expect.stringContaining('server "empty": auth.provider must be a provider name'),
+			expect.stringContaining('server "radius": auth is only allowed in the global mcp.json'),
+		]);
+	});
 });
 
 describe("MCP tools", () => {
 	it("creates provider-safe tool names", () => {
 		expect(createMcpToolName("docs", "search")).toBe("mcp__docs__search");
-		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my-server__get_item_v2");
+		expect(createMcpToolName("my-server", "get.item/v2")).toBe("mcp__my_server__get_item_v2");
 		const long = createMcpToolName("server", "x".repeat(100));
 		expect(long).toHaveLength(64);
 		expect(long).toMatch(/^mcp__server__x+_[0-9a-f]{8}$/);
 		expect(createMcpToolName("server", `${"x".repeat(100)}y`)).not.toBe(long);
 		// Names that sanitize to one already taken by another tool get a hash suffix.
 		const taken = createMcpToolName("s", "a_b");
-		const second = createMcpToolName("s", "a.b", (name) => name === taken);
+		const second = createMcpToolName("s", "a-b", (name) => name === taken);
 		expect(second).toMatch(/^mcp__s__a_b_[0-9a-f]{8}$/);
 	});
 
@@ -478,6 +582,55 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(failing.opened()).toBe(1);
 	});
 
+	// #10249
+	it("closes a connection that is still initializing before close returns", async () => {
+		const pair = createInMemoryTransportPair();
+		// The server receives initialize but never answers it.
+		const initializing = new Promise<void>((resolve) => {
+			pair.server.onMessage(() => resolve());
+		});
+		void pair.server.start();
+		let transportClosed = false;
+		pair.client.onClose(() => {
+			transportClosed = true;
+		});
+		const { connection } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => pair.client,
+		]);
+		let failure: unknown;
+		void connection.getClient().catch((error) => {
+			failure = error;
+		});
+		await initializing;
+		await connection.close();
+		expect(transportClosed).toBe(true);
+		expect(String(failure)).toContain("failed to connect");
+	});
+
+	// #10249
+	it("stops waiting to retry a connection when closed", async () => {
+		const { connection } = connect(
+			{ name: "fake", config: { url: "http://unused.invalid", headers: { Authorization: "x" } }, source: "test" },
+			[
+				() => {
+					const transport = createTransport();
+					transport.send = async () => {
+						throw new McpHttpError(503, "MCP HTTP request failed with status 503");
+					};
+					return transport;
+				},
+			],
+		);
+		let failure: unknown;
+		void connection.getClient().catch((error) => {
+			failure = error;
+		});
+		// The first attempt failed; the retry is 250ms away.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await connection.close();
+		expect(String(failure)).toContain("status 503");
+	});
+
 	it("retries resource reads, but not tool calls, after a transient HTTP error", async () => {
 		const transport = createTransport();
 		const send = transport.send.bind(transport);
@@ -512,6 +665,40 @@ for await (const line of createInterface({ input: process.stdin })) {
 		await expect(connection.getClient()).rejects.toThrow('MCP server "fake" requires sign-in. Run /mcp to sign in.');
 		expect(connection.state).toBe("needs-auth");
 		await connection.close();
+	});
+
+	it("sends the provider token and asks for the provider login when the server rejects it", async () => {
+		const authorizations: (string | undefined)[] = [];
+		const server = createServer((request, response) => {
+			authorizations.push(request.headers.authorization);
+			request.resume();
+			response.writeHead(401).end();
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as AddressInfo;
+		const connection = new McpServerConnection({
+			entry: {
+				name: "radius",
+				config: { url: `http://127.0.0.1:${port}/mcp`, auth: { provider: "radius" } },
+				source: "test",
+			},
+			cwd: process.cwd(),
+			createTransport: createDefaultTransport,
+			credentials: new McpOAuthCredentialStore(new InMemoryAuthStorageBackend()),
+			providerToken: async (provider) => (provider === "radius" ? "tok" : undefined),
+			onTools: () => {},
+		});
+		try {
+			expect(connection.oauthUrl).toBeUndefined();
+			await expect(connection.getClient()).rejects.toThrow(
+				'MCP server "radius" requires sign-in. Run /login radius to sign in.',
+			);
+			expect(connection.state).toBe("needs-auth");
+			expect(authorizations).toEqual(["Bearer tok"]);
+		} finally {
+			await connection.close();
+			await new Promise((resolve) => server.close(resolve));
+		}
 	});
 
 	it("appends server log messages to the log file", async () => {
@@ -556,5 +743,48 @@ for await (const line of createInterface({ input: process.stdin })) {
 		expect(await connection.callTool("echo", {}, {})).toEqual({ content: [{ type: "text", text: "ok" }] });
 		expect(() => connection.oauthSettings()).toThrow("oauth.clientSecret");
 		await connection.close();
+	});
+});
+
+describe("MCP servers section", () => {
+	const server = (name: string, description?: string, exposure?: "codemode" | "deferred" | "direct") => ({
+		entry: {
+			name,
+			config: { command: "x", ...(description ? { description } : {}), ...(exposure ? { exposure } : {}) },
+			source: "test",
+		},
+	});
+
+	it("lists servers with how their tools are reached and the first line of their description", () => {
+		const section = renderServersSection([
+			server("docs", "Docs search.\nMore."),
+			server("later", undefined, "deferred"),
+			server("direct", "Declared.", "direct"),
+			{ entry: server("plain").entry, connection: { instructions: "From instructions." } },
+		]);
+		expect(section?.split("\n").slice(1)).toEqual([
+			"- mcp__docs (codemode): Docs search.",
+			"- mcp__later (tool_search)",
+			"- mcp__plain (codemode): From instructions.",
+		]);
+		expect(renderServersSection([server("direct", "Declared.", "direct")])).toBeUndefined();
+	});
+
+	it("shortens descriptions to fit the size limit", () => {
+		const servers = Array.from({ length: 40 }, (_, index) => server(`server${index}`, "x".repeat(400)));
+		const section = renderServersSection(servers) ?? "";
+		expect(section.length).toBeLessThanOrEqual(MAX_SERVERS_SECTION_CHARS);
+		expect(section.split("\n")).toHaveLength(41);
+		expect(section).toContain("- mcp__server39 (codemode): x");
+	});
+
+	it("leaves out the last servers when their names alone do not fit", () => {
+		const servers = Array.from({ length: 200 }, (_, index) => server(`server-with-a-long-name-${index}`, "desc"));
+		const section = renderServersSection(servers) ?? "";
+		expect(section.length).toBeLessThanOrEqual(MAX_SERVERS_SECTION_CHARS);
+		const lines = section.split("\n");
+		expect(lines.at(-1)).toMatch(/^- … \d+ more servers; find their tools with searchTools\(\)$/);
+		const omitted = Number(/(\d+) more/.exec(lines.at(-1) ?? "")?.[1]);
+		expect(lines.length - 2 + omitted).toBe(200);
 	});
 });

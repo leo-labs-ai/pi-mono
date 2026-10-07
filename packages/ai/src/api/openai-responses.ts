@@ -25,8 +25,13 @@ import { getDeclaredTools, resolveTranscript, resolveTranscriptTools } from "../
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
-import { buildBaseOptions } from "./simple-options.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveMidConvoEffort,
+} from "./openai-responses-shared.ts";
+import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
@@ -91,6 +96,11 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 		supportsToolSearch: model.compat?.supportsToolSearch ?? false,
 		supportsExplicitPromptCacheMode: model.compat?.supportsExplicitPromptCacheMode ?? false,
 		supportsMaxOutputTokens: model.compat?.supportsMaxOutputTokens ?? true,
+		// Fork: Codex Responses transport flags share the compat type; default on.
+		sendChatgptAccountId: model.compat?.sendChatgptAccountId ?? true,
+		supportsWebSocketTransport: model.compat?.supportsWebSocketTransport ?? true,
+		supportsZstdRequestCompression: model.compat?.supportsZstdRequestCompression ?? true,
+		supportsMidConvoEffort: model.compat?.supportsMidConvoEffort ?? false,
 	};
 }
 
@@ -171,6 +181,13 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				cacheSessionId,
 			);
 			let params = buildParams(model, normalizedContext, options, compat, grammarToolInputProperties);
+			const midConvoEffort = resolveMidConvoEffort(
+				compat.supportsMidConvoEffort,
+				model,
+				normalizedContext.messages,
+				getRequestedEffort(model, options),
+			);
+			if (midConvoEffort) output.providerThinkingLevel = midConvoEffort.active;
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
@@ -313,7 +330,15 @@ function buildParams(
 		context.messages,
 		compat.supportsAdditionalTools || compat.supportsToolSearch,
 	);
+	const requestedEffort = getRequestedEffort(model, options);
+	const midConvoEffort = resolveMidConvoEffort(
+		compat.supportsMidConvoEffort,
+		model,
+		context.messages,
+		requestedEffort,
+	);
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS, {
+		midConvoEffort,
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: compat.supportsMidConvoSystemMessages,
 		supportsAdditionalTools: compat.supportsAdditionalTools,
@@ -360,11 +385,10 @@ function buildParams(
 		params.tool_choice = options.toolChoice;
 	}
 
+	const reasoningEffort = options?.reasoningEffort ?? (options?.reasoningSummary ? "medium" : undefined);
 	if (model.reasoning) {
-		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = options?.reasoningEffort
-				? (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort)
-				: "medium";
+		if (reasoningEffort) {
+			const effort = midConvoEffort?.baseline ?? requestedEffort ?? reasoningEffort;
 			params.reasoning = {
 				effort: effort as NonNullable<typeof params.reasoning>["effort"],
 				summary: options?.reasoningSummary || "auto",
@@ -378,10 +402,21 @@ function buildParams(
 		if (model.provider === "xai") params.include = ["reasoning.encrypted_content"];
 	}
 
-	// Last so custom keys override the named request fields. Per-request keys override model defaults.
-	Object.assign(params, model.samplingParams, options?.samplingParams);
+	// Last so model and request sampling parameters override named request fields.
+	const samplingParams = resolveSamplingParams(model, reasoningEffort ?? "off", options?.samplingParams);
+	if (samplingParams) {
+		Object.assign(params, samplingParams);
+	}
 
 	return params;
+}
+
+function getRequestedEffort(
+	model: Model<"openai-responses">,
+	options: OpenAIResponsesOptions | undefined,
+): string | undefined {
+	if (!model.reasoning || !options?.reasoningEffort) return undefined;
+	return model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 }
 
 function getServiceTierCostMultiplier(

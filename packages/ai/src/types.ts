@@ -43,7 +43,7 @@ export type KnownProvider =
 	| "google"
 	| "google-vertex"
 	| "openai"
-	| "azure-openai-responses"
+	| "azure"
 	| "openai-codex"
 	| "radius"
 	| "typesafe"
@@ -85,6 +85,8 @@ export type ToolChoice = "auto" | "none";
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type ModelThinkingLevel = "off" | ThinkingLevel;
 export type ThinkingLevelMap = Partial<Record<ModelThinkingLevel, string | null>>;
+export type SamplingParams = Record<string, unknown>;
+export type SamplingParamsByThinkingLevel = Partial<Record<ModelThinkingLevel, SamplingParams>>;
 export type ChatTemplateKwargValue =
 	| string
 	| number
@@ -204,7 +206,7 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 * `repetition_penalty`. Merged over `Model.samplingParams` per key. Only applied by
 	 * OpenAI-compatible adapters (completions, responses, Azure responses); other APIs ignore it.
 	 */
-	samplingParams?: Record<string, unknown>;
+	samplingParams?: SamplingParams;
 	maxTokens?: number;
 	/**
 	 * Preferred transport for providers that support multiple transports.
@@ -892,7 +894,26 @@ export interface OpenAIResponsesCompat {
 	supportsExplicitPromptCacheMode?: boolean;
 	/** Whether the provider accepts the `max_output_tokens` parameter. Some Codex-protocol gateways reject it. Default: true. */
 	supportsMaxOutputTokens?: boolean;
+	/** Whether to derive and send the ChatGPT account header (Codex Responses only). Opaque gateway credentials carry no account claim. Default: true. */
+	sendChatgptAccountId?: boolean;
+	/** Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only). Default: true. */
+	supportsWebSocketTransport?: boolean;
+	/** Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Default: true on the official ChatGPT Codex backend, false for any other base URL. */
+	supportsZstdRequestCompression?: boolean;
+	/**
+	 * Whether the exact model transport accepts `configuration_update` input items, so a thinking-level
+	 * change keeps request-level `reasoning.effort` and the cached prefix. Switching reasoning off (`none`)
+	 * is not covered. Same intent as {@link AnthropicMessagesCompat.supportsMidConvoEffort}.
+	 * Default: false; enable only for endpoints verified to accept the item (GPT-6 family, non-Pro).
+	 */
+	supportsMidConvoEffort?: boolean;
 }
+
+/**
+ * Compatibility settings for OpenAI Codex Responses APIs. Codex lanes share
+ * {@link OpenAIResponsesCompat}; the Codex-only flags live there as optional fields.
+ */
+export type OpenAICodexResponsesCompat = OpenAIResponsesCompat;
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */
 export interface AnthropicMessagesCompat {
@@ -944,11 +965,11 @@ export interface AnthropicMessagesCompat {
 	allowEmptySignature?: boolean;
 	/** Whether the provider supports Anthropic strict tool schemas. Default: false; generated Anthropic models enable it explicitly. */
 	supportsStrictTools?: boolean;
-	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Default: false. */
+	/** Whether the exact model transport supports effort-only system messages and thinking binding controls. Same intent as {@link OpenAIResponsesCompat.supportsMidConvoEffort}. Default: false. */
 	supportsMidConvoEffort?: boolean;
 	/** Whether the exact model accepts system-role messages inside the conversation. When false, later system messages are folded into the top-level system prompt. Default: false. */
 	supportsMidConvoSystemMessages?: boolean;
-	/** Whether the exact model accepts mid-conversation `tool_addition` and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
+	/** Whether the exact model accepts mid-conversation `tool_addition` blocks with inline tool definitions (`inline-tools-2026-09-15`) and `tool_removal` blocks. Requires `supportsMidConvoSystemMessages`. Default: false. */
 	supportsMidConvoToolChanges?: boolean;
 	/**
 	 * Models Anthropic accepts in `fallbacks` for server-side refusal fallback,
@@ -1131,7 +1152,9 @@ export interface Model<TApi extends Api> extends BaseModel<TApi> {
 	contextWindow: number;
 	maxTokens: number;
 	/** Default sampling parameters for this model. See {@link StreamOptions.samplingParams}; per-request keys override these. */
-	samplingParams?: Record<string, unknown>;
+	samplingParams?: SamplingParams;
+	/** Sampling parameter overrides selected by the effective pi thinking level. */
+	samplingParamsByThinkingLevel?: SamplingParamsByThinkingLevel;
 	/** Compatibility overrides for OpenAI-compatible APIs. If not set, auto-detected from baseUrl. */
 	compat?: TApi extends "openai-completions"
 		? OpenAICompletionsCompat

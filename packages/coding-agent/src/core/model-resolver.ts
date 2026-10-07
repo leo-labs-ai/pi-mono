@@ -16,10 +16,10 @@ export const defaultModelPerProvider: Partial<Record<KnownProvider, string>> = {
 	"ant-ling": "Ring-2.6-1T",
 	anthropic: "claude-opus-4-8",
 	openai: "gpt-5.5",
-	"azure-openai-responses": "gpt-5.4",
+	azure: "gpt-5.4",
 	"openai-codex": "gpt-6.1-sol",
 	radius: "balanced",
-	nvidia: "nvidia/nemotron-3-super-120b-a12b",
+	nvidia: "nvidia/nemotron-3-ultra-550b-a55b",
 	deepseek: "deepseek-v4-pro",
 	google: "gemini-3.1-pro-preview",
 	"google-vertex": "gemini-3.1-pro-preview",
@@ -117,6 +117,7 @@ export function findExactModelReferenceMatch(
 				return undefined;
 			}
 		}
+		return undefined;
 	}
 
 	const idMatches = availableModels.filter((model) => model.id.toLowerCase() === normalizedReference);
@@ -131,6 +132,13 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
 		return exactMatch;
+	}
+
+	// Provider-qualified references are intentional. If `openai/gpt-...` or
+	// `openai-codex/gpt-...` is unavailable, do not fuzzy-match a proxy provider
+	// model whose id merely contains that string (e.g. `kilo/openai/gpt-...`).
+	if (modelPattern.includes("/")) {
+		return undefined;
 	}
 
 	// No exact match - fall back to partial matching
@@ -230,6 +238,12 @@ export function parseModelPattern(
 		return result;
 	} else {
 		// Invalid suffix
+		// A provider-qualified reference must never degrade into a *different*
+		// model by shedding its suffix: `openai/gpt-4o:extended` resolving to
+		// `gpt-4o` silently answers with a model the caller did not ask for.
+		if (pattern.includes("/")) {
+			return { model: undefined, thinkingLevel: undefined, warning: undefined };
+		}
 		const allowFallback = options?.allowInvalidThinkingLevelFallback ?? true;
 		if (!allowFallback) {
 			// In strict mode (CLI --model parsing), treat it as part of the model id and fail.

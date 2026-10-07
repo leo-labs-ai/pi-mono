@@ -2,8 +2,8 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/12-tasks.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai";
-import { createRegistry, defineTask, Harness, MemoryStorage } from "../../src/index.ts";
+import { createModels } from "@lue-labs/pi-ai/models";
+import { createRegistry, defineExtension, defineTask, Harness, MemoryStorage } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -44,13 +44,19 @@ const Payment = defineTask<{ amount: number }, PaymentState, { receipt: number }
 	},
 });
 
-// The Harness finds task code by name in the registry. Nothing runs until
-// resume() or a call that waits for progress, such as waitForTask().
+// Extensions bring task code; the Harness finds it by name in the registry.
+// Nothing runs until resume() or a call that waits for progress, such as
+// waitForTask().
 const registry = createRegistry();
-registry.tasks.add(Payment);
+registry.install(defineExtension({ name: "payments", tasks: [Payment] }));
 const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry }, context);
 const root = await harness.root(context);
-const paymentId = await root.commit((tx) => tx.createTask(Payment, { amount: 5 }), context);
+// Every task names its owner. This one belongs to the conversation; a task can
+// also own child tasks and wait for them (24-child-tasks.ts).
+const paymentId = await root.commit(
+	(tx) => tx.createTask(Payment, { amount: 5 }, { ownership: { kind: "conversation" } }),
+	context,
+);
 // The finished task record is the durable receipt; waitForTask() knows its result type.
 const paid = await harness.waitForTask(paymentId, context);
 console.log("payment outcome:", paid.state.outcome);

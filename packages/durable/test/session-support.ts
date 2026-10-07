@@ -12,7 +12,7 @@ import {
 	MemoryStorage,
 	type Seq,
 	type StorageWrite,
-} from "@earendil-works/pi-durable";
+} from "@lue-labs/pi-durable";
 import { SessionImpl } from "../src/session/session.ts";
 
 export const context: Context = BACKGROUND_CONTEXT;

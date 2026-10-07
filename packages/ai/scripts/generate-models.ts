@@ -30,6 +30,7 @@ import type {
 import {
 	assertExactModelIds,
 	createModelDataManifest,
+	groupProviderModelData,
 	type ModelDataStructure,
 	MODEL_DATA_MANIFEST_FILE,
 	readModelDataProviderIds,
@@ -197,7 +198,7 @@ const TOGETHER_REASONING_ONLY_MODELS = new Set([
 	"MiniMaxAI/MiniMax-M2.7",
 ]);
 const TOGETHER_REASONING_EFFORT_MODELS = new Set(["openai/gpt-oss-20b", "openai/gpt-oss-120b"]);
-const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro"]);
+const TOGETHER_TOGGLE_REASONING_EFFORT_MODELS = new Set(["deepseek-ai/DeepSeek-V4-Pro-0813"]);
 const TOGETHER_FIXED_REASONING_LEVEL_MAP = {
 	off: null,
 	minimal: null,
@@ -288,6 +289,15 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 const DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP = {
 	...DEEPSEEK_V4_THINKING_LEVEL_MAP,
 	low: "low",
+} as const;
+// Azure Foundry rejects DeepSeek's own max effort.
+const AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP = {
+	minimal: null,
+	low: "low",
+	medium: "medium",
+	high: "high",
+	xhigh: null,
+	max: null,
 } as const;
 // Verified against Fireworks Messages raw_output on 2026-09-10 (#9323).
 // Fall back to verified support when models.dev omits effort metadata; this is
@@ -869,7 +879,7 @@ function applyStrictToolCompatMetadata(model: Model<Api>): void {
 const OPENAI_GRAMMAR_TOOL_PROVIDERS = new Set([
 	"openai",
 	"openai-codex",
-	"azure-openai-responses",
+	"azure",
 	"github-copilot",
 	"opencode",
 	"cloudflare-ai-gateway",
@@ -1120,10 +1130,12 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 			model,
 			model.provider === "openrouter"
 				? { ...DEEPSEEK_V4_THINKING_LEVEL_MAP, xhigh: "xhigh", max: null }
-				: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
-					model.id.includes("deepseek-v4-flash")
-					? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
-					: DEEPSEEK_V4_THINKING_LEVEL_MAP,
+				: model.provider === "azure"
+					? AZURE_DEEPSEEK_V4_THINKING_LEVEL_MAP
+					: (model.provider === "deepseek" || model.provider === "opencode" || model.provider === "opencode-go") &&
+						model.id.includes("deepseek-v4-flash")
+						? DEEPSEEK_V4_FLASH_THINKING_LEVEL_MAP
+						: DEEPSEEK_V4_THINKING_LEVEL_MAP,
 		);
 	}
 	if (model.provider === "groq" && model.id === "qwen/qwen3.6-27b") {
@@ -1790,12 +1802,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl: getBedrockBaseUrl(id),
 					reasoning: m.reasoning === true,
 					input: (m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"]) as ("text" | "image")[],
-					cost: {
-						input: m.cost?.input || 0,
-						output: m.cost?.output || 0,
-						cacheRead: m.cost?.cache_read || 0,
-						cacheWrite: m.cost?.cache_write || 0,
-					},
+					// Includes models.dev pricing tiers, e.g. the long-context tier for OpenAI models (#10326).
+					cost: getModelsDevCost(m.cost),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 					...(m.structured_output === true && { compat: { supportsStrictMode: true } }),
@@ -1966,7 +1974,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				} else if (upstream === "anthropic") {
 					api = "anthropic-messages";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL;
-					id = nativeId;
+					// The /anthropic passthrough forwards the model ID to Anthropic unchanged.
+					// models.dev lists dotted versions (claude-opus-5.5), but Anthropic only
+					// accepts dashed IDs (claude-opus-5-5).
+					id = nativeId.replaceAll(".", "-");
 				} else if (upstream === "workers-ai") {
 					api = "openai-completions";
 					baseUrl = CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL;
@@ -2735,6 +2746,32 @@ const OPENCODE_CLASSIFIER_MODELS: ClassifierModel<"typesafe-system-one">[] = [
 ];
 
 const CLOUDFLARE_WORKERS_AI_CLASSIFIER_MODELS: ClassifierModel<"cloudflare-workers-ai-system-one">[] = [
+	// Cloudflare-hosted Clef decision models. They accept images, but classifier
+	// contexts carry text or JSON state only, so the catalog advertises text.
+	// Pricing: https://developers.cloudflare.com/workers-ai/models/clef/
+	// and https://developers.cloudflare.com/workers-ai/models/clef-flash/
+	{
+		type: "classifier",
+		id: "@cf/cloudflare/clef",
+		name: "Clef",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0.24, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 65536,
+	},
+	{
+		type: "classifier",
+		id: "@cf/cloudflare/clef-flash",
+		name: "Clef Flash",
+		api: "cloudflare-workers-ai-system-one",
+		provider: "cloudflare-workers-ai",
+		baseUrl: CLOUDFLARE_WORKERS_AI_REST_BASE_URL,
+		input: ["text"],
+		cost: { input: 0.09, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 65536,
+	},
 	{
 		type: "classifier",
 		id: "typesafe/jev",
@@ -3401,7 +3438,7 @@ async function generateModels() {
 		.map((model) => ({
 			...model,
 			api: "azure-openai-responses",
-			provider: "azure-openai-responses",
+			provider: "azure",
 			baseUrl: "",
 			cost: {
 				input: model.cost.input,
@@ -3412,6 +3449,28 @@ async function generateModels() {
 			contextWindow: AZURE_CONTEXT_WINDOW_OVERRIDES[model.id] ?? model.contextWindow,
 		}));
 	allModels.push(...azureOpenAiModels);
+
+	// Azure resells DeepSeek at its own rates. US data zone, checked 2026-09-16.
+	// https://azure.microsoft.com/en-us/pricing/details/ai-foundry-models/deepseek/
+	const AZURE_DEEPSEEK_V4_PRO_COST: ModelCost = { input: 1.925, output: 3.828, cacheRead: 0.165, cacheWrite: 0 };
+	// Azure 400s on DeepSeek's `thinking` field and on every prompt cache parameter, discards a
+	// `developer` system message unbilled once reasoning_effort is set, and honours mid-convo ones (#9645).
+	const azureDeepSeekModels: Model<Api>[] = allModels
+		.filter((model) => model.provider === "deepseek" && model.id === "deepseek-v4-pro")
+		.map((model) => ({
+			...model,
+			provider: "azure",
+			baseUrl: "",
+			cost: AZURE_DEEPSEEK_V4_PRO_COST,
+			compat: {
+				...(model.compat as OpenAICompletionsCompat),
+				supportsDeveloperRole: false,
+				supportsMidConvoSystemMessages: true,
+				thinkingFormat: "openai",
+				supportsLongCacheRetention: false,
+			},
+		}));
+	allModels.push(...azureDeepSeekModels);
 
 	for (const model of allModels) {
 		applyOpenAICompletionsCompatMetadata(model);
@@ -3495,22 +3554,9 @@ async function generateModels() {
 	const generatedDataProviders: Record<string, Record<string, Record<string, AnyModel>>> = {};
 	const modelDataStructure: ModelDataStructure = {};
 	for (const providerId of generatedDataProviderIds) {
-		const models = jsonAllProviders[providerId];
-		generatedDataProviders[providerId] = {};
-		modelDataStructure[providerId] = {};
-		const apiIds = Array.from(new Set(models.map((model) => model.api))).sort();
-		for (const api of apiIds) {
-			generatedDataProviders[providerId][api] = {};
-			for (const model of models) {
-				if (model.api !== api) continue;
-				const identity = `${model.type}:${model.id}`;
-				if (generatedDataProviders[providerId][api][identity]) {
-					throw new Error(`${providerId}/${identity} has duplicate ${api} catalog entries`);
-				}
-				generatedDataProviders[providerId][api][identity] = model;
-				modelDataStructure[providerId][identity] = api;
-			}
-		}
+		const { groups, structure } = groupProviderModelData(providerId, jsonAllProviders[providerId]);
+		generatedDataProviders[providerId] = groups;
+		modelDataStructure[providerId] = structure;
 	}
 
 	const generatedAt = new Date().toISOString();

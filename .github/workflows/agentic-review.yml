@@ -57,7 +57,7 @@ jobs:
             } catch { /* not a collaborator */ }
             core.setOutput('authorized', ['admin', 'maintain', 'write'].includes(perm) ? 'true' : 'false');
 
-      - name: Decide scope (code changed? fork? labelled?)
+      - name: Decide scope (code changed? fork?)
         id: scope
         uses: actions/github-script@v9
         with:
@@ -65,11 +65,6 @@ jobs:
             const pr = context.payload.pull_request;
             // Fork PRs degrade to advisory: a base-repo token can't push to a fork head.
             core.setOutput('advisory_only', pr.head.repo.full_name !== pr.base.repo.full_name ? 'true' : 'false');
-            // CANARY GUARD (temporary): only run on PRs explicitly labelled `agentic-review`.
-            // Remove this block to enable the gate on every code PR once the fork
-            // canary is proven (mirrors how my-pi was rolled out).
-            const labels = (pr.labels || []).map((l) => l.name);
-            if (!labels.includes('agentic-review')) { core.setOutput('should_run', 'false'); return; }
             // Skip the changesets "Version Packages" branch.
             if (pr.head.ref === 'changeset-release/main') { core.setOutput('should_run', 'false'); return; }
             // Skip docs-only / version-bump PRs.
@@ -122,9 +117,12 @@ jobs:
           npm --prefix packages/chord run build
           npm --prefix packages/tui run build
           npm --prefix packages/telemetry run build
+          npm --prefix packages/codemode run build
+          npm --prefix packages/mcp run build
           npm --prefix packages/ai run build
+          npm --prefix packages/durable run build
+          npm --prefix packages/env run build
           npm --prefix packages/agent run build
-          npm --prefix packages/session-backends/sqlite-node run build
           npm --prefix packages/protocol run build
           npm --prefix packages/client run build
           npm --prefix packages/server run build
@@ -180,9 +178,9 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
         with:
-          repository: valkyriweb/pi-claude-bridge
+          repository: leo-labs-ai/pi-claude-bridge
           path: pi-claude-bridge
-          token: ${{ secrets.GH_CLONE_TOKEN }}
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
 
       # Detect the rusty-review engine across the SoT layouts instead of hardcoding
       # one path, and FAIL LOUDLY if it is absent — a missing engine must break the
@@ -219,10 +217,10 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
         with:
-          repository: valkyriweb/my-pi
+          repository: leo-labs-ai/my-pi
           ref: main
           path: my-pi
-          token: ${{ secrets.GH_CLONE_TOKEN }}
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
       - name: Install my-pi workspace deps (extension imports must resolve)
         if: env.RUN_REVIEW == 'true'
         # Source extensions (pi-workflow etc.) import third-party + @valkyriweb
@@ -235,19 +233,43 @@ jobs:
         run: |
           mkdir -p "$HOME/.pi/agent"
           cp "$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review/ci-models.json" "$HOME/.pi/agent/models.json"
+          # Load the actions profile's extension list minus native-tool-overrides
+          # and tool-search: they call fork extension APIs (pi.hooks, pi.harness,
+          # pi.getExtensionConfig, pi.tools deferral) that fork 1.0.x does not have,
+          # and the review does not use them (#591).
+          PROFILE="$GITHUB_WORKSPACE/my-pi/packages/my-pi-actions"
+          EXTENSIONS=$(jq -ec --arg base "$PROFILE/" \
+            '(.pi.extensions | if type == "array" then . else error("my-pi-actions package.json has no pi.extensions array") end)
+             | [.[] | select(test("(^|/)(native-tool-overrides|tool-search)(/|$)") | not) | $base + .]' \
+            "$PROFILE/package.json")
           cat > "$HOME/.pi/agent/settings.json" <<EOF
           {
             "defaultProvider": "claude-bridge",
             "defaultModel": "claude-opus-4-8",
             "enabledModels": ["claude-bridge/*"],
-            "packages": ["$GITHUB_WORKSPACE/my-pi/packages/my-pi-actions"]
+            "extensions": $EXTENSIONS
           }
           EOF
+          # Check the staged list, so a manifest change or a bad filter cannot
+          # let the boot smoke pass without the Workflow tool.
+          STAGED=$(jq -c '.extensions' "$HOME/.pi/agent/settings.json")
+          echo "staged review extensions:"
+          jq -r '.[]' <<<"$STAGED"
+          if ! jq -e 'type == "array" and length > 0' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list is empty"; exit 1
+          fi
+          if jq -e 'any(.[]; test("native-tool-overrides|tool-search"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list still contains native-tool-overrides or tool-search"; exit 1
+          fi
+          if ! jq -e 'any(.[]; test("/pi-workflow/"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list lacks pi-workflow (the review's Workflow tool)"; exit 1
+          fi
+          while IFS= read -r ext; do
+            [ -f "$ext" ] || { echo "::error::staged extension not found: $ext"; exit 1; }
+          done < <(jq -r '.[]' <<<"$STAGED")
           ln -sfn "$GITHUB_WORKSPACE/skills-sot" "$HOME/.pi/agent/skills"
-          # The `actions` profile is a local package (absolute path above); pi reads
-          # its package.json `pi.extensions` (../../extensions/...) in place, loading
-          # the harness extensions + the Workflow tool from my-pi@main source. A
-          # local path needs no `pi install`/download.
+          # The extensions load in place from my-pi@main source (including the
+          # Workflow tool). Local paths need no `pi install`/download.
 
       - name: Start claude-bridge sidecar
         if: env.RUN_REVIEW == 'true'

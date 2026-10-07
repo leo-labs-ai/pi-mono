@@ -441,7 +441,7 @@ export interface ExtensionCommandContext extends ExtensionContext {
  */
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): Promise<void>;
 
@@ -527,8 +527,13 @@ export interface ToolAnnotations {
 export interface ToolNamespace {
 	/** For example `mcp__docs`. */
 	name: string;
-	/** Shown once above the group's tools. */
+	/** Short summary shown once with the group in model-facing tool listings. */
 	description?: string;
+	/**
+	 * Longer usage guidance, such as MCP server instructions. Not part of tool listings; tools that
+	 * describe the namespace on request (codemode's `describeNamespace()`) return it.
+	 */
+	instructions?: string;
 }
 
 /** The tools of a session as {@link ToolDefinition.prepareLoadout} sees them. */
@@ -541,6 +546,8 @@ export interface ToolLoadout {
 	readonly registered: readonly AgentTool[];
 	getExposure(name: string): ToolExposure;
 	getNamespace(name: string): ToolNamespace | undefined;
+	/** A tool's `promptGuidelines`. Hidden declarations leave them out of the system prompt. */
+	getPromptGuidelines(name: string): readonly string[];
 }
 
 /** Changes {@link ToolDefinition.prepareLoadout} makes to what the model sees. */
@@ -640,6 +647,17 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 }
 
 type AnyToolDefinition = ToolDefinition<any, any, any>;
+
+export type ToolRenderers = Pick<AnyToolDefinition, "renderShell" | "renderCall" | "renderResult">;
+
+/**
+ * Chooses how calls to a tool are drawn, including tools that are not registered. `next()` returns
+ * the renderers the remaining resolvers, then the registered tool, would use.
+ */
+export type ToolRendererResolver = (
+	toolName: string,
+	next: () => ToolRenderers | undefined,
+) => ToolRenderers | undefined;
 
 /**
  * Preserve parameter inference for standalone tool definitions.
@@ -928,6 +946,8 @@ export interface CustomMessageEntryDraft {
 	content: string | (TextContent | ImageContent)[];
 	display: boolean;
 	details?: unknown;
+	/** If false, retain/render the entry but omit it from provider context. */
+	modelVisible?: boolean;
 }
 
 export interface ContextEditEntryDraft {
@@ -1437,7 +1457,7 @@ export interface MessageEndEventResult {
 }
 
 export interface BeforeAgentStartEventResult {
-	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
+	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details" | "modelVisible">;
 	/** Replace the complete system prompt for this turn. Later handlers observe this exact override. */
 	systemPrompt?: string;
 }
@@ -1536,6 +1556,14 @@ export interface ExtensionAPI {
 	// =========================================================================
 	// Event Subscription
 	// =========================================================================
+
+	/**
+	 * Register a cleanup handler that runs when this extension runtime is torn
+	 * down (quit, reload, new, resume, fork). Fork API kept for my-pi extensions
+	 * such as pi-workflow; equivalent to `on("session_shutdown", () => handler())`.
+	 * Returns an unsubscribe function.
+	 */
+	onSessionDispose(handler: () => void | Promise<void>): () => void;
 
 	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
 	on(
@@ -1663,13 +1691,16 @@ export interface ExtensionAPI {
 	/** Register a custom renderer for CustomEntry. Custom entries do not participate in LLM context. */
 	registerEntryRenderer<T = unknown>(customType: string, renderer: EntryRenderer<T>): void;
 
+	/** Choose how tool calls are drawn. Resolvers run in extension load order. */
+	registerToolRenderer(resolver: ToolRendererResolver): void;
+
 	// =========================================================================
 	// Actions
 	// =========================================================================
 
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
-		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
 		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 	): void;
 
@@ -2041,7 +2072,7 @@ export interface ExtensionShortcut {
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
-	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
+	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details" | "modelVisible">,
 	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
 ) => void;
 
@@ -2212,6 +2243,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	toolRenderers?: ToolRendererResolver[];
 	markdownTransformer?: MarkdownTransformer;
 	entryRenderers?: Map<string, EntryRenderer>;
 	commands: Map<string, RegisteredCommand>;

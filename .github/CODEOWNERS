@@ -11,7 +11,6 @@
 # Release / CI / supply-chain critical paths.
 /.github/                                   @valkyriweb
 /package-lock.json                          @valkyriweb
-/packages/coding-agent/npm-shrinkwrap.json  @valkyriweb
 
 # Generated model metadata — only edited via the generator, never by hand.
 /packages/ai/src/models.generated.ts        @valkyriweb

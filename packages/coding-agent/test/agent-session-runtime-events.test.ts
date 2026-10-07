@@ -156,6 +156,20 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		]);
 	});
 
+	// #591: my-pi pi-workflow registers its run cleanup with pi.onSessionDispose.
+	it("runs onSessionDispose handlers on session_shutdown", async () => {
+		let disposed = 0;
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.onSessionDispose(() => {
+				disposed += 1;
+			});
+		});
+		expect(disposed).toBe(0);
+
+		await runtimeHost.newSession();
+		expect(disposed).toBe(1);
+	});
+
 	it("honors session_before_switch cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		const { runtimeHost } = await createRuntimeHost((pi) => {

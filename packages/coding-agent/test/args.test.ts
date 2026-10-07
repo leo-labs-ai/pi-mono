@@ -145,6 +145,12 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
 		});
+
+		// Issue #10334
+		test("ignores empty entries in --models", () => {
+			const result = parseArgs(["--models", "gpt-4o, ,claude-sonnet,"]);
+			expect(result.models).toEqual(["gpt-4o", "claude-sonnet"]);
+		});
 	});
 
 	// Issue #9045
@@ -273,6 +279,14 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-extensions", "-e", "foo.ts", "-e", "bar.ts"]);
 			expect(result.noExtensions).toBe(true);
 			expect(result.extensions).toEqual(["foo.ts", "bar.ts"]);
+		});
+	});
+
+	describe("--no-mcp flag", () => {
+		test("parses --no-mcp flag", () => {
+			const result = parseArgs(["--no-mcp"]);
+			expect(result.noMcp).toBe(true);
+			expect(result.unknownFlags.size).toBe(0);
 		});
 	});
 

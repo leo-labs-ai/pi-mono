@@ -2,9 +2,17 @@
 // Run from packages/durable (needs OPENAI_API_KEY):
 //   node --conditions=source --experimental-strip-types test/examples/16-real-model.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai";
+import { createModels } from "@lue-labs/pi-ai/models";
 import { openaiProvider } from "@lue-labs/pi-ai/providers/openai";
-import { AssistantEntry, createRegistry, Harness, LiveDoc, MemoryStorage } from "../../src/index.ts";
+import {
+	AssistantEntry,
+	createRegistry,
+	defineExtension,
+	Harness,
+	LiveDoc,
+	MemoryStorage,
+	section,
+} from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -19,11 +27,16 @@ if (process.env.OPENAI_API_KEY === undefined) {
 	const models = createModels();
 	models.setProvider(openaiProvider());
 	const registry = createRegistry();
-	registry.systemPrompt.section("preamble", () => "You are a concise assistant.", { tag: false });
-	const harness = await Harness.open(new MemoryStorage(), { models: models, registry: registry }, context);
-	const root = await harness.root(context);
-	await root.setModel({ provider: "openai", modelId: "gpt-6-sol" }, context);
-	await root.setThinkingLevel("high", context);
+	registry.install(
+		defineExtension({
+			name: "concise",
+			sections: [section("preamble", () => "You are a concise assistant.", { tag: false })],
+		}),
+	);
+	const harness = await Harness.open(new MemoryStorage(), { models, registry }, context);
+	const root = await harness.root(context, {
+		agent: { model: { provider: "openai", modelId: "gpt-6-sol" }, thinkingLevel: "high" },
+	});
 	const liveWatch = (await harness.watchDoc(LiveDoc, root.id, context))!;
 	// Print only what each committed partial adds to the text printed so far.
 	let printed = "";

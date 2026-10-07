@@ -44,6 +44,9 @@ jobs:
       - name: Build workspace declarations
         run: npm run build
 
+      - name: Build the pi-env daemon
+        run: npm run build:daemon --workspace packages/env
+
       # test.sh runs the suite in an isolated HOME with every provider credential
       # blanked, so live-API tests skip rather than flake or leak.
       - name: Unit tests
@@ -128,3 +131,31 @@ jobs:
 
       - name: Source CLI smoke
         run: ./pi-test.sh --no-env --version
+
+  # Upstream 1.0.0 (a4715ec9b): runs pi's MCP client from source against the pinned
+  # official conformance suite and fails on regressions against
+  # packages/coding-agent/test/mcp-conformance/baseline.json.
+  mcp-conformance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # read published @lue-labs/pi-* dependencies from GitHub Packages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          # Organization-owned packages are accessible through this repository token.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci --ignore-scripts
+
+      - name: MCP client conformance
+        run: npm run test:mcp-conformance

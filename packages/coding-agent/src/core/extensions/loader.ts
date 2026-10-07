@@ -15,7 +15,7 @@ import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
-import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
+import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServerConfig } from "../mcp-servers.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
@@ -33,6 +33,7 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
+	ToolRendererResolver,
 } from "./types.ts";
 
 const require = createRequire(import.meta.url);
@@ -95,6 +96,13 @@ function getAliases(): Record<string, string> {
 	const piAiProvidersEntry = resolveWorkspaceOrImport("ai/dist/providers/all.js", "@lue-labs/pi-ai/providers/all");
 
 	_aliases = {
+		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
+		"@earendil-works/pi-agent-core": piAgentCoreEntry,
+		"@earendil-works/pi-tui": piTuiEntry,
+		"@earendil-works/pi-ai/providers/all": piAiProvidersEntry,
+		"@earendil-works/pi-ai/compat": piAiCompatEntry,
+		"@earendil-works/pi-ai/oauth": piAiOauthEntry,
+		"@earendil-works/pi-ai": piAiCompatEntry,
 		"@lue-labs/pi-coding-agent": piCodingAgentEntry,
 		"@lue-labs/pi-agent-core": piAgentCoreEntry,
 		"@lue-labs/pi-tui": piTuiEntry,
@@ -282,6 +290,10 @@ function createExtensionAPI(
 			};
 		},
 
+		onSessionDispose(handler: () => void | Promise<void>): () => void {
+			return api.on("session_shutdown", () => handler());
+		},
+
 		registerTool(tool: ToolDefinition): void {
 			assertActive();
 			if (typeof tool.parameters !== "object" || tool.parameters === null || Array.isArray(tool.parameters)) {
@@ -298,6 +310,14 @@ function createExtensionAPI(
 
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			assertActive();
+			if (typeof name !== "string" || name.length === 0) {
+				throw new Error(
+					`Command registered by extension "${extension.path}" must have a non-empty string name. Use pi.registerCommand("name", { description, handler }).`,
+				);
+			}
+			if (typeof options?.handler !== "function") {
+				throw new Error(`Command "/${name}" registered by extension "${extension.path}" must define handler().`);
+			}
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,
@@ -350,6 +370,12 @@ function createExtensionAPI(
 			assertActive();
 			extension.entryRenderers ??= new Map();
 			extension.entryRenderers.set(customType, renderer as EntryRenderer);
+		},
+
+		registerToolRenderer(resolver: ToolRendererResolver): void {
+			assertActive();
+			extension.toolRenderers ??= [];
+			extension.toolRenderers.push(resolver);
 		},
 
 		// Flag access - checks extension registered it, reads from runtime
@@ -460,6 +486,11 @@ function createExtensionAPI(
 			if (owner !== undefined && owner !== extension.path) {
 				throw new Error(`MCP server "${name}" is already registered by extension "${owner}"`);
 			}
+			// Names that differ only in `-` and `_` would share a namespace.
+			const clash = runtime.mcpServers
+				.list()
+				.find((server) => server.name !== name && mcpNamespace(server.name) === mcpNamespace(name));
+			if (clash) throw new Error(`MCP server "${name}" conflicts with registered server "${clash.name}"`);
 			const server = { name, config: structuredClone(validated), extensionPath: extension.path };
 			applyRuntimeChange(() => runtime.mcpServers.register(server));
 		},
@@ -555,7 +586,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		...resolutionOptions,
 	});
 
-	const module = await jiti.import(extensionPath, { default: true });
+	const module = await jiti.import(fs.realpathSync(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;

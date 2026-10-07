@@ -42,7 +42,12 @@ import {
 import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
-import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	convertResponsesMessages,
+	convertResponsesTools,
+	processResponsesStream,
+	resolveMidConvoEffort,
+} from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 // ============================================================================
@@ -212,6 +217,22 @@ function loadNodeZlib(): typeof NodeZlib | null {
 	return (process as ProcessWithBuiltinModule).getBuiltinModule?.("node:zlib") ?? null;
 }
 
+// Only the official ChatGPT Codex backend is known to decode zstd request
+// bodies; gateways speaking the Codex wire contract (ClawRouter and friends)
+// reject them, so a custom base URL defaults to an uncompressed body. An
+// explicit `compat.supportsZstdRequestCompression` always wins.
+function usesZstdRequestCompression(model: Model<"openai-codex-responses">): boolean {
+	const configured = model.compat?.supportsZstdRequestCompression;
+	if (configured !== undefined) return configured;
+	const baseUrl = model.baseUrl?.trim();
+	if (!baseUrl) return true;
+	try {
+		return new URL(baseUrl).host === new URL(DEFAULT_CODEX_BASE_URL).host;
+	} catch {
+		return false;
+	}
+}
+
 // Returns the zstd-compressed body bytes, or null when compression is
 // unavailable (browser/Vite builds). Callers fall back to sending the
 // uncompressed JSON when this returns null.
@@ -267,7 +288,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const accountId = extractAccountId(apiKey);
+			// Opaque gateway credentials (ClawRouter and friends) carry no ChatGPT
+			// account claim; `compat.sendChatgptAccountId: false` skips the JWT parse.
+			const accountId = model.compat?.sendChatgptAccountId === false ? undefined : extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				getDeclaredTools(normalizedContext.messages),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
@@ -275,6 +298,13 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
 			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
+			const midConvoEffort = resolveMidConvoEffort(
+				model.compat?.supportsMidConvoEffort === true,
+				model,
+				normalizedContext.messages,
+				getRequestedEffort(model, options),
+			);
+			if (midConvoEffort) output.providerThinkingLevel = midConvoEffort.active;
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
@@ -291,7 +321,9 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
-			const transport = options?.transport || "auto";
+			const requestedTransport = options?.transport || "auto";
+			// Gateways that only speak the SSE wire contract opt out of the WebSocket upgrade.
+			const transport = model.compat?.supportsWebSocketTransport === false ? "sse" : requestedTransport;
 			let startEmitted = false;
 			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
 			if (websocketDisabledForSession) {
@@ -376,9 +408,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			// Compress the request body once for the SSE path. The Codex backend
 			// decodes Content-Encoding: zstd; the WebSocket transport above sends the
 			// uncompressed JSON frame, matching the official Codex client.
-			const compressedBody = compressRequestBodyZstd(bodyJson);
+			const compressedBody = usesZstdRequestCompression(model) ? compressRequestBodyZstd(bodyJson) : null;
 			if (compressedBody) {
 				sseHeaders.set("content-encoding", "zstd");
+			} else {
+				sseHeaders.delete("content-encoding");
 			}
 			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
 
@@ -539,7 +573,14 @@ function buildRequestBody(
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
 	const transcriptTools = resolveTranscriptTools(context.messages, supportsAdditionalTools || supportsToolSearch);
+	const midConvoEffort = resolveMidConvoEffort(
+		model.compat?.supportsMidConvoEffort === true,
+		model,
+		context.messages,
+		getRequestedEffort(model, options),
+	);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+		midConvoEffort,
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
@@ -588,7 +629,7 @@ function buildRequestBody(
 				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
 		if (effort !== null) {
 			body.reasoning = {
-				effort,
+				effort: midConvoEffort?.baseline ?? effort,
 				summary: options.reasoningSummary ?? "auto",
 			};
 		}
@@ -597,6 +638,15 @@ function buildRequestBody(
 	}
 
 	return body;
+}
+
+function getRequestedEffort(
+	model: Model<"openai-codex-responses">,
+	options: OpenAICodexResponsesOptions | undefined,
+): string | undefined {
+	const level = options?.reasoningEffort;
+	if (level === undefined || level === "none") return undefined;
+	return model.thinkingLevelMap?.[level] ?? level;
 }
 
 function getServiceTierCostMultiplier(
@@ -1059,7 +1109,7 @@ function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "do
 	} catch {}
 }
 
-function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, entry: CachedWebSocketConnection): void {
+function scheduleSessionWebSocketExpiry(sessionId: string, cacheKey: string, entry: CachedWebSocketConnection): void {
 	if (entry.idleTimer) {
 		clearTimeout(entry.idleTimer);
 	}
@@ -1067,7 +1117,7 @@ function scheduleSessionWebSocketExpiry(sessionId: string, accountId: string, en
 		if (entry.busy) return;
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
 		const accountEntries = websocketSessionCache.get(sessionId);
-		if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
+		if (accountEntries?.get(cacheKey) === entry) accountEntries.delete(cacheKey);
 		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
@@ -1154,7 +1204,7 @@ async function acquireWebSocket(
 	url: string,
 	headers: Headers,
 	sessionId: string | undefined,
-	accountId: string,
+	accountId: string | undefined,
 	signal?: AbortSignal,
 	connectTimeoutMs?: number,
 	env?: ProviderEnv,
@@ -1164,6 +1214,9 @@ async function acquireWebSocket(
 	reused: boolean;
 	release: (options?: { keep?: boolean }) => void;
 }> {
+	// Opaque gateway credentials carry no account ID, so key those connections by endpoint instead of one shared
+	// `undefined` slot; otherwise two gateways on one session ID could reuse each other's socket.
+	const cacheKey = accountId ?? url;
 	if (!sessionId) {
 		const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
 		return {
@@ -1174,7 +1227,7 @@ async function acquireWebSocket(
 	}
 
 	let accountEntries = websocketSessionCache.get(sessionId);
-	const cached = accountEntries?.get(accountId);
+	const cached = accountEntries?.get(cacheKey);
 	if (cached) {
 		if (cached.idleTimer) {
 			clearTimeout(cached.idleTimer);
@@ -1182,7 +1235,7 @@ async function acquireWebSocket(
 		}
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
 			closeWebSocketSilently(cached.socket, 1000, "connection_age_limit");
-			accountEntries?.delete(accountId);
+			accountEntries?.delete(cacheKey);
 			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 		} else if (!cached.busy && isWebSocketReusable(cached.socket)) {
 			cached.busy = true;
@@ -1194,12 +1247,12 @@ async function acquireWebSocket(
 					if (!keep || !isWebSocketReusable(cached.socket)) {
 						closeWebSocketSilently(cached.socket);
 						const currentEntries = websocketSessionCache.get(sessionId);
-						if (currentEntries?.get(accountId) === cached) currentEntries.delete(accountId);
+						if (currentEntries?.get(cacheKey) === cached) currentEntries.delete(cacheKey);
 						if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 						return;
 					}
 					cached.busy = false;
-					scheduleSessionWebSocketExpiry(sessionId, accountId, cached);
+					scheduleSessionWebSocketExpiry(sessionId, cacheKey, cached);
 				},
 			};
 		}
@@ -1215,7 +1268,7 @@ async function acquireWebSocket(
 		}
 		if (!isWebSocketReusable(cached.socket)) {
 			closeWebSocketSilently(cached.socket);
-			accountEntries?.delete(accountId);
+			accountEntries?.delete(cacheKey);
 			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 		}
 	}
@@ -1227,7 +1280,7 @@ async function acquireWebSocket(
 		accountEntries = new Map();
 		websocketSessionCache.set(sessionId, accountEntries);
 	}
-	accountEntries.set(accountId, entry);
+	accountEntries.set(cacheKey, entry);
 	return {
 		socket,
 		entry,
@@ -1237,12 +1290,12 @@ async function acquireWebSocket(
 				closeWebSocketSilently(entry.socket);
 				if (entry.idleTimer) clearTimeout(entry.idleTimer);
 				const currentEntries = websocketSessionCache.get(sessionId);
-				if (currentEntries?.get(accountId) === entry) currentEntries.delete(accountId);
+				if (currentEntries?.get(cacheKey) === entry) currentEntries.delete(cacheKey);
 				if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 				return;
 			}
 			entry.busy = false;
-			scheduleSessionWebSocketExpiry(sessionId, accountId, entry);
+			scheduleSessionWebSocketExpiry(sessionId, cacheKey, entry);
 		},
 	};
 }
@@ -1501,7 +1554,7 @@ async function processWebSocketStream(
 	idleTimeoutMs: number | undefined,
 	websocketConnectTimeoutMs: number | undefined,
 	cacheSessionId: string | undefined,
-	accountId: string,
+	accountId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
@@ -1640,7 +1693,7 @@ function extractAccountId(token: string): string {
 function buildBaseCodexHeaders(
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
+	accountId: string | undefined,
 	token: string,
 ): Headers {
 	const headers = new Headers(initHeaders);
@@ -1652,7 +1705,11 @@ function buildBaseCodexHeaders(
 		}
 	}
 	headers.set("Authorization", `Bearer ${token}`);
-	headers.set("chatgpt-account-id", accountId);
+	if (accountId) {
+		headers.set("chatgpt-account-id", accountId);
+	} else {
+		headers.delete("chatgpt-account-id");
+	}
 	headers.set("originator", "pi");
 	headers.set("User-Agent", getPiUserAgent());
 	return headers;
@@ -1661,7 +1718,7 @@ function buildBaseCodexHeaders(
 function buildSSEHeaders(
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
+	accountId: string | undefined,
 	token: string,
 	sessionId?: string,
 ): Headers {
@@ -1681,7 +1738,7 @@ function buildSSEHeaders(
 function buildWebSocketHeaders(
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
-	accountId: string,
+	accountId: string | undefined,
 	token: string,
 	requestId: string,
 ): Headers {

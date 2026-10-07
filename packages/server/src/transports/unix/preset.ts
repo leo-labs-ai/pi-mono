@@ -1,6 +1,5 @@
-import type { SessionMetadata } from "@lue-labs/pi-agent-core";
 import { Server } from "../../server.ts";
-import type { ServerHost } from "../../types.ts";
+import type { ServerHost, SessionMetadata } from "../../types.ts";
 import { createUnixListener } from "./listener.ts";
 import type { UnixServerOptions } from "./types.ts";
 

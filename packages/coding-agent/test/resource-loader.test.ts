@@ -1110,6 +1110,27 @@ export default function(pi: ExtensionAPI) {
 			expect(loaded).toEqual(["llama"]);
 		});
 
+		it("should skip disabledBuiltinExtensions even when settings or -e enable them", async () => {
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			writeFileSync(join(cwd, ".pi", "settings.json"), JSON.stringify({ extensions: ["+builtin:mcp"] }));
+			const loaded: string[] = [];
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				disabledBuiltinExtensions: ["mcp"],
+				additionalExtensionPaths: ["builtin:mcp"],
+				extensionFactories: [
+					{ name: "mcp", builtin: true, factory: () => void loaded.push("mcp") },
+					{ name: "llama", builtin: true, factory: () => void loaded.push("llama") },
+				],
+			});
+			await loader.reload({ resolveProjectTrust: async () => true });
+
+			expect(loader.getExtensions().extensions.map((extension) => extension.path)).toEqual(["builtin:llama"]);
+			expect(loader.getExtensions().errors).toEqual([]);
+			expect(loaded).toEqual(["llama"]);
+		});
+
 		it("should load built-in extensions after file extensions with and without trust resolution", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			mkdirSync(userExtDir, { recursive: true });
@@ -1330,6 +1351,23 @@ export default function(pi: ExtensionAPI) {
 			const files = loadProjectContextFiles({ cwd: leaf, agentDir });
 
 			expect(files.map((f) => f.content)).toEqual(["outer instructions", "repo instructions", "leaf instructions"]);
+		});
+
+		it("should load a global context file once when it symlinks to an ancestor's file", () => {
+			const shared = join(tempDir, "shared-AGENTS.md");
+			writeFileSync(shared, "overlay instructions");
+			const home = join(tempDir, "home");
+			const project = join(home, "project");
+			mkdirSync(project, { recursive: true });
+			mkdirSync(agentDir, { recursive: true });
+			symlinkSync(shared, join(agentDir, "AGENTS.md"));
+			symlinkSync(shared, join(home, "AGENTS.md"));
+			writeFileSync(join(project, "AGENTS.md"), "project instructions");
+
+			const files = loadProjectContextFiles({ cwd: project, agentDir });
+
+			expect(files.map((f) => f.content)).toEqual(["overlay instructions", "project instructions"]);
+			expect(files[0]?.path).toBe(join(agentDir, "AGENTS.md"));
 		});
 
 		it("should climb normally when the gitdir: target does not exist", () => {

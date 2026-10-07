@@ -577,14 +577,14 @@ describe("TuiAltScreen", () => {
 			["line 5", "line 6", "line 7", "line 8", "line 9", "line 10", "line 11", "line 12"],
 		);
 
-		terminal.sendInput("\x1bOH");
+		terminal.sendInput("\x1b[7^");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(
 			terminal.getViewport().map((line) => line.trimEnd()),
 			["line 1", "line 2", "line 3", "line 4", "line 5", "line 6", "line 7", "line 8"],
 		);
 
-		terminal.sendInput("\x1bOF");
+		terminal.sendInput("\x1b[8^");
 		await terminal.waitForRender();
 		assert.deepStrictEqual(
 			terminal.getViewport().map((line) => line.trimEnd()),
@@ -899,7 +899,7 @@ describe("TuiAltScreen", () => {
 		}
 	});
 
-	it("routes Ctrl-modified viewport navigation to the focused component", async () => {
+	it("routes Home and End to the focused component and Ctrl+Home/End to the transcript", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const tui = new TuiAltScreen(terminal);
 		const transcript = new ScrollView(
@@ -923,22 +923,34 @@ describe("TuiAltScreen", () => {
 		tui.start();
 		await terminal.waitForRender();
 
-		terminal.sendInput("\x1bOH");
+		const bottom = transcript.scrollTop;
+		assert.ok(bottom > 0);
+
+		// #10314: unmodified Home/End belong to the editor in every UI mode.
+		const editorKeys = ["\x1bOH", "\x1b[F", "\x1b[57423u", "\x1b[5;5~", "\x1b[6;5~"];
+		for (const input of editorKeys) terminal.sendInput(input);
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, bottom);
+		assert.deepStrictEqual(editorInputs, editorKeys);
+
+		terminal.sendInput("\x1b[1;5H");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.scrollTop, 0);
-		assert.deepStrictEqual(editorInputs, []);
 
-		const modifiedInputs = ["\x1b[1;5H", "\x1b[1;5F", "\x1b[5;5~", "\x1b[6;5~", "\x1b[57423;5u"];
-		for (const input of modifiedInputs) terminal.sendInput(input);
+		terminal.sendInput("\x1b[1;5F");
+		await terminal.waitForRender();
+		assert.strictEqual(transcript.scrollTop, bottom);
+		assert.strictEqual(transcript.isFollowingEnd, true);
+
+		terminal.sendInput("\x1b[57423;5u");
 		terminal.sendInput("\x1b[57423;5:3u");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.scrollTop, 0);
-		assert.deepStrictEqual(editorInputs, modifiedInputs);
 
 		terminal.sendInput("\x1b[6~");
 		await terminal.waitForRender();
 		assert.strictEqual(transcript.scrollTop, 1);
-		assert.deepStrictEqual(editorInputs, modifiedInputs);
+		assert.deepStrictEqual(editorInputs, editorKeys);
 
 		tui.stop();
 	});
@@ -1061,6 +1073,47 @@ describe("TuiAltScreen", () => {
 		);
 
 		tui.stop();
+	});
+
+	it("redraws WezTerm Kitty images after writes to covered rows", async () => {
+		// Regression test for #10319: a scrollbar update below an unchanged image anchor erased its cells.
+		const weztermPane = process.env.WEZTERM_PANE;
+		let tui: TuiAltScreen | undefined;
+		process.env.WEZTERM_PANE = "1";
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		try {
+			const terminal = new RecordingTerminal(20, 4);
+			const imageId = 10319;
+			const imageLine = encodeKitty("AAAA", { columns: 2, rows: 3, imageId, moveCursor: false });
+			registerKittyImageMetadata({ imageId, columns: 2, rows: 3, widthPx: 100, heightPx: 100 });
+			let coveredLine = "";
+			tui = new TuiAltScreen(terminal);
+			tui.setLayoutRoot({
+				render: () => [imageLine, coveredLine, "", "after"],
+				invalidate: () => {},
+			});
+			tui.start();
+			await terminal.waitForRender();
+			const eventCount = terminal.events.length;
+
+			coveredLine = "changed";
+			tui.requestRender();
+			await terminal.waitForRender();
+			const redrawWrites = terminal.events
+				.slice(eventCount)
+				.filter((event): event is { type: "write"; data: string } => event.type === "write")
+				.map((event) => event.data)
+				.join("");
+			const placementIndex = redrawWrites.indexOf("\x1b_Ga=p,q=2");
+			assert.ok(redrawWrites.includes("\x1b_Ga=d,d=a,q=2\x1b\\"));
+			assert.ok(placementIndex > redrawWrites.indexOf("changed"));
+			assert.ok(!redrawWrites.includes("\x1b_Ga=T"));
+		} finally {
+			tui?.stop();
+			resetCapabilitiesCache();
+			if (weztermPane === undefined) delete process.env.WEZTERM_PANE;
+			else process.env.WEZTERM_PANE = weztermPane;
+		}
 	});
 
 	it("reuses moved Kitty images without dropping HStack siblings", async () => {

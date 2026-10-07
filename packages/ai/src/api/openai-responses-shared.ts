@@ -129,6 +129,63 @@ export interface ConvertResponsesMessagesOptions {
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
+	/** Effort levels to express as positional `configuration_update` items. See {@link resolveMidConvoEffort}. */
+	midConvoEffort?: MidConvoEffort;
+}
+
+/**
+ * Mid-conversation reasoning effort for GPT-6 Responses models. The request-level
+ * `reasoning.effort` stays at `baseline` for the whole conversation, and every change
+ * is replayed as a `configuration_update` input item in its original position, so a
+ * thinking-level change keeps the cached prompt prefix. Changing the request-level
+ * value instead invalidates the whole prefix.
+ * https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation
+ *
+ * Opt-in per model through `compat.supportsMidConvoEffort`. Turning reasoning off
+ * (`none`) is not managed: OpenAI does not document `none` in `configuration_update`,
+ * so that switch still changes the request-level effort.
+ */
+export interface MidConvoEffort {
+	/** Request-level effort: the level of the first replayed managed response from this model. */
+	baseline: string;
+	/** Provider-native effort for the next response. */
+	active: string;
+}
+
+/** Returns undefined when the model is not opted in or the requested effort is not managed. */
+export function resolveMidConvoEffort(
+	enabled: boolean,
+	model: Model<Api>,
+	messages: TranscriptContext["messages"],
+	activeEffort: string | undefined,
+): MidConvoEffort | undefined {
+	if (!enabled || activeEffort === undefined || activeEffort === "none") return undefined;
+	for (const message of messages) {
+		if (
+			message.role === "assistant" &&
+			// transformMessages drops these, so they never reach the replayed input.
+			message.stopReason !== "error" &&
+			message.stopReason !== "aborted" &&
+			message.provider === model.provider &&
+			message.api === model.api &&
+			message.model === model.id &&
+			typeof message.providerThinkingLevel === "string"
+		) {
+			return { baseline: message.providerThinkingLevel, active: activeEffort };
+		}
+	}
+	return { baseline: activeEffort, active: activeEffort };
+}
+
+/** Appends an update, merging into a directly preceding one: the API rejects adjacent updates. */
+function pushConfigurationUpdate(messages: ResponseInput, effort: string): void {
+	const last = messages.at(-1) as { type?: string; reasoning?: { effort?: string } } | undefined;
+	if (last?.type === "configuration_update" && last.reasoning) {
+		last.reasoning.effort = effort;
+		return;
+	}
+	// Not yet in the OpenAI SDK types.
+	messages.push({ type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem);
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -214,6 +271,8 @@ export function convertResponsesMessages<TApi extends Api>(
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
 
+	let effectiveEffort = options?.midConvoEffort?.baseline;
+
 	let msgIndex = 0;
 	let sourceIndex = 0;
 	for (const msg of transformedMessages) {
@@ -294,14 +353,13 @@ export function convertResponsesMessages<TApi extends Api>(
 					let itemId: string | undefined = itemIdRaw;
 
 					// For different-model messages, set id to undefined to avoid pairing validation.
-					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
+					// OpenAI tracks which item IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					// When replaying custom-tool calls as a function_call, also drop non-fc_* ids such as
-					// ctc_* custom-tool ids because function_call item ids must be fc_*.
-					if (
-						(isDifferentModel && itemId?.startsWith("fc_")) ||
-						(customInputProperty === undefined && !itemId?.startsWith("fc_"))
-					) {
+					// Also drop ids that do not match the replayed item type: function_call ids must be fc_*
+					// and custom_tool_call ids must be ctc_*. Foreign tool call ids are normalized to fc_*, and
+					// a call can switch between the two types when grammar tool support differs.
+					const itemIdPrefix = customInputProperty === undefined ? "fc_" : "ctc_";
+					if (isDifferentModel || !itemId?.startsWith(itemIdPrefix)) {
 						itemId = undefined;
 					}
 
@@ -328,6 +386,13 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 				}
 			}
+			const level = assistantMsg.providerThinkingLevel;
+			if (effectiveEffort !== undefined && isSameModel && typeof level === "string" && level !== effectiveEffort) {
+				// Replay the update where it was sent: right before the response it configured.
+				// Emit it even when the response converts to nothing, so later items keep their positions.
+				pushConfigurationUpdate(messages, level);
+				effectiveEffort = level;
+			}
 			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
@@ -349,6 +414,11 @@ export function convertResponsesMessages<TApi extends Api>(
 			}
 		}
 		if (!isLeadingSystemMessage) msgIndex++;
+	}
+
+	const activeEffort = options?.midConvoEffort?.active;
+	if (activeEffort !== undefined && activeEffort !== effectiveEffort) {
+		pushConfigurationUpdate(messages, activeEffort);
 	}
 
 	return messages;

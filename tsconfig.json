@@ -67,27 +67,15 @@
 				"./packages/durable/src/testing/index.ts"
 			],
 			"@earendil-works/pi-durable/*": [
+				"./packages/durable/src/*.ts",
+				"./packages/durable/src/*/index.ts",
 				"./packages/durable/src/*"
+			],
+			"@earendil-works/pi-env": [
+				"./packages/env/src/index.ts"
 			],
 			"@earendil-works/pi-agent-core": [
 				"./packages/agent/src/index.ts"
-			],
-			"@earendil-works/pi-agent-core/harness/session/testing": [
-				"./packages/agent/src/harness/session/testing/index.ts"
-			],
-			"@earendil-works/pi-agent-core/experimental/pico3": [
-				"./packages/agent/src/harness/pico3/index.ts"
-			],
-			"@earendil-works/pi-agent-core/node": [
-				"./packages/agent/src/node.ts"
-			],
-			"@earendil-works/pi-agent-core/*": [
-				"./packages/agent/src/*.ts",
-				"./packages/agent/src/*/index.ts",
-				"./packages/agent/src/*"
-			],
-			"@earendil-works/pi-session-backend-sqlite-node": [
-				"./packages/session-backends/sqlite-node/src/index.ts"
 			],
 			"@earendil-works/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
@@ -166,27 +154,12 @@
 				"./packages/durable/src/testing/index.ts"
 			],
 			"@lue-labs/pi-durable/*": [
+				"./packages/durable/src/*.ts",
+				"./packages/durable/src/*/index.ts",
 				"./packages/durable/src/*"
 			],
 			"@lue-labs/pi-agent-core": [
 				"./packages/agent/src/index.ts"
-			],
-			"@lue-labs/pi-agent-core/harness/session/testing": [
-				"./packages/agent/src/harness/session/testing/index.ts"
-			],
-			"@lue-labs/pi-agent-core/experimental/pico3": [
-				"./packages/agent/src/harness/pico3/index.ts"
-			],
-			"@lue-labs/pi-agent-core/node": [
-				"./packages/agent/src/node.ts"
-			],
-			"@lue-labs/pi-agent-core/*": [
-				"./packages/agent/src/*.ts",
-				"./packages/agent/src/*/index.ts",
-				"./packages/agent/src/*"
-			],
-			"@lue-labs/pi-session-backend-sqlite-node": [
-				"./packages/session-backends/sqlite-node/src/index.ts"
 			],
 			"@lue-labs/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
@@ -238,9 +211,6 @@
 			],
 			"*": [
 				"./*"
-			],
-			"@lue-labs/pi-agent-core/session/testing": [
-				"./packages/agent/src/harness/session/testing/index.ts"
 			]
 		}
 	},
@@ -249,8 +219,6 @@
 		"scripts/model-catalog-protocol.test.ts",
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
-		"packages/session-backends/*/src/**/*",
-		"packages/session-backends/*/test/**/*",
 		"packages/coding-agent/examples/**/*",
 		"packages/agent/examples/**/*"
 	],
