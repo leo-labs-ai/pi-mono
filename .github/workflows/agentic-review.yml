@@ -27,7 +27,7 @@ permissions:
   contents: write       # push autofix commits to same-repo PR branches
   pull-requests: write  # post the review + inline comments
   issues: write         # code-craft-pr files Tier-3 issues
-  packages: read        # @lue-labs/pi-* plus @valkyriweb/agentic-review from GitHub Packages
+  packages: read        # @leo-labs-ai/pi-* plus @valkyriweb/agentic-review from GitHub Packages
 
 concurrency:
   group: agentic-review-${{ github.event.pull_request.number }}
@@ -148,7 +148,7 @@ jobs:
           # expands it from the environment at read time, so single quotes are
           # correct here. Silence shellcheck's "expressions don't expand" warning.
           # shellcheck disable=SC2016
-          printf '@lue-labs:registry=https://npm.pkg.github.com\n@valkyriweb:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+          printf '@leo-labs-ai:registry=https://npm.pkg.github.com\n@valkyriweb:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
 
       - name: Install agentic-review pipeline (GitHub Packages)
         if: env.RUN_REVIEW == 'true'

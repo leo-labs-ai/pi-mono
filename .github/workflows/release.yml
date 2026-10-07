@@ -106,7 +106,7 @@ jobs:
 
       - name: Install pi-mono dependencies
         working-directory: pi-mono-fork
-        # Fork-scoped dependencies resolve from the organization-owned @lue-labs
+        # Fork-scoped dependencies resolve from the organization-owned @leo-labs-ai
         # namespace, so npm ci authenticates with this repository's token.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -169,7 +169,7 @@ jobs:
         env:
           PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
         run: |
-          v=$(node -p "(JSON.parse(process.env.PUBLISHED)||[]).find(p=>p.name==='@lue-labs/pi-coding-agent')?.version || ''")
+          v=$(node -p "(JSON.parse(process.env.PUBLISHED)||[]).find(p=>p.name==='@leo-labs-ai/pi-coding-agent')?.version || ''")
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # Build the 6-platform compiled binaries + a v<version> GitHub Release in the
@@ -182,7 +182,7 @@ jobs:
       contents: write
       packages: read
       # The reusable build-binaries.yml `build` job requests `packages: read`
-      # to install private @lue-labs packages; caller-job permissions must
+      # to install private @leo-labs-ai packages; caller-job permissions must
       # include every permission any called job requests.
       #
       # The reusable build-binaries.yml `stage-github-release` job requests
