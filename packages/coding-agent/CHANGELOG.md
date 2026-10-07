@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: a model change (`setModel`, model cycling) now discards the prompt sections retained for wake-started runs, so a later extension custom-message run no longer reuses sections built for the previous model ([#601](https://github.com/leo-labs-ai/pi-mono/issues/601)).
 - Fix: a run started by an extension custom message (for example a wake-up) no longer drops sections that extensions added in an earlier `before_agent_start` (such as `addendum` and `mcp_servers`). The dropped sections changed the head system prompt on models without mid-conversation system messages and busted the prompt cache ([#599](https://github.com/leo-labs-ai/pi-mono/pull/599)).
 - Fix: after a truncated response fails its one compact-and-retry attempt, a later turn started by an extension custom message (for example a wake-up) now gets its own compact-and-retry attempt. Previously only a user message re-armed recovery, so every later custom-message turn reported "Truncated response recovery failed after one compact-and-retry attempt." without compacting ([#593](https://github.com/leo-labs-ai/pi-mono/pull/593)).
 - Fix: a failed codemode script no longer returns image blocks from earlier `image()` calls. The result keeps its text and adds a note with the number of omitted images, because providers reject images in error results.
