@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Added
+
+- **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
+
 ### Fixed
 
 - **The agentic review loads the `actions` profile without `native-tool-overrides` and `tool-search`.** Both call fork extension APIs (`pi.hooks`, `pi.harness`, `pi.getExtensionConfig`, `pi.tools` deferral) that the 0.99.0 reset removed, so the boot smoke failed on every PR (#591). Codemode replaces them, and the review does not use them.
