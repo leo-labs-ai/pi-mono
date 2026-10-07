@@ -6,9 +6,15 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Added
+
+- **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
+
 ### Fixed
 
 - **`LayoutRenderer` honors pre-populated group values and rejects invalid graphs.** `radio_group.value` and `checkbox_group.value` were ignored, so a pre-populated graph always started on the first radio option with empty checkboxes. They now set the initial selection (and the radio cursor). A value that is not one of the group's options, or a duplicate group ID that would share one selection, now throws in the constructor. Fixes #588.
+- **The agentic review loads the `actions` profile without `native-tool-overrides` and `tool-search`.** Both call fork extension APIs (`pi.hooks`, `pi.harness`, `pi.getExtensionConfig`, `pi.tools` deferral) that the 0.99.0 reset removed, so the boot smoke failed on every PR (#591). Codemode replaces them, and the review does not use them.
+- **`pi.onSessionDispose` is back for extensions.** my-pi `pi-workflow` (the review's `Workflow` tool) registers its run cleanup with it, and the 0.99.0 reset removed it, so the extension failed to load with `pi.onSessionDispose is not a function` (#591). It now registers a `session_shutdown` handler and returns an unsubscribe function.
 - **Cached Codex WebSockets no longer cross gateways when no account ID is sent.** With `compat.sendChatgptAccountId: false` the account ID is `undefined`, so every opaque-credential gateway on one session ID shared a single cache slot and could reuse another gateway's socket. `acquireWebSocket` now keys the slot by `accountId ?? url`. Regression test in `packages/ai/test/openai-codex-stream.test.ts` (red before the fix).
 - **The agentic review job checks out `pi-claude-bridge` and `my-pi` from `leo-labs-ai` with `GH_ORG_CLONE_TOKEN`.** Both repos moved into the organization and are private, so the old `valkyriweb/*` checkouts with `GH_CLONE_TOKEN` failed with `Not Found`. The new secret is a read-only (Contents) fine-grained token scoped to those two repos. `skills` and `agent-scripts` stay on `GH_CLONE_TOKEN`.
 - **The agentic review job builds `codemode`, `mcp` and `env` before `coding-agent`.** With the canary label guard gone (#586) the first real run failed at `build:ts` with `Cannot find module '@earendil-works/pi-codemode'`, because the workflow's package list predated those workspaces. It now follows the root `npm run build` order.

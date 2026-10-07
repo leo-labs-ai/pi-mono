@@ -1557,6 +1557,14 @@ export interface ExtensionAPI {
 	// Event Subscription
 	// =========================================================================
 
+	/**
+	 * Register a cleanup handler that runs when this extension runtime is torn
+	 * down (quit, reload, new, resume, fork). Fork API kept for my-pi extensions
+	 * such as pi-workflow; equivalent to `on("session_shutdown", () => handler())`.
+	 * Returns an unsubscribe function.
+	 */
+	onSessionDispose(handler: () => void | Promise<void>): () => void;
+
 	on(event: "project_trust", handler: ProjectTrustHandler): () => void;
 	on(
 		event: "resources_discover",

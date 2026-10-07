@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: after a truncated response fails its one compact-and-retry attempt, a later turn started by an extension custom message (for example a wake-up) now gets its own compact-and-retry attempt. Previously only a user message re-armed recovery, so every later custom-message turn reported "Truncated response recovery failed after one compact-and-retry attempt." without compacting ([#593](https://github.com/leo-labs-ai/pi-mono/pull/593)).
 - Fix: a failed codemode script no longer returns image blocks from earlier `image()` calls. The result keeps its text and adds a note with the number of omitted images, because providers reject images in error results.
 - `models.json` accepts `compat.supportsMidConvoEffort` on OpenAI Responses and Codex Responses models. Set it to `true` on a verified GPT-6 endpoint so a mid-session `/thinking` change keeps the prompt cache. It is off by default; see [Keep the prompt cache when the thinking level changes](docs/models.md#mid-conversation-effort).
 - Fix: default the `nvidia` provider to `nvidia/nemotron-3-ultra-550b-a55b`. NVIDIA no longer serves `nvidia/nemotron-3-super-120b-a12b`, so CI's freshly generated catalog dropped it and every fork PR failed the default-model test and the NVIDIA stream test type-check (cherry-picked from upstream `49b9df489`).

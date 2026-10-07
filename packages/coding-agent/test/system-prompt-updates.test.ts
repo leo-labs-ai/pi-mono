@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@lue-labs/pi-agent-core";
@@ -79,7 +79,37 @@ describe("system prompt updates", () => {
 		}
 	});
 
+	test("omitCwdSection gives sessions in different cwds byte-identical system prompts", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-omit-cwd-"));
+		const create = (name: string, omitCwdSection?: boolean) => {
+			const cwd = join(root, name);
+			mkdirSync(cwd);
+			return createAgentSession({
+				cwd,
+				agentDir: join(root, "agent"),
+				model: getModel("anthropic", "claude-sonnet-4-5")!,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager: SessionManager.inMemory(cwd),
+				noTools: "all",
+				...(omitCwdSection === undefined ? {} : { omitCwdSection }),
+			});
+		};
+		const sessions = [await create("wt-a", true), await create("wt-b", true), await create("wt-c")];
+		try {
+			const [a, b, c] = sessions.map((created) => created.session.systemPrompt);
+			expect(a).toBe(b);
+			expect(a).not.toContain("<cwd>");
+			expect(a).not.toContain(root.replace(/\\/g, "/"));
+			// Default stays unchanged: the cwd section is still present.
+			expect(c).toContain(`<cwd>\n${join(root, "wt-c").replace(/\\/g, "/")}\n</cwd>`);
+		} finally {
+			for (const created of sessions) created.session.dispose();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("diffs sections into a patch", () => {
+		expect(buildSystemPromptSections({ cwd: "/tmp", omitCwdSection: true }).cwd).toBeUndefined();
 		const previous = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
 		const current = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
 		expect(diffSystemPromptSections(previous, current)).toEqual({
