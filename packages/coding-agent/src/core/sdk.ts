@@ -93,6 +93,11 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/**
+	 * Leave the cwd out of the system prompt, so sessions in different directories share one
+	 * prompt-cache entry. The caller must give the model its directory another way.
+	 */
+	omitCwdSection?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -456,6 +461,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		excludedToolNames,
 		extensionRunnerRef,
 		sessionStartEvent: options.sessionStartEvent,
+		omitCwdSection: options.omitCwdSection,
 	});
 
 	const extensionsResult = resourceLoader.getExtensions();
