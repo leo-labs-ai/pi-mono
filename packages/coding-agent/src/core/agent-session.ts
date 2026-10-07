@@ -1817,6 +1817,9 @@ export class AgentSession {
 		this._agentRunAbortRequested = false;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
+		// Each run gets one compact-and-retry attempt. Custom-message runs (for example extension
+		// wake-ups) emit no user message_start, so reset here or a failed earlier run blocks recovery.
+		this._overflowRecoveryAttempted = false;
 		this._recordSelection();
 		// The run records the loadout in the transcript; restored tools that did not register by now
 		// are dropped, so a tool that never registers does not stay pending.
