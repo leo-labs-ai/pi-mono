@@ -474,6 +474,12 @@ export class AgentSession {
 	private _baseSystemPromptOptions!: NormalizedBuildSystemPromptOptions;
 	/** Prompt options after before_agent_start mutations for the active run. */
 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
+	/**
+	 * Options of the last finished run, without any forced prompt. A run that starts without
+	 * before_agent_start (for example an extension wake-up message) starts from these, so sections
+	 * the extensions added earlier are not dropped from the prompt.
+	 */
+	private _lastRunSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -898,7 +904,8 @@ export class AgentSession {
 			const context = await this._compactBeforeNextAssistantResponse(turn.context);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
-			const runOptions = this._runSystemPromptOptions ?? this._baseSystemPromptOptions;
+			const runOptions =
+				this._runSystemPromptOptions ?? this._lastRunSystemPromptOptions ?? this._baseSystemPromptOptions;
 			const options = normalizeBuildSystemPromptOptions({
 				...runOptions,
 				selectedTools: this.getActiveToolNames(),
@@ -1840,6 +1847,12 @@ export class AgentSession {
 		} finally {
 			if (this._agentRunAbortRequested) this._finishCancelledRetry();
 			this._failedResponse = undefined;
+			if (this._runSystemPromptOptions) {
+				this._lastRunSystemPromptOptions = {
+					...this._runSystemPromptOptions,
+					forceSystemPrompt: undefined,
+				};
+			}
 			this._runSystemPromptOptions = undefined;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -3706,6 +3719,8 @@ export class AgentSession {
 			: [];
 		// Tools the new extensions register later, such as MCP tools, are pending until then.
 		for (const name of this.getActiveToolNames()) this._pendingToolNames.add(name);
+		// The old extensions' sections no longer apply.
+		this._lastRunSystemPromptOptions = undefined;
 		this._buildRuntime({
 			activeToolNames: [...this.getActiveToolNames(), ...addedDefaultTools],
 			flagValues: previousFlagValues,

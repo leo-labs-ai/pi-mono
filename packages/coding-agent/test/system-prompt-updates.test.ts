@@ -197,6 +197,52 @@ describe("system prompt updates", () => {
 		}
 	});
 
+	test("a run started by a custom message keeps sections added in an earlier before_agent_start", async () => {
+		const extension: ExtensionFactory = (pi) => {
+			pi.registerTool({
+				name: "probe",
+				label: "probe",
+				description: "probe",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+			pi.on("before_agent_start", (event) => {
+				event.systemPromptOptions.sections.addendum = "Extension addendum.";
+			});
+		};
+		const harness = await createHarness({ extensionFactories: [extension] });
+		try {
+			const requests: TranscriptContext[] = [];
+			const respond = (message: ReturnType<typeof fauxAssistantMessage>) => (providerContext: TranscriptContext) => {
+				requests.push(providerContext);
+				return message;
+			};
+			harness.setResponses([
+				respond(fauxAssistantMessage("first")),
+				// The wake run calls a tool so the next-turn refresh runs without before_agent_start.
+				respond(fauxAssistantMessage([fauxToolCall("probe", {})], { stopReason: "toolUse" })),
+				respond(fauxAssistantMessage("done")),
+			]);
+			await harness.session.prompt("first");
+			// A loadout change while idle must not discard the retained sections.
+			harness.session.setActiveToolsByName(["probe"]);
+			await harness.session.sendCustomMessage(
+				{ customType: "wake", content: "wake up", display: false },
+				{ triggerTurn: true },
+			);
+			await harness.session.agent.waitForIdle();
+			expect(requests).toHaveLength(3);
+
+			const systemMessages = harness.session.messages.filter((message) => message.role === "system");
+			expect(systemMessages[0]?.sections?.addendum).toContain("Extension addendum.");
+			// The only later patch is the tool loadout change; it never touches the addendum.
+			for (const message of systemMessages.slice(1)) expect(message.sections ?? {}).not.toHaveProperty("addendum");
+			expect(harness.session.messages.some((message) => message.role === "custom")).toBe(true);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	test("setActiveTools emits prompt sections and tool changes before the next request", async () => {
 		const extension: ExtensionFactory = (pi) => {
 			for (const name of ["first", "second"]) {
