@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Published as `@leo-labs-ai/pi-env` on GitHub Packages (was `@earendil-works/pi-env` on npm).
+
 ## [1.0.4] - 2026-10-05
 
 ### Added
