@@ -14,30 +14,11 @@ import { estimateContextTokens } from "../utils/estimate.ts";
 
 const CONTEXT_SAFETY_TOKENS = 4096;
 const MIN_MAX_TOKENS = 1;
-const TIGHT_WINDOW_MARGIN_TOKENS = 256;
 
-/**
- * Clamp the output cap to the room the context window leaves. This is the last bound before a
- * provider request, so it also covers explicit caller caps and the thinking-budget add-back
- * done by the budget-based providers.
- *
- * When the estimate leaves less than {@link MIN_ANSWER_TOKENS} of room (after the safety
- * margin), the cap is bounded to the remaining window, never below {@link MIN_ANSWER_TOKENS}.
- * A cap of 1 (the old floor) can only produce a 1-token `length` stop, which the session then
- * "recovers" by compacting with the same clamp, so the loop can never succeed. Sending the
- * full output cap instead overflows the window deterministically. The floor of
- * {@link MIN_ANSWER_TOKENS} lets the provider adjudicate: a real window returns a detectable
- * context-overflow error, and a route whose real window is wider than the catalog entry
- * answers normally. If the estimate leaves no room at all, the request still goes out with the
- * floor and the provider decides.
- */
 export function clampMaxTokensToContext(model: Model<Api>, context: TranscriptContext, maxTokens: number): number {
 	if (model.contextWindow <= 0) return Math.max(MIN_MAX_TOKENS, maxTokens);
-	const room = model.contextWindow - estimateContextTokens(context).tokens;
-	const available = room - CONTEXT_SAFETY_TOKENS;
-	if (available >= MIN_ANSWER_TOKENS) return Math.min(maxTokens, available);
-	const bounded = Math.max(MIN_ANSWER_TOKENS, room - TIGHT_WINDOW_MARGIN_TOKENS);
-	return Math.max(MIN_MAX_TOKENS, Math.min(maxTokens, bounded));
+	const available = model.contextWindow - estimateContextTokens(context).tokens - CONTEXT_SAFETY_TOKENS;
+	return Math.min(maxTokens, Math.max(MIN_MAX_TOKENS, available));
 }
 
 export function resolveSamplingParams(
