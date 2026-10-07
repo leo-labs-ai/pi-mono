@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampMaxTokensToContext, MIN_ANSWER_TOKENS } from "../src/api/simple-options.ts";
+import { adjustMaxTokensForThinking, clampMaxTokensToContext, MIN_ANSWER_TOKENS } from "../src/api/simple-options.ts";
 import type { Model, TranscriptContext } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -36,15 +36,33 @@ describe("clampMaxTokensToContext", () => {
 		const nearlyFull = contextOfChars(4 * (200000 - 4096 - 100));
 		const clamped = clampMaxTokensToContext(model, nearlyFull, 8000);
 		expect(clamped).toBeGreaterThanOrEqual(MIN_ANSWER_TOKENS);
-		expect(clamped).toBe(8000);
 	});
 
-	it("leaves the caller's cap alone when the estimate already exceeds the window", () => {
-		// Clamping cannot make an over-window request fit; the provider must adjudicate
-		// (a real window returns a context-overflow error, a wider-window route succeeds).
+	it("bounds the full model cap to the remaining window instead of passing it through", () => {
+		// 3000 tokens of room: sending 128000 would overflow input + max_tokens every time.
+		const model = createModel(200000, 128000);
+		const tight = contextOfChars(4 * (200000 - 3000));
+		expect(clampMaxTokensToContext(model, tight, 128000)).toBe(3000 - 256);
+	});
+
+	it("bounds explicit caller caps such as branch summaries (4096)", () => {
+		const model = createModel(200000, 128000);
+		const tight = contextOfChars(4 * (200000 - 3000));
+		expect(clampMaxTokensToContext(model, tight, 4096)).toBe(3000 - 256);
+	});
+
+	it("bounds a thinking-budget add-back (output cap + budget) to the same room", () => {
+		const model = createModel(200000, 128000);
+		const tight = contextOfChars(4 * (200000 - 3000));
+		const adjusted = adjustMaxTokensForThinking(2744, model.maxTokens, "medium");
+		expect(adjusted.maxTokens).toBeGreaterThan(8000);
+		expect(clampMaxTokensToContext(model, tight, adjusted.maxTokens)).toBe(3000 - 256);
+	});
+
+	it("falls back to the minimum answer size when the window has no room left", () => {
 		const model = createModel(200000, 128000);
 		const overWindow = contextOfChars(4 * 250000);
-		expect(clampMaxTokensToContext(model, overWindow, 8000)).toBe(8000);
-		expect(clampMaxTokensToContext(model, overWindow, 128000)).toBe(128000);
+		expect(clampMaxTokensToContext(model, overWindow, 128000)).toBe(MIN_ANSWER_TOKENS);
+		expect(clampMaxTokensToContext(model, overWindow, 500)).toBe(500);
 	});
 });

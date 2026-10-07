@@ -25,7 +25,6 @@ import type {
 	Usage,
 } from "@lue-labs/pi-ai/compat";
 import { completeSimple } from "@lue-labs/pi-ai/compat";
-import { estimateContextTokens as estimateRequestTokens } from "@lue-labs/pi-ai/utils/estimate";
 import { getProviderEnvValue } from "@lue-labs/pi-ai/utils/provider-env";
 import { convertToLlm } from "../messages.ts";
 import {
@@ -764,25 +763,6 @@ function buildCacheSafeSummarizationContext(
 	return normalizeContext({ messages: [...cacheSafeContext.messages, createSummaryUserMessage(promptText)] });
 }
 
-const SUMMARY_TIGHT_ROOM_TOKENS = 5120;
-const SUMMARY_MIN_OUTPUT_TOKENS = 1024;
-const SUMMARY_WINDOW_MARGIN_TOKENS = 256;
-
-/**
- * Output cap for a summary request when the context window is nearly full, or undefined when
- * pi-ai's normal clamp is enough. pi-ai passes the model's full output cap through once less
- * than ~1k tokens of room remain (so a turn cannot collapse to a 1-token cap). A summary
- * request near the window must not do that: input plus the full cap exceeds the window and
- * Anthropic rejects it every time, so compaction could never recover. Bound the cap to the
- * room that is left, never below SUMMARY_MIN_OUTPUT_TOKENS.
- */
-export function boundSummaryMaxTokens(model: Model<any>, context: TranscriptContext): number | undefined {
-	if (model.contextWindow <= 0) return undefined;
-	const room = model.contextWindow - estimateRequestTokens(context).tokens;
-	if (room >= SUMMARY_TIGHT_ROOM_TOKENS) return undefined;
-	return Math.max(SUMMARY_MIN_OUTPUT_TOKENS, Math.min(model.maxTokens, room - SUMMARY_WINDOW_MARGIN_TOKENS));
-}
-
 /**
  * Shared choke point for every compaction/branch-summary summarization call. Wraps the
  * single LLM call in {@link retryAssistantCall} so transient stream drops (e.g.
@@ -810,10 +790,6 @@ export async function completeSummarization(
 		cacheRetention: options.cacheRetention ?? "none",
 		sessionId: options.sessionId ?? uuidv7(),
 	};
-	if (requestOptions.maxTokens === undefined) {
-		const bounded = boundSummaryMaxTokens(model, context);
-		if (bounded !== undefined) requestOptions.maxTokens = bounded;
-	}
 	const produce = async (): Promise<AssistantMessage> =>
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()

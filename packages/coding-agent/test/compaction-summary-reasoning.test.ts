@@ -8,7 +8,6 @@ import {
 } from "@lue-labs/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	boundSummaryMaxTokens,
 	type CompactionPreparation,
 	compact,
 	completeSummarization,
@@ -555,46 +554,5 @@ describe("generateSummary reasoning options", () => {
 		expect(countOccurrences(result.summary, "## Original Request")).toBe(1);
 		expect(result.summary).toContain("## Early Progress");
 		expect(result.summary).toContain("## Context for Suffix");
-	});
-});
-
-describe("summary output cap near the context window", () => {
-	const room = (model: Model<"anthropic-messages">, tokens: number): TranscriptContext =>
-		normalizeContext({
-			messages: [
-				{
-					role: "user",
-					// estimateTokens uses ~4 chars per token
-					content: [{ type: "text", text: "x".repeat((model.contextWindow - tokens) * 4) }],
-					timestamp: 0,
-				},
-			],
-		});
-
-	it("bounds the output cap to the remaining room instead of the full model cap", () => {
-		const model = createModel(false, 64000);
-		const bounded = boundSummaryMaxTokens(model, room(model, 3000));
-		expect(bounded).toBeLessThan(model.maxTokens);
-		expect(bounded).toBeGreaterThanOrEqual(1024);
-		expect(bounded).toBeLessThanOrEqual(3000);
-	});
-
-	it("never bounds below the minimum answer size", () => {
-		const model = createModel(false, 64000);
-		expect(boundSummaryMaxTokens(model, room(model, 100))).toBe(1024);
-	});
-
-	it("leaves the cap to pi-ai when there is plenty of room", () => {
-		const model = createModel(false, 64000);
-		expect(boundSummaryMaxTokens(model, room(model, 50000))).toBeUndefined();
-	});
-
-	it("sends the bounded cap from completeSummarization and respects an explicit cap", async () => {
-		completeSimpleMock.mockResolvedValue(mockSummaryResponse);
-		const model = createModel(false, 64000);
-		await completeSummarization(model, room(model, 3000), {});
-		expect(completeSimpleMock.mock.calls.at(-1)?.[2].maxTokens).toBeLessThan(64000);
-		await completeSummarization(model, room(model, 3000), { maxTokens: 777 });
-		expect(completeSimpleMock.mock.calls.at(-1)?.[2].maxTokens).toBe(777);
 	});
 });
