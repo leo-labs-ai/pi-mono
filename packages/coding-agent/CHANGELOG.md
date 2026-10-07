@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: compaction and branch-summary requests bound their output cap to the remaining context room (never below 1024 tokens) when the window is nearly full, instead of sending the model's full output cap, which Anthropic rejects as input plus `max_tokens` over the window.
 - Fix: after a truncated response fails its one compact-and-retry attempt, a later turn started by an extension custom message (for example a wake-up) now gets its own compact-and-retry attempt. Previously only a user message re-armed recovery, so every later custom-message turn reported "Truncated response recovery failed after one compact-and-retry attempt." without compacting ([#593](https://github.com/leo-labs-ai/pi-mono/pull/593)).
 - Fix: a failed codemode script no longer returns image blocks from earlier `image()` calls. The result keeps its text and adds a note with the number of omitted images, because providers reject images in error results.
 - `models.json` accepts `compat.supportsMidConvoEffort` on OpenAI Responses and Codex Responses models. Set it to `true` on a verified GPT-6 endpoint so a mid-session `/thinking` change keeps the prompt cache. It is off by default; see [Keep the prompt cache when the thinking level changes](docs/models.md#mid-conversation-effort).
