@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Moonshot Kimi K3 pricing is pinned to the official rates** (input 3, output 15, cache read 0.3, cache write 0). models.dev started reporting `cache_write: 3`, which broke the Kimi K3 pricing test on every branch.
+
 ### Changed
 
 - **`pi-env` publishes as `@leo-labs-ai/pi-env` on GitHub Packages** (was `@earendil-works/pi-env`, which the Release workflow tried to publish to npmjs and failed with ENEEDAUTH in the 1.1.1 run). Package name, publishConfig, imports, tsconfig paths and release scripts updated.
