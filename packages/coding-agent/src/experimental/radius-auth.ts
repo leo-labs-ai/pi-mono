@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { normalizeRadiusGatewayUrl } from "@lue-labs/pi-ai/providers/radius-config";
+import { normalizeRadiusGatewayUrl } from "@leo-labs-ai/pi-ai/providers/radius-config";
 import { getAuthCredential } from "../cli/auth-command.ts";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";

@@ -10,9 +10,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@lue-labs/pi-ai/providers/faux";
-import { openaiProvider } from "@lue-labs/pi-ai/providers/openai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai/providers/faux";
+import { openaiProvider } from "@leo-labs-ai/pi-ai/providers/openai";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
 import {
 	createRegistry,

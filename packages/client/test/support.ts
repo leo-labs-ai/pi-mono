@@ -4,7 +4,7 @@ import {
 	encodeServerMessage,
 	PROTOCOL_VERSION,
 	type ServerMessage,
-} from "@lue-labs/pi-protocol";
+} from "@leo-labs-ai/pi-protocol";
 import type { ByteTransport, ByteTransportHandlers } from "../src/index.ts";
 
 export class MemoryByteServer {

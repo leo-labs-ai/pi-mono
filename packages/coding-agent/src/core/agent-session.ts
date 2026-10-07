@@ -30,8 +30,8 @@ import {
 	type PrepareNextTurnContext,
 	runToolCall,
 	type ThinkingLevel,
-} from "@lue-labs/pi-agent-core";
-import { contentText, getCurrentSystemMessage, retryDelayMs } from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-agent-core";
+import { contentText, getCurrentSystemMessage, retryDelayMs } from "@leo-labs-ai/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -42,7 +42,7 @@ import type {
 	TextContent,
 	ToolResultMessage,
 	Usage,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -54,7 +54,7 @@ import {
 	type RetryCallbacks,
 	resetApiProviders,
 	streamSimple,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { processImage } from "../utils/image-process.ts";

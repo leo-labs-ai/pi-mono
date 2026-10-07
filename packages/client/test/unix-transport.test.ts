@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { parseServiceCall } from "@earendil-works/chord";
-import { ClientMessageDecoder, encodeServerMessage, PROTOCOL_VERSION } from "@lue-labs/pi-protocol";
+import { ClientMessageDecoder, encodeServerMessage, PROTOCOL_VERSION } from "@leo-labs-ai/pi-protocol";
 import { afterEach, describe, expect, test } from "vitest";
 import { Client } from "../src/index.ts";
 import { createUnixTransportFactory } from "../src/unix.ts";

@@ -3,10 +3,10 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"@lue-labs/pi-coding-agent": ["./src/index.ts"],
-			"@lue-labs/pi-coding-agent/hooks": ["./src/core/hooks/index.ts"],
-			"@lue-labs/pi-tui": ["../tui/src/index.ts"],
-			"@lue-labs/pi-ai": ["../ai/src/index.ts"],
+			"@leo-labs-ai/pi-coding-agent": ["./src/index.ts"],
+			"@leo-labs-ai/pi-coding-agent/hooks": ["./src/core/hooks/index.ts"],
+			"@leo-labs-ai/pi-tui": ["../tui/src/index.ts"],
+			"@leo-labs-ai/pi-ai": ["../ai/src/index.ts"],
 			"typebox": ["../../node_modules/typebox"]
 		},
 		"skipLibCheck": true

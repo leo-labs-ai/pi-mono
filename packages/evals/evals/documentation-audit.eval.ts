@@ -1,7 +1,7 @@
 import { globSync } from "node:fs";
 import { resolve } from "node:path";
-import { Type } from "@lue-labs/pi-ai";
-import { defineTool } from "@lue-labs/pi-coding-agent";
+import { Type } from "@leo-labs-ai/pi-ai";
+import { defineTool } from "@leo-labs-ai/pi-coding-agent";
 import { expect } from "vitest";
 import { describeEval, toolCalls } from "vitest-evals";
 import { createPiCodingAgentHarness } from "../src/harness.ts";

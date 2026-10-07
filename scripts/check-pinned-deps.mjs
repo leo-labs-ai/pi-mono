@@ -25,7 +25,7 @@ function collectPackageJsonFiles(directory) {
 }
 
 function isInternalWorkspaceDependency(name) {
-	return name.startsWith("@lue-labs/pi-") || internalPackageNames.has(name);
+	return name.startsWith("@leo-labs-ai/pi-") || internalPackageNames.has(name);
 }
 
 function isNonRegistrySpecifier(specifier) {

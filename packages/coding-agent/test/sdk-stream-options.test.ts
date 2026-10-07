@@ -8,7 +8,7 @@ import {
 	type Model,
 	normalizeContext,
 	type SimpleStreamOptions,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ExtensionFactory } from "../src/core/extensions/types.ts";

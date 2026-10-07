@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@lue-labs/pi-tui";
+import { detectCapabilities, getTerminalColorMode, type TerminalColorMode } from "@leo-labs-ai/pi-tui";
 import chalk from "chalk";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.ts";
@@ -51,10 +51,10 @@ export interface ResourceLoaderReloadOptions {
 }
 
 const HOST_PROVIDED_EXTENSION_PACKAGES = new Set([
-	"@lue-labs/pi-agent-core",
-	"@lue-labs/pi-ai",
-	"@lue-labs/pi-coding-agent",
-	"@lue-labs/pi-tui",
+	"@leo-labs-ai/pi-agent-core",
+	"@leo-labs-ai/pi-ai",
+	"@leo-labs-ai/pi-coding-agent",
+	"@leo-labs-ai/pi-tui",
 	"@mariozechner/pi-agent-core",
 	"@mariozechner/pi-ai",
 	"@mariozechner/pi-coding-agent",

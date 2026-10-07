@@ -1,4 +1,4 @@
-import { defineDoc, defineDocFamily } from "@lue-labs/pi-durable";
+import { defineDoc, defineDocFamily } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { getReplicatedStateInternals } from "../../chord/src/services/state-internals.ts";
 import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";

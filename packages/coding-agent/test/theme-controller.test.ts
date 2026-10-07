@@ -1,4 +1,4 @@
-import type { TerminalColors, TUI } from "@lue-labs/pi-tui";
+import type { TerminalColors, TUI } from "@leo-labs-ai/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import {

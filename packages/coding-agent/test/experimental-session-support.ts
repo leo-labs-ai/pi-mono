@@ -1,8 +1,8 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { AgentDoc, createSession, type ModelRef, ROOT_CONVERSATION_ID } from "@lue-labs/pi-durable";
-import { openNodeSqliteStorage } from "@lue-labs/pi-durable/storage/sqlite/node";
+import { AgentDoc, createSession, type ModelRef, ROOT_CONVERSATION_ID } from "@leo-labs-ai/pi-durable";
+import { openNodeSqliteStorage } from "@leo-labs-ai/pi-durable/storage/sqlite/node";
 import {
 	createSession as createCatalogSession,
 	readSession,

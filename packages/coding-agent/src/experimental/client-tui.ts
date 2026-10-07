@@ -9,7 +9,7 @@ import {
 	type LoadedFacets,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AgentState, ConversationView } from "@lue-labs/pi-durable";
+import type { AgentState, ConversationView } from "@leo-labs-ai/pi-durable";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -19,7 +19,7 @@ import {
 	setKeybindings,
 	Text,
 	type TUI,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import type { ClientCommand } from "../cli/experimental/commands/client.ts";
 import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";

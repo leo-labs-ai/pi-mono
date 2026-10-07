@@ -1,6 +1,6 @@
-import type { AssistantMessage, ToolResultMessage, UserMessage } from "@lue-labs/pi-ai";
-import type { ConversationView, EntryRecord, InboxState, LiveState } from "@lue-labs/pi-durable";
-import { Container, Spacer, Text, TruncatedText, type TUI } from "@lue-labs/pi-tui";
+import type { AssistantMessage, ToolResultMessage, UserMessage } from "@leo-labs-ai/pi-ai";
+import type { ConversationView, EntryRecord, InboxState, LiveState } from "@leo-labs-ai/pi-durable";
+import { Container, Spacer, Text, TruncatedText, type TUI } from "@leo-labs-ai/pi-tui";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";

@@ -1,4 +1,4 @@
-import { encodeCbor, encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@lue-labs/pi-protocol";
+import { encodeCbor, encodeClientMessage, encodeFrame, PROTOCOL_VERSION } from "@leo-labs-ai/pi-protocol";
 import { afterEach, expect, test } from "vitest";
 import type { ByteConnection, ByteConnectionHandler } from "../src/connection.ts";
 import { Server } from "../src/server.ts";

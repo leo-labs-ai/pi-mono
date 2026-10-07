@@ -128,85 +128,85 @@
 			"@earendil-works/pi-agent-old/*": [
 				"./packages/agent-old/src/*"
 			],
-			"@lue-labs/pi-telemetry": [
+			"@leo-labs-ai/pi-telemetry": [
 				"./packages/telemetry/src/index.ts"
 			],
-			"@lue-labs/pi-telemetry/testing": [
+			"@leo-labs-ai/pi-telemetry/testing": [
 				"./packages/telemetry/src/testing/index.ts"
 			],
-			"@lue-labs/pi-ai": [
+			"@leo-labs-ai/pi-ai": [
 				"./packages/ai/src/index.ts"
 			],
-			"@lue-labs/pi-ai/oauth": [
+			"@leo-labs-ai/pi-ai/oauth": [
 				"./packages/ai/src/oauth.ts"
 			],
-			"@lue-labs/pi-ai/*": [
+			"@leo-labs-ai/pi-ai/*": [
 				"./packages/ai/src/*.ts",
 				"./packages/ai/src/providers/*.ts"
 			],
-			"@lue-labs/pi-ai/dist/*": [
+			"@leo-labs-ai/pi-ai/dist/*": [
 				"./packages/ai/src/*"
 			],
-			"@lue-labs/pi-durable": [
+			"@leo-labs-ai/pi-durable": [
 				"./packages/durable/src/index.ts"
 			],
-			"@lue-labs/pi-durable/testing": [
+			"@leo-labs-ai/pi-durable/testing": [
 				"./packages/durable/src/testing/index.ts"
 			],
-			"@lue-labs/pi-durable/*": [
+			"@leo-labs-ai/pi-durable/*": [
 				"./packages/durable/src/*.ts",
 				"./packages/durable/src/*/index.ts",
 				"./packages/durable/src/*"
 			],
-			"@lue-labs/pi-agent-core": [
+			"@leo-labs-ai/pi-agent-core": [
 				"./packages/agent/src/index.ts"
 			],
-			"@lue-labs/pi-coding-agent": [
+			"@leo-labs-ai/pi-coding-agent": [
 				"./packages/coding-agent/src/index.ts"
 			],
-			"@lue-labs/pi-coding-agent/experimental/plugin": [
+			"@leo-labs-ai/pi-coding-agent/experimental/plugin": [
 				"./packages/coding-agent/src/experimental/plugin.ts"
 			],
-			"@lue-labs/pi-coding-agent/hooks": [
+			"@leo-labs-ai/pi-coding-agent/hooks": [
 				"./packages/coding-agent/src/core/hooks/index.ts"
 			],
-			"@lue-labs/pi-coding-agent/*": [
+			"@leo-labs-ai/pi-coding-agent/*": [
 				"./packages/coding-agent/src/*"
 			],
-			"@lue-labs/pi-protocol": [
+			"@leo-labs-ai/pi-protocol": [
 				"./packages/protocol/src/index.ts"
 			],
-			"@lue-labs/pi-protocol/*": [
+			"@leo-labs-ai/pi-protocol/*": [
 				"./packages/protocol/src/*"
 			],
-			"@lue-labs/pi-client": [
+			"@leo-labs-ai/pi-client": [
 				"./packages/client/src/index.ts"
 			],
-			"@lue-labs/pi-client/unix": [
+			"@leo-labs-ai/pi-client/unix": [
 				"./packages/client/src/unix.ts"
 			],
-			"@lue-labs/pi-client/*": [
+			"@leo-labs-ai/pi-client/*": [
 				"./packages/client/src/*"
 			],
-			"@lue-labs/pi-server": [
+			"@leo-labs-ai/pi-server": [
 				"./packages/server/src/index.ts"
 			],
-			"@lue-labs/pi-server/unix": [
+			"@leo-labs-ai/pi-server/unix": [
 				"./packages/server/src/transports/unix/index.ts"
 			],
-			"@lue-labs/pi-server/*": [
+			"@leo-labs-ai/pi-server/*": [
 				"./packages/server/src/*"
 			],
-			"@lue-labs/pi-tui": [
+			"@leo-labs-ai/pi-tui": [
 				"./packages/tui/src/index.ts"
 			],
-			"@lue-labs/pi-tui/*": [
+			"@leo-labs-ai/pi-tui/*": [
 				"./packages/tui/src/*"
 			],
-			"@lue-labs/pi-agent-old": [
+			"@leo-labs-ai/pi-agent-old": [
 				"./packages/agent-old/src/index.ts"
 			],
-			"@lue-labs/pi-agent-old/*": [
+			"@leo-labs-ai/pi-agent-old/*": [
 				"./packages/agent-old/src/*"
 			],
 			"*": [

@@ -1,7 +1,7 @@
 import { type Context, defineFacet, type Facet, type MutableReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@lue-labs/pi-ai";
-import { AgentDoc, type AgentState, type Conversation, type DocumentState, type Harness } from "@lue-labs/pi-durable";
+import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@leo-labs-ai/pi-ai";
+import { AgentDoc, type AgentState, type Conversation, type DocumentState, type Harness } from "@leo-labs-ai/pi-durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { Models, type Models as ModelsService, type ModelsState } from "./models.ts";

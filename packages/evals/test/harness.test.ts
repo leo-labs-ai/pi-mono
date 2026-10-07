@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { getDocsPath, getExamplesPath, getReadmePath } from "@lue-labs/pi-coding-agent";
+import { getDocsPath, getExamplesPath, getReadmePath } from "@leo-labs-ai/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import {

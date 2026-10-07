@@ -1,5 +1,5 @@
-import type { Component, Terminal, TUI, WheelScrollLines } from "@lue-labs/pi-tui";
-import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@lue-labs/pi-tui";
+import type { Component, Terminal, TUI, WheelScrollLines } from "@leo-labs-ai/pi-tui";
+import { Container, getKeybindings, isViewportTUI, ScrollView, setKeybindings, Text } from "@leo-labs-ai/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";

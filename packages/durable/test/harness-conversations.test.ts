@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels } from "@lue-labs/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai";
 import {
 	AgentDoc,
 	type Conversation,
@@ -19,7 +19,7 @@ import {
 	MemoryStorage,
 	ProviderDoc,
 	ROOT_CONVERSATION_ID,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { addTool, openHarness, tool, user } from "./harness-support.ts";

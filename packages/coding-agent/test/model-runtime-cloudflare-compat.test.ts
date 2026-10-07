@@ -1,4 +1,4 @@
-import { complete, resetApiProviders } from "@lue-labs/pi-ai/compat";
+import { complete, resetApiProviders } from "@leo-labs-ai/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";

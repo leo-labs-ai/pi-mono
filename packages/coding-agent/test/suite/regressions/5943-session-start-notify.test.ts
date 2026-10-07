@@ -1,5 +1,5 @@
-import { fauxAssistantMessage } from "@lue-labs/pi-ai";
-import { Container, Text } from "@lue-labs/pi-tui";
+import { fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
+import { Container, Text } from "@leo-labs-ai/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";

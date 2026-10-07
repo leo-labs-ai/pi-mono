@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import type { Model } from "@lue-labs/pi-ai";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import type { Model } from "@leo-labs-ai/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";

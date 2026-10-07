@@ -14,7 +14,7 @@ import { createServer, Socket } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { getOrThrow } from "@lue-labs/pi-durable/env";
+import { getOrThrow } from "@leo-labs-ai/pi-durable/env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import {

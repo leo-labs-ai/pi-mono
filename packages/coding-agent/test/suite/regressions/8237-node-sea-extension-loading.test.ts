@@ -27,7 +27,7 @@ vi.mock("../../../src/core/extensions/virtual-modules.ts", () => {
 	return {
 		VIRTUAL_MODULES: {
 			typebox: {},
-			"@lue-labs/pi-coding-agent": {},
+			"@leo-labs-ai/pi-coding-agent": {},
 		},
 	};
 });
@@ -67,6 +67,6 @@ describe("Node SEA extension loading", () => {
 		expect(options.tryNative).toBe(false);
 		expect(options.alias).toBeUndefined();
 		expect(options.virtualModules?.typebox).toBeDefined();
-		expect(options.virtualModules?.["@lue-labs/pi-coding-agent"]).toBeDefined();
+		expect(options.virtualModules?.["@leo-labs-ai/pi-coding-agent"]).toBeDefined();
 	});
 });

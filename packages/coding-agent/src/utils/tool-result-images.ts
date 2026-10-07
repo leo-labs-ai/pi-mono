@@ -1,4 +1,4 @@
-import type { ImageContent, ModelImageResizeOptions, TextContent } from "@lue-labs/pi-ai";
+import type { ImageContent, ModelImageResizeOptions, TextContent } from "@leo-labs-ai/pi-ai";
 import { processImage } from "./image-process.ts";
 
 export type ToolResultContent = TextContent | ImageContent;

@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 import {
 	Container,
 	type Focusable,
@@ -10,7 +10,7 @@ import {
 	type SelectListLayoutOptions,
 	Spacer,
 	Text,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";

@@ -6,8 +6,8 @@
  */
 
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@lue-labs/pi-ai";
-import { setCapabilityOverrides } from "@lue-labs/pi-tui";
+import { type ImageContent, modelsAreEqual } from "@leo-labs-ai/pi-ai";
+import { setCapabilityOverrides } from "@leo-labs-ai/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {

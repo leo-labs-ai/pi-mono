@@ -8,7 +8,7 @@ import {
 	InMemoryModelsStore,
 	type Model,
 	type Provider,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";

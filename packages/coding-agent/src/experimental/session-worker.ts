@@ -12,8 +12,8 @@ import {
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@earendil-works/chord/context";
-import { Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@lue-labs/pi-durable";
-import { openNodeSqliteStorage } from "@lue-labs/pi-durable/storage/sqlite/node";
+import { Harness, ROOT_CONVERSATION_ID, type TaskGraph } from "@leo-labs-ai/pi-durable";
+import { openNodeSqliteStorage } from "@leo-labs-ai/pi-durable/storage/sqlite/node";
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";

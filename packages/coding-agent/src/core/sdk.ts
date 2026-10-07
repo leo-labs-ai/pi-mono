@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@lue-labs/pi-agent-core";
-import type { ModelsSimpleStreamOptions } from "@lue-labs/pi-ai";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@lue-labs/pi-ai/compat";
+import { Agent, type AgentMessage, setDefaultStreamFn, type ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import type { ModelsSimpleStreamOptions } from "@leo-labs-ai/pi-ai";
+import { clampThinkingLevel, type Message, type Model, streamSimple } from "@leo-labs-ai/pi-ai/compat";
 import { getAgentDir } from "../config.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { AgentSession } from "./agent-session.ts";
@@ -157,7 +157,7 @@ function getDefaultAgentDir(): string {
  * const { session } = await createAgentSession();
  *
  * // With explicit model
- * import { getModel } from '@lue-labs/pi-ai';
+ * import { getModel } from '@leo-labs-ai/pi-ai';
  * const { session } = await createAgentSession({
  *   model: getModel('anthropic', 'claude-opus-4-5'),
  *   thinkingLevel: 'high',

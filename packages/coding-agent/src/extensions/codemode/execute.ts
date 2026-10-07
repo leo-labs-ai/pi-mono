@@ -12,7 +12,7 @@ import {
 	renderToolSample,
 	toCodemodeIdentifier,
 } from "@earendil-works/pi-codemode";
-import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@lue-labs/pi-agent-core";
+import type { AgentTool, AgentToolCallOutcome, AgentToolResult } from "@leo-labs-ai/pi-agent-core";
 import type {
 	AnyModel,
 	ClassifierContext,
@@ -22,7 +22,7 @@ import type {
 	ModelTypeMap,
 	TextContent,
 	Usage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
 import type { ExtensionToolContext, ToolNamespace } from "../../core/extensions/types.ts";
 import type { SessionEntry } from "../../core/session-manager.ts";

@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	getCurrentSystemMessage,
@@ -10,7 +10,7 @@ import {
 	type Usage,
 	type UserMessage,
 	uuidv7,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,

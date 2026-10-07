@@ -8,10 +8,10 @@ import type {
 	ModelThinkingLevel,
 	SimpleStreamOptions,
 	ToolCall,
-} from "@lue-labs/pi-ai";
-import { isContextOverflow } from "@lue-labs/pi-ai/utils/overflow";
-import { isRetryableAssistantError, retryDelayMs } from "@lue-labs/pi-ai/utils/retry";
-import { getCurrentTools } from "@lue-labs/pi-ai/utils/transcript";
+} from "@leo-labs-ai/pi-ai";
+import { isContextOverflow } from "@leo-labs-ai/pi-ai/utils/overflow";
+import { isRetryableAssistantError, retryDelayMs } from "@leo-labs-ai/pi-ai/utils/retry";
+import { getCurrentTools } from "@leo-labs-ai/pi-ai/utils/transcript";
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
 import { defineTask } from "../tasks.ts";

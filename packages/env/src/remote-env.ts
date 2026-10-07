@@ -25,7 +25,7 @@ import {
 	type TextLineReader,
 	type WatchChange,
 	type WatchTarget,
-} from "@lue-labs/pi-durable/env";
+} from "@leo-labs-ai/pi-durable/env";
 import { type Connection, type Json, RemoteError, type RemoteInfo } from "./connection.ts";
 import { abortResult, toFileError } from "./errors.ts";
 import { RemoteWatcher, type RemoteWatchOptions } from "./watch.ts";

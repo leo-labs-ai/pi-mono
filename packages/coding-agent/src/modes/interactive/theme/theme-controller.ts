@@ -1,4 +1,4 @@
-import type { RgbColor, TerminalColors, TUI } from "@lue-labs/pi-tui";
+import type { RgbColor, TerminalColors, TUI } from "@leo-labs-ai/pi-tui";
 import type { SettingsManager } from "../../../core/settings-manager.ts";
 import {
 	getTerminalTheme,

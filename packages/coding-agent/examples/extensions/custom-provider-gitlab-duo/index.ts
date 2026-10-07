@@ -21,8 +21,8 @@ import {
 	type SimpleStreamOptions,
 	type ThinkingLevelMap,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai/compat";
-import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
+} from "@leo-labs-ai/pi-ai/compat";
+import type { ExtensionAPI } from "@leo-labs-ai/pi-coding-agent";
 
 // =============================================================================
 // Constants

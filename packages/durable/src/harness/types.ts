@@ -13,7 +13,7 @@ import type {
 	TSchema,
 	Usage,
 	UserMessage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
 import type {
 	ConversationId,

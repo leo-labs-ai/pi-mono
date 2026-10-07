@@ -1,4 +1,4 @@
-import { defineTask, MemoryStorage, type TaskId, type TaskInspection } from "@lue-labs/pi-durable";
+import { defineTask, MemoryStorage, type TaskId, type TaskInspection } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { chatSetup, openChat, unanswered, waitFor } from "./chat-support.ts";
 import { context } from "./session-support.ts";

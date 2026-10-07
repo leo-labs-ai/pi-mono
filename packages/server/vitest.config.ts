@@ -5,7 +5,7 @@ const src = (path: string): string => fileURLToPath(new URL(path, import.meta.ur
 
 /**
  * Exact matches for bare specifiers, plus one rule per package for subpath exports such as
- * `@lue-labs/pi-ai/utils/uuid`. A prefix alias would rewrite those onto `index.ts/utils/uuid`.
+ * `@leo-labs-ai/pi-ai/utils/uuid`. A prefix alias would rewrite those onto `index.ts/utils/uuid`.
  */
 export default defineConfig({
 	test: {
@@ -16,12 +16,12 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: [
-			{ find: /^@lue-labs\/pi-agent-core$/, replacement: src("../agent/src/index.ts") },
-			{ find: /^@lue-labs\/pi-agent-core\/(.+)$/, replacement: `${src("../agent/src/")}$1.ts` },
-			{ find: /^@lue-labs\/pi-ai$/, replacement: src("../ai/src/index.ts") },
-			{ find: /^@lue-labs\/pi-ai\/(.+)$/, replacement: `${src("../ai/src/")}$1.ts` },
-			{ find: /^@lue-labs\/pi-telemetry$/, replacement: src("../telemetry/src/index.ts") },
-			{ find: /^@lue-labs\/pi-protocol$/, replacement: src("../protocol/src/index.ts") },
+			{ find: /^@leo-labs-ai\/pi-agent-core$/, replacement: src("../agent/src/index.ts") },
+			{ find: /^@leo-labs-ai\/pi-agent-core\/(.+)$/, replacement: `${src("../agent/src/")}$1.ts` },
+			{ find: /^@leo-labs-ai\/pi-ai$/, replacement: src("../ai/src/index.ts") },
+			{ find: /^@leo-labs-ai\/pi-ai\/(.+)$/, replacement: `${src("../ai/src/")}$1.ts` },
+			{ find: /^@leo-labs-ai\/pi-telemetry$/, replacement: src("../telemetry/src/index.ts") },
+			{ find: /^@leo-labs-ai\/pi-protocol$/, replacement: src("../protocol/src/index.ts") },
 		],
 	},
 	ssr: { resolve: { conditions: ["source"] } },

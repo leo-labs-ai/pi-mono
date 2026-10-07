@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import { FileError, type FileWatcher, type WatchChange, type WatchTarget } from "@lue-labs/pi-durable/env";
+import { FileError, type FileWatcher, type WatchChange, type WatchTarget } from "@leo-labs-ai/pi-durable/env";
 import { type Connection, isConnectionLost } from "./connection.ts";
 import { toFileError } from "./errors.ts";
 

@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@lue-labs/pi-ai";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	collectCacheMisses,

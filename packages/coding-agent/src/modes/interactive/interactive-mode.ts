@@ -7,8 +7,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage, ThinkingLevel } from "@lue-labs/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@lue-labs/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import type { AuthEvent, AuthPrompt } from "@leo-labs-ai/pi-ai";
 import {
 	type AssistantMessage,
 	type ImageContent,
@@ -16,7 +16,7 @@ import {
 	type Message,
 	type Model,
 	type Usage,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import type {
 	AutocompleteItem,
 	AutocompleteProvider,
@@ -28,8 +28,8 @@ import type {
 	OverlayOptions,
 	SlashCommand,
 	TuiMainScreenRenderState,
-} from "@lue-labs/pi-tui";
-import * as TuiLayouts from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
+import * as TuiLayouts from "@leo-labs-ai/pi-tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -51,7 +51,7 @@ import {
 	type TuiMouseEvent,
 	type TuiMouseEventResult,
 	visibleWidth,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import chalk from "chalk";
 import { spawn } from "child_process";
 import {

@@ -1,4 +1,4 @@
-import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@lue-labs/pi-ai/providers/radius-config";
+import { DEFAULT_RADIUS_GATEWAY, normalizeRadiusGatewayUrl } from "@leo-labs-ai/pi-ai/providers/radius-config";
 
 export const RADIUS_PROVIDER_ID = "radius";
 export const ENV_RADIUS_GATEWAY = "PI_RADIUS_GATEWAY";

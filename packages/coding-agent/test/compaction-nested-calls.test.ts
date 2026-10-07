@@ -1,4 +1,4 @@
-import type { ToolResultMessage } from "@lue-labs/pi-ai/compat";
+import type { ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
 import { describe, expect, it } from "vitest";
 import { computeFileLists, createFileOps, extractFileOpsFromMessage } from "../src/core/compaction/utils.ts";
 

@@ -1,4 +1,4 @@
-import type { AgentMessage, AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
@@ -8,7 +8,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";

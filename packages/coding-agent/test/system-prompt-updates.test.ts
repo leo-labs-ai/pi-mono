@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	fauxAssistantMessage,
 	fauxToolCall,
@@ -9,8 +9,8 @@ import {
 	getCurrentSystemPrompt,
 	getSystemMessageText,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
-import { getModel } from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";

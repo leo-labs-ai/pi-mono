@@ -1,8 +1,8 @@
 import { readFileSync, rmSync } from "node:fs";
 import { type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
-import { fauxAssistantMessage, fauxToolCall } from "@lue-labs/pi-ai";
-import type { SystemMessage, ToolResultMessage } from "@lue-labs/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
+import type { SystemMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionFactory } from "../../src/core/extensions/types.ts";

@@ -1,5 +1,5 @@
 {
-	"name": "@lue-labs/pi-telemetry",
+	"name": "@leo-labs-ai/pi-telemetry",
 	"version": "1.1.0",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
@@ -34,7 +34,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/lue-labs/pi-mono.git",
+		"url": "git+https://github.com/leo-labs-ai/pi-mono.git",
 		"directory": "packages/telemetry"
 	},
 	"engines": {

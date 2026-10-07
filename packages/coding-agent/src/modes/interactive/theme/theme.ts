@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 import {
 	backgroundAnsi,
 	type Color,
@@ -21,7 +21,7 @@ import {
 	type TerminalColorMode,
 	type TerminalColors,
 	type TextAttributes,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import chalk from "chalk";
 import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
@@ -719,7 +719,7 @@ export function getTerminalTheme(): TerminalTheme {
 // ============================================================================
 
 // Use globalThis to share theme across module loaders (node + jiti in dev mode)
-const THEME_KEY = Symbol.for("@lue-labs/pi-coding-agent:theme");
+const THEME_KEY = Symbol.for("@leo-labs-ai/pi-coding-agent:theme");
 const THEME_KEY_OLD = Symbol.for("@mariozechner/pi-coding-agent:theme");
 
 // Export theme as a getter that reads from globalThis

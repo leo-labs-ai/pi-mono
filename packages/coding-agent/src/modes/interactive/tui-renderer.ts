@@ -1,5 +1,5 @@
-import type { Terminal, WheelScrollLines } from "@lue-labs/pi-tui";
-import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@lue-labs/pi-tui";
+import type { Terminal, WheelScrollLines } from "@leo-labs-ai/pi-tui";
+import { ProcessTerminal, type TUI, TuiAltScreen, TuiMainScreen } from "@leo-labs-ai/pi-tui";
 import { copyToClipboard } from "../../utils/clipboard.ts";
 import { openBrowser } from "../../utils/open-browser.ts";
 import { keyDisplayText } from "./components/keybinding-hints.ts";

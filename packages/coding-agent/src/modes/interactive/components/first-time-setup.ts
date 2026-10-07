@@ -1,4 +1,4 @@
-import { Container, getKeybindings, Spacer, Text } from "@lue-labs/pi-tui";
+import { Container, getKeybindings, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import { APP_NAME } from "../../../config.ts";
 import { SYSTEM_THEME_NAME } from "../theme/system-theme.ts";
 import { theme } from "../theme/theme.ts";

@@ -13,8 +13,8 @@ import {
 	FACET_BUNDLE_ARTIFACT_FORMAT_VERSION,
 	type FacetBundleArtifact,
 } from "@earendil-works/chord/node";
-import { fauxAssistantMessage } from "@lue-labs/pi-ai";
-import { ProcessTerminal, TuiMainScreen } from "@lue-labs/pi-tui";
+import { fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
+import { ProcessTerminal, TuiMainScreen } from "@leo-labs-ai/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { type ClientTuiServer, ExperimentalClientTui } from "../src/experimental/client-tui.ts";
 import { createPresentationFacetData } from "../src/experimental/plugins/bundled.ts";

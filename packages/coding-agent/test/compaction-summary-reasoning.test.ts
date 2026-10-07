@@ -1,11 +1,11 @@
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	type Message,
 	type Model,
 	normalizeContext,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
@@ -19,8 +19,8 @@ const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
 }));
 
-vi.mock("@lue-labs/pi-ai/compat", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@lue-labs/pi-ai/compat")>();
+vi.mock("@leo-labs-ai/pi-ai/compat", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@leo-labs-ai/pi-ai/compat")>();
 	return {
 		...actual,
 		completeSimple: completeSimpleMock,

@@ -10,7 +10,7 @@ import {
 	type TranscriptContext,
 	Type,
 	type UserMessage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import {
 	type AgentEvent,
 	type CompactionPolicy,
@@ -29,7 +29,7 @@ import {
 	type TaskId,
 	UsageDoc,
 	watchEvents,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { selectCut, serializeConversation } from "../src/harness/compaction.ts";
 import { orderToolResults } from "../src/harness/context.ts";

@@ -1,9 +1,9 @@
-import { fauxAssistantMessage } from "@lue-labs/pi-ai";
+import { fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { convertToLlm } from "../../src/core/messages.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
-// Fork: UI-only custom messages (modelVisible: false). Re-grafted from lue-labs/pi-mono#528.
+// Fork: UI-only custom messages (modelVisible: false). Re-grafted from leo-labs-ai/pi-mono#528.
 describe("AgentSession model-visible custom messages", () => {
 	const harnesses: Harness[] = [];
 

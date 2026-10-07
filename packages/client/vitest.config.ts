@@ -10,7 +10,7 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: {
-			"@lue-labs/pi-protocol": fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
+			"@leo-labs-ai/pi-protocol": fileURLToPath(new URL("../protocol/src/index.ts", import.meta.url)),
 		},
 	},
 	ssr: { resolve: { conditions: ["source"] } },

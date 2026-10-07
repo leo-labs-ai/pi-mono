@@ -26,7 +26,7 @@ import {
 	type Session,
 	type TaskId,
 	type TaskRuntime,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { context } from "./session-support.ts";
 import { completed, deferred, eventually, openTasks } from "./task-support.ts";

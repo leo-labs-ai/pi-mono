@@ -17,7 +17,7 @@ Range `v1.0.3..v1.0.4` = 28 non-merge commits, 133 files. Operation: ordinary tw
 | Class | What |
 |---|---|
 | adopt | New `packages/env` (`@earendil-works/pi-env`, SSH remote execution plus Rust daemon), durable PowerShell tool and watcher fixes, codemode built-in patch survival (`b223082bb`), codemode `read` image blocks (`021eae60a`), MCP OAuth `application_type`, MCP shutdown close, `--tools` MCP patterns and `--no-mcp`, HTTP/2 stream-cancel retry, hidden tools out of prompt rules, login-shell test fix |
-| adapt (package identity) | 11 conflicting manifests and the install-lock: keep fork-owned names and exact 1.0.4 pins; `packages/env` imports and depends on `@lue-labs/pi-durable` (workspace name), adds root build/local-release/tsconfig entries; regenerate root and install lockfiles |
+| adapt (package identity) | 11 conflicting manifests and the install-lock: keep fork-owned names and exact 1.0.4 pins; `packages/env` imports and depends on `@leo-labs-ai/pi-durable` (workspace name), adds root build/local-release/tsconfig entries; regenerate root and install lockfiles |
 | adapt | `agent-session-codemode.test.ts`: upstream's added `writeFileSync`/`join` imports with the fork-scoped `pi-agent-core` type import |
 | adapt (workflow) | `ci.yml`: keep fork jobs; add the pi-env daemon build before `./test.sh` in `unit-tests` (env tests require it). `env.yml`: quote `$(which fdfind)` (SC2046), shellcheck-ignore SC2016 on the embedded `node -e`, rename job `check` to `env-package` (it collided with the required `check` context) and drop its `npm run check` step (fork CI owns it; it needs `origin/main`, absent in that checkout) |
 | equivalent | `durable-env.yml` deleted upstream; superseded by `env.yml` |

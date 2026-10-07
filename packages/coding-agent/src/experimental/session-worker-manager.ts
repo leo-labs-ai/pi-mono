@@ -11,7 +11,7 @@ import {
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@earendil-works/chord/context";
-import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@lue-labs/pi-server";
+import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@leo-labs-ai/pi-server";
 import { Check } from "typebox/value";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";

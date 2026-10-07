@@ -25,14 +25,14 @@
  *   pi -e ./built-in-tool-renderer.ts
  */
 
-import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "@lue-labs/pi-coding-agent";
+import type { BashToolDetails, EditToolDetails, ExtensionAPI, ReadToolDetails } from "@leo-labs-ai/pi-coding-agent";
 import {
 	createBashToolDefinition,
 	createEditToolDefinition,
 	createReadToolDefinition,
 	createWriteToolDefinition,
-} from "@lue-labs/pi-coding-agent";
-import { Text } from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-coding-agent";
+import { Text } from "@leo-labs-ai/pi-tui";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();

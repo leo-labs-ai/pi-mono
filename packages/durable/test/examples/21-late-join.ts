@@ -3,9 +3,9 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/21-late-join.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { Type } from "@lue-labs/pi-ai";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@lue-labs/pi-ai/providers/faux";
+import { Type } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai/providers/faux";
 import {
 	type AgentEvent,
 	createRegistry,

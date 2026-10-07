@@ -29,7 +29,7 @@ describe("upstream-scoped host aliases", () => {
 	});
 	it("uses the exact fork host module objects instead of a second runtime", () => {
 		for (const suffix of suffixes) {
-			const fork = VIRTUAL_MODULES[`@lue-labs/pi-${suffix}`];
+			const fork = VIRTUAL_MODULES[`@leo-labs-ai/pi-${suffix}`];
 			expect(fork).toBeDefined();
 			expect(VIRTUAL_MODULES[`@earendil-works/pi-${suffix}`]).toBe(fork);
 		}
@@ -40,7 +40,7 @@ describe("upstream-scoped host aliases", () => {
 		try {
 			const imports = suffixes.map(
 				(suffix, i) =>
-					`import * as upstream${i} from "@earendil-works/pi-${suffix}";\nimport * as fork${i} from "@lue-labs/pi-${suffix}";`,
+					`import * as upstream${i} from "@earendil-works/pi-${suffix}";\nimport * as fork${i} from "@leo-labs-ai/pi-${suffix}";`,
 			);
 			const checks = suffixes.map(
 				(_suffix, i) =>

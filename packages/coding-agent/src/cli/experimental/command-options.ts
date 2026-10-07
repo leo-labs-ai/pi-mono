@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { isServerId, type ServerId } from "@lue-labs/pi-protocol";
+import { isServerId, type ServerId } from "@leo-labs-ai/pi-protocol";
 import { type ParsedCommandInput, stringOption, valueOption } from "./command.ts";
 
 export type AuthInput =

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import type * as OsModule from "node:os";
-import type { NativeClipboard } from "@lue-labs/pi-tui";
+import type { NativeClipboard } from "@leo-labs-ai/pi-tui";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { copyToClipboard, readClipboardText } from "../src/utils/clipboard.ts";
 
@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
 		>(),
 	platform: vi.fn<() => NodeJS.Platform>(),
 }));
-vi.mock("@lue-labs/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
+vi.mock("@leo-labs-ai/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
 vi.mock("node:os", async () => ({
 	...(await vi.importActual<typeof OsModule>("node:os")),

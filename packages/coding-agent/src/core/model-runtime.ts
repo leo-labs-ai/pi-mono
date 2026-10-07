@@ -55,15 +55,15 @@ import {
 	type ProviderRequestOptions,
 	type SimpleStreamOptions,
 	type StreamOptions,
-} from "@lue-labs/pi-ai";
-import * as builtinProviderCatalog from "@lue-labs/pi-ai/providers/all";
+} from "@leo-labs-ai/pi-ai";
+import * as builtinProviderCatalog from "@leo-labs-ai/pi-ai/providers/all";
 import {
 	assertChatModel,
 	assertClassifierModel,
 	assertImageModel,
 	classifierErrorResult,
 	imageErrorResult,
-} from "@lue-labs/pi-ai/utils/model-operations";
+} from "@leo-labs-ai/pi-ai/utils/model-operations";
 import { getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";

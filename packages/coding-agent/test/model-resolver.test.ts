@@ -1,10 +1,10 @@
 import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent } from "@lue-labs/pi-agent-core";
-import type { Model } from "@lue-labs/pi-ai";
-import { getModel, streamSimple } from "@lue-labs/pi-ai/compat";
-import { getBuiltinModels, getBuiltinProviders } from "@lue-labs/pi-ai/providers/all";
+import { Agent } from "@leo-labs-ai/pi-agent-core";
+import type { Model } from "@leo-labs-ai/pi-ai";
+import { getModel, streamSimple } from "@leo-labs-ai/pi-ai/compat";
+import { getBuiltinModels, getBuiltinProviders } from "@leo-labs-ai/pi-ai/providers/all";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
@@ -188,7 +188,7 @@ describe("parseModelPattern", () => {
 			expect(result.model).toBeUndefined();
 		});
 
-		// lue-labs/pi-mono#162: an unavailable `provider/model` ref must not be
+		// leo-labs-ai/pi-mono#162: an unavailable `provider/model` ref must not be
 		// answered by a proxy whose model id happens to equal that string.
 		test("provider-qualified model refs do not match proxy provider model ids", () => {
 			const proxyModels: Model<"anthropic-messages">[] = [

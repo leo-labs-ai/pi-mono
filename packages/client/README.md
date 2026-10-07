@@ -1,9 +1,9 @@
-# @lue-labs/pi-client
+# @leo-labs-ai/pi-client
 
 Transport-neutral client for the experimental Pi service protocol.
 
 ```ts
-import { Client, type ByteTransportFactory } from "@lue-labs/pi-client";
+import { Client, type ByteTransportFactory } from "@leo-labs-ai/pi-client";
 
 const transportFactory: ByteTransportFactory = async (handlers) => {
   // Connect using WebSocket, Unix socket, or another ordered byte transport.
@@ -48,8 +48,8 @@ A transport factory creates a fresh authenticated connection for each attempt. R
 Node.js and Bun consumers can use the separate Unix transport:
 
 ```ts
-import { Client } from "@lue-labs/pi-client";
-import { createUnixTransportFactory } from "@lue-labs/pi-client/unix";
+import { Client } from "@leo-labs-ai/pi-client";
+import { createUnixTransportFactory } from "@leo-labs-ai/pi-client/unix";
 
 const client = new Client({
   serverId: "01234567-89ab-4def-8123-456789abcdef",
@@ -61,7 +61,7 @@ await client.connect();
 Unix discovery scans an explicit physical-route directory, derives each expected server ID from its filename, and verifies it through the existing handshake:
 
 ```ts
-import { discoverUnixServers } from "@lue-labs/pi-client/unix";
+import { discoverUnixServers } from "@leo-labs-ai/pi-client/unix";
 
 const routes = await discoverUnixServers({ directory: "/run/user/1000/pi" });
 // [{ serverId: "...", path: "/run/user/1000/pi/<serverId>.sock" }]

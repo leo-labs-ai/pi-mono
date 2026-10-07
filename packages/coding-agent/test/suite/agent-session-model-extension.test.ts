@@ -1,4 +1,4 @@
-import type { AgentTool, ThinkingLevel } from "@lue-labs/pi-agent-core";
+import type { AgentTool, ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 import {
 	fauxAssistantMessage,
 	fauxToolCall,
@@ -6,7 +6,7 @@ import {
 	type JsonObject,
 	type Model,
 	type Usage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BuildSystemPromptOptions, ExtensionAPI } from "../../src/index.ts";

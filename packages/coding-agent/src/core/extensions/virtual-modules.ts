@@ -1,13 +1,13 @@
-import * as bundledPiAgentCore from "@lue-labs/pi-agent-core";
-import * as bundledPiAiCompat from "@lue-labs/pi-ai/compat";
-import * as bundledPiAiOauth from "@lue-labs/pi-ai/oauth";
-import * as bundledPiAiProviders from "@lue-labs/pi-ai/providers/all";
-import * as bundledPiTui from "@lue-labs/pi-tui";
+import * as bundledPiAgentCore from "@leo-labs-ai/pi-agent-core";
+import * as bundledPiAiCompat from "@leo-labs-ai/pi-ai/compat";
+import * as bundledPiAiOauth from "@leo-labs-ai/pi-ai/oauth";
+import * as bundledPiAiProviders from "@leo-labs-ai/pi-ai/providers/all";
+import * as bundledPiTui from "@leo-labs-ai/pi-tui";
 import * as bundledTypebox from "typebox";
 import * as bundledTypeboxCompile from "typebox/compile";
 import * as bundledTypeboxValue from "typebox/value";
 // This import is safe because loader.ts exports are not re-exported from index.ts.
-// Extensions can therefore import from @lue-labs/pi-coding-agent.
+// Extensions can therefore import from @leo-labs-ai/pi-coding-agent.
 import * as bundledPiCodingAgent from "../../index.ts";
 
 /** Modules available to extensions in source and compiled binary runtimes. */
@@ -25,16 +25,16 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@earendil-works/pi-ai/oauth": bundledPiAiOauth,
 	"@earendil-works/pi-ai/providers/all": bundledPiAiProviders,
 	"@earendil-works/pi-coding-agent": bundledPiCodingAgent,
-	"@lue-labs/pi-agent-core": bundledPiAgentCore,
-	"@lue-labs/pi-tui": bundledPiTui,
+	"@leo-labs-ai/pi-agent-core": bundledPiAgentCore,
+	"@leo-labs-ai/pi-tui": bundledPiTui,
 	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
 	// superset of the core entrypoint): existing extensions using the old
 	// global API keep working at runtime until compat is removed.
-	"@lue-labs/pi-ai": bundledPiAiCompat,
-	"@lue-labs/pi-ai/compat": bundledPiAiCompat,
-	"@lue-labs/pi-ai/oauth": bundledPiAiOauth,
-	"@lue-labs/pi-ai/providers/all": bundledPiAiProviders,
-	"@lue-labs/pi-coding-agent": bundledPiCodingAgent,
+	"@leo-labs-ai/pi-ai": bundledPiAiCompat,
+	"@leo-labs-ai/pi-ai/compat": bundledPiAiCompat,
+	"@leo-labs-ai/pi-ai/oauth": bundledPiAiOauth,
+	"@leo-labs-ai/pi-ai/providers/all": bundledPiAiProviders,
+	"@leo-labs-ai/pi-coding-agent": bundledPiCodingAgent,
 	"@mariozechner/pi-agent-core": bundledPiAgentCore,
 	"@mariozechner/pi-tui": bundledPiTui,
 	"@mariozechner/pi-ai": bundledPiAiCompat,

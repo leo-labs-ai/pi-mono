@@ -9,7 +9,7 @@ import {
 	type Models,
 	type ToolResultMessage,
 	Type,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import {
 	type AgentEvent,
 	type Conversation,
@@ -34,7 +34,7 @@ import {
 	ToolResultEntry,
 	type Tx,
 	watchEvents,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, chatSetup, openChat, waitFor } from "./chat-support.ts";

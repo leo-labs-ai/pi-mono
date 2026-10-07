@@ -31,7 +31,7 @@ import {
 	toCodemodeIdentifier,
 } from "@earendil-works/pi-codemode/declarations";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import { type Static, Type } from "typebox";
 import { getDocsPath } from "../../config.ts";
 import type {

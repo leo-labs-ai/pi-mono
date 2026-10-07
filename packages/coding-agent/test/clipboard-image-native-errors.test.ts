@@ -1,9 +1,9 @@
-import type * as Tui from "@lue-labs/pi-tui";
+import type * as Tui from "@leo-labs-ai/pi-tui";
 import { afterEach, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 const readClipboardText = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
-vi.mock("@lue-labs/pi-tui", async (importOriginal) => ({
+vi.mock("@leo-labs-ai/pi-tui", async (importOriginal) => ({
 	...(await importOriginal<typeof Tui>()),
 	getNativeClipboard: () => ({
 		async getImage() {

@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@lue-labs/pi-ai";
-import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@lue-labs/pi-tui";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
+import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";

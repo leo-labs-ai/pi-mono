@@ -1,4 +1,4 @@
-import { InMemoryModelsStore } from "@lue-labs/pi-ai";
+import { InMemoryModelsStore } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";

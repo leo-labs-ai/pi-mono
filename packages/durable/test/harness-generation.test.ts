@@ -5,7 +5,7 @@ import {
 	type Models,
 	type SimpleStreamOptions,
 	type SystemMessage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import {
 	AssistantEntry,
 	type CommitPublication,
@@ -24,7 +24,7 @@ import {
 	type TaskId,
 	UserEntry,
 	wrapSection,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { resolveSettings } from "../src/harness/agent.ts";
 import type { SessionImpl } from "../src/session/session.ts";

@@ -1,4 +1,4 @@
-import { Container } from "@lue-labs/pi-tui";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { describe, expect, test } from "vitest";
 import { createChatViewport } from "../src/modes/interactive/chat-viewport.ts";
 

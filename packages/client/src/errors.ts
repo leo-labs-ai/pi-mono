@@ -1,4 +1,4 @@
-import type { ProtocolError, ProtocolErrorCode } from "@lue-labs/pi-protocol";
+import type { ProtocolError, ProtocolErrorCode } from "@leo-labs-ai/pi-protocol";
 
 export class ServerError extends Error {
 	readonly code: ProtocolErrorCode;

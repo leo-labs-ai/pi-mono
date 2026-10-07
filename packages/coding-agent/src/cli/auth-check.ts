@@ -1,4 +1,4 @@
-import type { CredentialStore } from "@lue-labs/pi-ai";
+import type { CredentialStore } from "@leo-labs-ai/pi-ai";
 import { resolveCliModel } from "../core/model-resolver.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../core/models-store.ts";

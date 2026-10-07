@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { normalizeContext } from "@lue-labs/pi-ai";
-import type { AnthropicMessagesCompat, Api, Model, OpenAICompletionsCompat } from "@lue-labs/pi-ai/compat";
-import { getApiProvider, getModels, getSupportedThinkingLevels } from "@lue-labs/pi-ai/compat";
+import { normalizeContext } from "@leo-labs-ai/pi-ai";
+import type { AnthropicMessagesCompat, Api, Model, OpenAICompletionsCompat } from "@leo-labs-ai/pi-ai/compat";
+import { getApiProvider, getModels, getSupportedThinkingLevels } from "@leo-labs-ai/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import type { ModelsJsonProvider } from "../src/core/model-config.ts";

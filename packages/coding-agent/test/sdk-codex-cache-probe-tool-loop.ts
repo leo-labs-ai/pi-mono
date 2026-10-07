@@ -12,7 +12,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
-import { normalizeContext } from "@lue-labs/pi-ai";
+import { normalizeContext } from "@leo-labs-ai/pi-ai";
 import {
 	type Api,
 	type AssistantMessage,
@@ -22,7 +22,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 	Type,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import {
 	getOpenAICodexWebSocketDebugStats,
 	streamSimple as streamSimpleOpenAICodexResponses,

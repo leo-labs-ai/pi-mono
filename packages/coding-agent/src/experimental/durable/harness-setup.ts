@@ -1,14 +1,14 @@
 import type { Context } from "@earendil-works/chord";
-import type { ModelThinkingLevel } from "@lue-labs/pi-ai";
+import type { ModelThinkingLevel } from "@leo-labs-ai/pi-ai";
 import {
 	createRegistry,
 	type EnvTarget,
 	type HarnessSettings,
 	type ModelRef,
 	type Registry,
-} from "@lue-labs/pi-durable";
-import { NodeExecutionEnv } from "@lue-labs/pi-durable/env/node";
-import { CodingTools } from "@lue-labs/pi-durable/tools";
+} from "@leo-labs-ai/pi-durable";
+import { NodeExecutionEnv } from "@leo-labs-ai/pi-durable/env/node";
+import { CodingTools } from "@leo-labs-ai/pi-durable/tools";
 import { applyHttpProxySettings, configureHttpDispatcher } from "../../core/http-dispatcher.ts";
 import { findInitialModel, resolveCliModel } from "../../core/model-resolver.ts";
 import type { ModelRuntime } from "../../core/model-runtime.ts";

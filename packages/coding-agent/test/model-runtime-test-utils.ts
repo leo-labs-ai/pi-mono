@@ -1,4 +1,4 @@
-import type { CredentialStore } from "@lue-labs/pi-ai";
+import type { CredentialStore } from "@leo-labs-ai/pi-ai";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { InMemoryCodingAgentModelsStore } from "../src/core/models-store.ts";

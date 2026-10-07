@@ -8,7 +8,7 @@ import {
 	getSupportedThinkingLevels,
 	InMemoryModelsStore,
 	type Model,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";

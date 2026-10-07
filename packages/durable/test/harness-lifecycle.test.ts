@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
-import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@lue-labs/pi-ai";
+import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@leo-labs-ai/pi-ai";
 import {
 	type Conversation,
 	type ConversationId,
@@ -15,7 +15,7 @@ import {
 	MemoryStorage,
 	type Storage,
 	type TaskId,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";

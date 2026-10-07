@@ -1,6 +1,6 @@
 import type { AttachedReplicatedState } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@lue-labs/pi-ai";
+import { clampThinkingLevel, getSupportedThinkingLevels, type ModelThinkingLevel } from "@leo-labs-ai/pi-ai";
 import {
 	type AgentState,
 	type Conversation,
@@ -13,8 +13,8 @@ import {
 	ROOT_CONVERSATION_ID,
 	type Submission,
 	type TaskGraph,
-} from "@lue-labs/pi-durable";
-import { openNodeSqliteStorage } from "@lue-labs/pi-durable/storage/sqlite/node";
+} from "@leo-labs-ai/pi-durable";
+import { openNodeSqliteStorage } from "@leo-labs-ai/pi-durable/storage/sqlite/node";
 import { ModelRuntime } from "../../core/model-runtime.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import {

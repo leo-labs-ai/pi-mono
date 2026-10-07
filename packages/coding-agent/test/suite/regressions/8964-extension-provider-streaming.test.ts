@@ -1,5 +1,5 @@
-import { type AssistantMessage, fauxAssistantMessage, fauxProvider } from "@lue-labs/pi-ai";
-import { getApiProvider } from "@lue-labs/pi-ai/compat";
+import { type AssistantMessage, fauxAssistantMessage, fauxProvider } from "@leo-labs-ai/pi-ai";
+import { getApiProvider } from "@leo-labs-ai/pi-ai/compat";
 import { expect, it } from "vitest";
 import { createHarness } from "../harness.ts";
 

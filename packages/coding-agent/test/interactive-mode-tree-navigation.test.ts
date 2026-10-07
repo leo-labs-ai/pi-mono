@@ -1,4 +1,4 @@
-import { Container } from "@lue-labs/pi-tui";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
