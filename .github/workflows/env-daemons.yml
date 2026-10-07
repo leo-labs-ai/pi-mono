@@ -1,6 +1,6 @@
 name: pi-env daemons
 
-# Builds the pi-env daemon for every remote system @earendil-works/pi-env supports, on native runners, as artifacts
+# Builds the pi-env daemon for every remote system @leo-labs-ai/pi-env supports, on native runners, as artifacts
 # named pi-env-<platform>-<arch>. Build Binaries calls this before publishing npm packages; the Environments workflow
 # calls it to test the release builds on every change.
 on:

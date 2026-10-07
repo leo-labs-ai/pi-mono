@@ -1,4 +1,4 @@
-# @earendil-works/pi-env
+# @leo-labs-ai/pi-env
 
 Remote execution environments for [Pi Durable](../durable): an agent's tools run on another machine, usually over SSH,
 while the Durable worker, its storage and credentials stay local.
@@ -10,7 +10,7 @@ while the Durable worker, its storage and credentials stay local.
   ([docs/semantics.md](docs/semantics.md)).
 
 ```ts
-import { acceptHostKey, connectSsh, RemoteExecutionEnv, scanHostKey, sshConnection } from "@earendil-works/pi-env";
+import { acceptHostKey, connectSsh, RemoteExecutionEnv, scanHostKey, sshConnection } from "@leo-labs-ai/pi-env";
 
 const target = { host: "gpu-box", knownHostsFile: "/data/ssh/known_hosts", hostKeyAlias: "pi-env-gpu" };
 // Once: show the host's key fingerprint to the owner, who compares it out of band and accepts it.
