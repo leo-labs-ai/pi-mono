@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import { type AssistantMessage, Type } from "@lue-labs/pi-ai";
+import { type AssistantMessage, Type } from "@leo-labs-ai/pi-ai";
 import {
 	AssistantEntry,
 	configure,
@@ -8,7 +8,7 @@ import {
 	type EntryId,
 	type Extension,
 	type ToolExecutionApi,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 
 async function answerText(api: ToolExecutionApi, answer: EntryId, context: Context): Promise<string> {
 	const entry = await api.commit((tx) => tx.entry(AssistantEntry, answer), context);

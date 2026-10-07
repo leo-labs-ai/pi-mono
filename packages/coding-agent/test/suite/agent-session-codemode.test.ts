@@ -1,6 +1,6 @@
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantImages,
 	type ClassifierModel,
@@ -12,8 +12,8 @@ import {
 	type ImageModel,
 	type ImagesContext,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
-import type { ToolResultMessage, Usage } from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai";
+import type { ToolResultMessage, Usage } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";

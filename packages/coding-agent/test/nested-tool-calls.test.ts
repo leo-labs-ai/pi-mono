@@ -1,5 +1,5 @@
-import type { AgentTool, AgentToolCall } from "@lue-labs/pi-agent-core";
-import type { Usage } from "@lue-labs/pi-ai";
+import type { AgentTool, AgentToolCall } from "@leo-labs-ai/pi-agent-core";
+import type { Usage } from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {

@@ -1,4 +1,4 @@
-import { InMemoryModelsStore } from "@lue-labs/pi-ai";
+import { InMemoryModelsStore } from "@leo-labs-ai/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { AuthCommandError, isAuthCommandHelp, parseAuthCommand } from "../src/cli/auth-command.ts";

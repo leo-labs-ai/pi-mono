@@ -6,8 +6,8 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 	UserMessage,
-} from "@lue-labs/pi-ai";
-import { createModels, Type } from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
+import { createModels, Type } from "@leo-labs-ai/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
@@ -22,7 +22,7 @@ import {
 	type Storage,
 	section,
 	type ToolRegistration,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { context } from "./session-support.ts";
 
 export function tool(name: string, description = `${name} tool`): ToolRegistration {

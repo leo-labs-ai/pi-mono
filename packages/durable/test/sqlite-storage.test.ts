@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { registerStorageConformance } from "@lue-labs/pi-durable/testing";
+import { registerStorageConformance } from "@leo-labs-ai/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
 import type { SqliteStorage } from "../src/storage/sqlite/index.ts";

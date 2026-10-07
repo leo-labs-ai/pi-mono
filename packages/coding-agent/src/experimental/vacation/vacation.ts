@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import { Type } from "@lue-labs/pi-ai";
+import { Type } from "@leo-labs-ai/pi-ai";
 import {
 	AssistantEntry,
 	type ConversationId,
@@ -8,7 +8,7 @@ import {
 	defineTask,
 	defineTool,
 	section,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 
 // ─── search: slow, fake, and safe to rerun ──────────────────────────────────
 

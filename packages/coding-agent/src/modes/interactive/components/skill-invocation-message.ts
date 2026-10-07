@@ -1,4 +1,4 @@
-import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from "@lue-labs/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Text } from "@leo-labs-ai/pi-tui";
 import type { ParsedSkillBlock } from "../../../core/agent-session.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { ToolNamespace } from "../src/core/extensions/types.ts";

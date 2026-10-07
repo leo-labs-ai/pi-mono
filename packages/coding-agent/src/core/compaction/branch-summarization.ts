@@ -5,10 +5,10 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage, StreamFn } from "@lue-labs/pi-agent-core";
-import type { RetryCallbacks, RetryPolicy } from "@lue-labs/pi-ai";
-import { contentText, normalizeContext } from "@lue-labs/pi-ai";
-import type { Model, SimpleStreamOptions, Usage } from "@lue-labs/pi-ai/compat";
+import type { AgentMessage, StreamFn } from "@leo-labs-ai/pi-agent-core";
+import type { RetryCallbacks, RetryPolicy } from "@leo-labs-ai/pi-ai";
+import { contentText, normalizeContext } from "@leo-labs-ai/pi-ai";
+import type { Model, SimpleStreamOptions, Usage } from "@leo-labs-ai/pi-ai/compat";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,

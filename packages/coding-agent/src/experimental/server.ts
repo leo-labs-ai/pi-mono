@@ -5,16 +5,16 @@ import { isAbsolute, join } from "node:path";
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import type { FacetBundleArtifact } from "@earendil-works/chord/node";
-import { Client, ServerError as ClientServerError, DisconnectedError } from "@lue-labs/pi-client";
-import { createUnixTransportFactory, type UnixServerRoute } from "@lue-labs/pi-client/unix";
-import { isServerId, type ServerId } from "@lue-labs/pi-protocol";
+import { Client, ServerError as ClientServerError, DisconnectedError } from "@leo-labs-ai/pi-client";
+import { createUnixTransportFactory, type UnixServerRoute } from "@leo-labs-ai/pi-client/unix";
+import { isServerId, type ServerId } from "@leo-labs-ai/pi-protocol";
 import {
 	ServerError as RoutedServerError,
 	type Server,
 	type ServerHost,
 	SessionNotFoundError,
-} from "@lue-labs/pi-server";
-import { createUnixServer, getUnixSocketPath } from "@lue-labs/pi-server/unix";
+} from "@leo-labs-ai/pi-server";
+import { createUnixServer, getUnixSocketPath } from "@leo-labs-ai/pi-server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/experimental/command-options.ts";
 import { getAgentDir } from "../config.ts";

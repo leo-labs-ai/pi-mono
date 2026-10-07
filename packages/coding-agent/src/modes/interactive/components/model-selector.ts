@@ -1,4 +1,4 @@
-import { type Model, modelsAreEqual } from "@lue-labs/pi-ai";
+import { type Model, modelsAreEqual } from "@leo-labs-ai/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -8,7 +8,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
 import { refreshModelCatalogs } from "../model-catalog-refresh.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";

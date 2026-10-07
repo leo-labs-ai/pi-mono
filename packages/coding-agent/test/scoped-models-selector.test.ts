@@ -1,4 +1,4 @@
-import { setKeybindings } from "@lue-labs/pi-tui";
+import { setKeybindings } from "@leo-labs-ai/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { ScopedModelsSelectorComponent } from "../src/modes/interactive/components/scoped-models-selector.ts";

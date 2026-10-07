@@ -1,4 +1,4 @@
-import type { AssistantMessage, ImageContent } from "@lue-labs/pi-ai";
+import type { AssistantMessage, ImageContent } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";

@@ -2,15 +2,15 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
-import type { AgentMessage, AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	getCurrentSystemMessage,
 	type ImageContent,
 	type Model,
 	type Provider,
 	type ProviderHeaders,
-} from "@lue-labs/pi-ai";
-import type { KeyId } from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-ai";
+import type { KeyId } from "@leo-labs-ai/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.ts";
 import type { CacheWarmingAction } from "../cache-warmer.ts";
 import type { ResourceDiagnostic } from "../diagnostics.ts";

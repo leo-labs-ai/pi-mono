@@ -10,7 +10,7 @@ import {
 	MemoryStorage,
 	type TaskGraph,
 	type TaskId,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";

@@ -1,7 +1,7 @@
 # Releasing
 
 > **Current automation:** releases run through `.github/workflows/release.yml`
-> and Changesets on `main`, publishing the restricted `@lue-labs/*` scope to
+> and Changesets on `main`, publishing the restricted `@leo-labs-ai/*` scope to
 > GitHub Packages. The older local tag, public-npm OIDC, and WebAuthn paths below
 > are not canonical. Do not run them unless a maintainer explicitly selects the
 > legacy fallback after reviewing it.
@@ -11,7 +11,7 @@
 > match all publishable workspaces. Reconcile those surfaces before the next
 > release; do not infer a lockstep package set.
 
-Canonical release runbook for `lue-labs/pi-mono`. The root `AGENTS.md`
+Canonical release runbook for `leo-labs-ai/pi-mono`. The root `AGENTS.md`
 "Releasing" section is the agent-facing copy; this document is the human-facing
 source of truth. Keep the two in sync, and when a step changes, change it here first.
 
@@ -20,10 +20,10 @@ source of truth. Keep the two in sync, and when a step changes, change it here f
 **Lockstep versioning.** All four publishable packages share one version and are
 released together:
 
-- `@lue-labs/pi-ai`
-- `@lue-labs/pi-agent-core`
-- `@lue-labs/pi-tui`
-- `@lue-labs/pi-coding-agent`
+- `@leo-labs-ai/pi-ai`
+- `@leo-labs-ai/pi-agent-core`
+- `@leo-labs-ai/pi-tui`
+- `@leo-labs-ai/pi-coding-agent`
 
 `patch` = fixes + additions. `minor` = breaking changes. There are no major
 releases.

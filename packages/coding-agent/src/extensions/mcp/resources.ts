@@ -19,7 +19,7 @@ import type {
 	Resource,
 	ResourceTemplate,
 } from "@earendil-works/pi-mcp";
-import type { ImageContent, JsonValue, TextContent } from "@lue-labs/pi-ai";
+import type { ImageContent, JsonValue, TextContent } from "@leo-labs-ai/pi-ai";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolDefinition } from "../../core/extensions/types.ts";
 import {

@@ -63,14 +63,14 @@ describe("server-selected presentation facets", () => {
 				version: "1.0.0",
 				peerDependencies: {
 					"@earendil-works/chord": "^0.84.4",
-					"@lue-labs/pi-coding-agent": "^0.84.4",
+					"@leo-labs-ai/pi-coding-agent": "^0.84.4",
 				},
 			})}\n`,
 		);
 		const sourcePath = join(packagePath, "src", "tui.ts");
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@lue-labs/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-a", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@leo-labs-ai/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-a", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const plugin = createServerPluginPackage(directory, serverId, packagePath);
 
@@ -86,7 +86,7 @@ describe("server-selected presentation facets", () => {
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@lue-labs/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-b", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@leo-labs-ai/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-b", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const second = await plugin.build();
 		expect(second[0]?.source).not.toBe(first[0]?.source);
@@ -137,7 +137,7 @@ describe("server-selected presentation facets", () => {
 
 		await writeFile(
 			sourcePath,
-			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@lue-labs/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-c", setup(env) { env.use(SlashCommands); } });\n',
+			'import { defineFacet } from "@earendil-works/chord"; import { SlashCommands } from "@leo-labs-ai/pi-coding-agent/experimental/plugin"; export default defineFacet({ id: "built-c", setup(env) { env.use(SlashCommands); } });\n',
 		);
 		const services = runtime.servers[0]!.server.open({
 			services: [PresentationPlugins],

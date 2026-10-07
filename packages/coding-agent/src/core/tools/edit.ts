@@ -1,4 +1,4 @@
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";

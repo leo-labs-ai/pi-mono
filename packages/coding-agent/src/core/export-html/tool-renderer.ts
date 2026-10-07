@@ -5,8 +5,8 @@
  * and converting the ANSI output to HTML.
  */
 
-import type { ImageContent, TextContent } from "@lue-labs/pi-ai";
-import type { Component } from "@lue-labs/pi-tui";
+import type { ImageContent, TextContent } from "@leo-labs-ai/pi-ai";
+import type { Component } from "@leo-labs-ai/pi-tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolRenderContext, ToolRenderers } from "../extensions/types.ts";
 import { ansiLinesToHtml } from "./ansi-to-html.ts";

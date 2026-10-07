@@ -1,6 +1,6 @@
 import type { Context } from "@earendil-works/chord";
-import type { Message, SystemMessage, Tool, ToolReference } from "@lue-labs/pi-ai";
-import { declarationsEqual, getCurrentTools, toToolDeclaration } from "@lue-labs/pi-ai/utils/transcript";
+import type { Message, SystemMessage, Tool, ToolReference } from "@leo-labs-ai/pi-ai";
+import { declarationsEqual, getCurrentTools, toToolDeclaration } from "@leo-labs-ai/pi-ai/utils/transcript";
 import { SystemEntry } from "../entries.ts";
 import type { ContextEdit, TypedEntryDraft } from "../types.ts";
 import type { ContextView, PromptInput, PromptSection, ToolRegistration } from "./types.ts";

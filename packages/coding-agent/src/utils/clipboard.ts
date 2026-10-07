@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { unlinkSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-import { getNativeClipboard } from "@lue-labs/pi-tui";
+import { getNativeClipboard } from "@leo-labs-ai/pi-tui";
 import { runClipboardCommand } from "./clipboard-command.ts";
 import { isWSL } from "./wsl.ts";
 

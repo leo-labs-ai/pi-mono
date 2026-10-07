@@ -1,4 +1,4 @@
-import type { Models } from "@lue-labs/pi-ai";
+import type { Models } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 

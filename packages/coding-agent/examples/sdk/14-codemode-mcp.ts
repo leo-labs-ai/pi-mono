@@ -19,7 +19,7 @@ import {
 	getAgentDir,
 	SessionManager,
 	SettingsManager,
-} from "@lue-labs/pi-coding-agent";
+} from "@leo-labs-ai/pi-coding-agent";
 
 const cwd = process.cwd();
 

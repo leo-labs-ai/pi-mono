@@ -24,9 +24,9 @@ import {
 	type SimpleStreamOptions,
 	type StreamOptions,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
-import { getApiProvider } from "@lue-labs/pi-ai/compat";
-import { classifierErrorResult, imageErrorResult } from "@lue-labs/pi-ai/utils/model-operations";
+} from "@leo-labs-ai/pi-ai";
+import { getApiProvider } from "@leo-labs-ai/pi-ai/compat";
+import { classifierErrorResult, imageErrorResult } from "@leo-labs-ai/pi-ai/utils/model-operations";
 import type { ModelConfig, ModelsJsonModel, ModelsJsonModelOverride, ModelsJsonProvider } from "./model-config.ts";
 import {
 	clearConfigValueCache,

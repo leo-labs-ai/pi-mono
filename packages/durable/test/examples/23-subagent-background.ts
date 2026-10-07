@@ -9,10 +9,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type AssistantMessage, type FauxResponseStep, Type } from "@lue-labs/pi-ai";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@lue-labs/pi-ai/providers/faux";
-import { openaiProvider } from "@lue-labs/pi-ai/providers/openai";
+import { type AssistantMessage, type FauxResponseStep, Type } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai/providers/faux";
+import { openaiProvider } from "@leo-labs-ai/pi-ai/providers/openai";
 import {
 	type AgentEvent,
 	AssistantEntry,

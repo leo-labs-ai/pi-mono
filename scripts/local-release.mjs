@@ -8,18 +8,18 @@ import { installCodingAgentConsumer, packReleasePackages, smokeTestCodingAgentCo
 
 const packages = [
 	{ directory: "packages/chord", name: "@earendil-works/chord" },
-	{ directory: "packages/telemetry", name: "@lue-labs/pi-telemetry" },
+	{ directory: "packages/telemetry", name: "@leo-labs-ai/pi-telemetry" },
 	{ directory: "packages/codemode", name: "@earendil-works/pi-codemode" },
 	{ directory: "packages/mcp", name: "@earendil-works/pi-mcp" },
-	{ directory: "packages/ai", name: "@lue-labs/pi-ai" },
-	{ directory: "packages/durable", name: "@lue-labs/pi-durable" },
+	{ directory: "packages/ai", name: "@leo-labs-ai/pi-ai" },
+	{ directory: "packages/durable", name: "@leo-labs-ai/pi-durable" },
 	{ directory: "packages/env", name: "@earendil-works/pi-env" },
-	{ directory: "packages/tui", name: "@lue-labs/pi-tui" },
-	{ directory: "packages/agent", name: "@lue-labs/pi-agent-core" },
-	{ directory: "packages/protocol", name: "@lue-labs/pi-protocol" },
-	{ directory: "packages/client", name: "@lue-labs/pi-client" },
-	{ directory: "packages/server", name: "@lue-labs/pi-server" },
-	{ directory: "packages/coding-agent", name: "@lue-labs/pi-coding-agent" },
+	{ directory: "packages/tui", name: "@leo-labs-ai/pi-tui" },
+	{ directory: "packages/agent", name: "@leo-labs-ai/pi-agent-core" },
+	{ directory: "packages/protocol", name: "@leo-labs-ai/pi-protocol" },
+	{ directory: "packages/client", name: "@leo-labs-ai/pi-client" },
+	{ directory: "packages/server", name: "@leo-labs-ai/pi-server" },
+	{ directory: "packages/coding-agent", name: "@leo-labs-ai/pi-coding-agent" },
 ];
 
 function printUsage() {

@@ -12,7 +12,7 @@ import {
 	type ServiceProviderUpdate,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Conversation, Harness } from "@lue-labs/pi-durable";
+import type { Conversation, Harness } from "@leo-labs-ai/pi-durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import { AgentController } from "./agent-controller.ts";

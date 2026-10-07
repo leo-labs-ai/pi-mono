@@ -1,4 +1,4 @@
-import { createModels } from "@lue-labs/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
@@ -8,7 +8,7 @@ import {
 	type Registry,
 	type RegistryReader,
 	type Storage,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { context, flush } from "./session-support.ts";
 
 export type Deferred<T = void> = {

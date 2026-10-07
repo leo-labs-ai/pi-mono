@@ -1,6 +1,6 @@
-import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers, Client } from "@lue-labs/pi-client";
-import { DEFAULT_MAX_FRAME_LENGTH, type ServerId } from "@lue-labs/pi-protocol";
-import type { Server } from "@lue-labs/pi-server";
+import type { ByteTransport, ByteTransportFactory, ByteTransportHandlers, Client } from "@leo-labs-ai/pi-client";
+import { DEFAULT_MAX_FRAME_LENGTH, type ServerId } from "@leo-labs-ai/pi-protocol";
+import type { Server } from "@leo-labs-ai/pi-server";
 import { WebSocket } from "undici";
 import type { RadiusRelayAuthResolver } from "./radius-auth.ts";
 

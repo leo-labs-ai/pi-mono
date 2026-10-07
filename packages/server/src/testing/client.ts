@@ -9,7 +9,7 @@ import {
 	type RpcTarget,
 	type ServerMessage,
 	ServerMessageDecoder,
-} from "@lue-labs/pi-protocol";
+} from "@leo-labs-ai/pi-protocol";
 import { Deferred } from "./host.ts";
 
 interface MessageWaiter {

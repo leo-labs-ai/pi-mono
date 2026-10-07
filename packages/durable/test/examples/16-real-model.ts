@@ -2,8 +2,8 @@
 // Run from packages/durable (needs OPENAI_API_KEY):
 //   node --conditions=source --experimental-strip-types test/examples/16-real-model.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { openaiProvider } from "@lue-labs/pi-ai/providers/openai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { openaiProvider } from "@leo-labs-ai/pi-ai/providers/openai";
 import {
 	AssistantEntry,
 	createRegistry,

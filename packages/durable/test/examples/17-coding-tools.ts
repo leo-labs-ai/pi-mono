@@ -7,9 +7,9 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { ToolResultMessage } from "@lue-labs/pi-ai";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@lue-labs/pi-ai/providers/faux";
+import type { ToolResultMessage } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai/providers/faux";
 import { NodeExecutionEnv } from "../../src/env/node.ts";
 import {
 	AssistantEntry,

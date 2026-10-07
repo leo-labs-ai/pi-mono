@@ -1,11 +1,11 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@lue-labs/pi-ai";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import { DEFAULT_MAX_AGENT_RETRY_DELAY_MS, type Model, type Transport } from "@leo-labs-ai/pi-ai";
 import type {
 	TuiMode as RendererTuiMode,
 	ScrollViewScrollbar,
 	TerminalCapabilities,
 	WheelScrollLines,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";

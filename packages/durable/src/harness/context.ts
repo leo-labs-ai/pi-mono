@@ -1,5 +1,5 @@
 import type { Context } from "@earendil-works/chord";
-import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@lue-labs/pi-ai";
+import type { AssistantMessage, Message, ToolCall, ToolResultMessage } from "@leo-labs-ai/pi-ai";
 import type { SessionImpl } from "../session/session.ts";
 import type { ContextEdit, ConversationId, Cursor, EntryId, EntryRecord, Storage } from "../types.ts";
 import type { ContextView } from "./types.ts";

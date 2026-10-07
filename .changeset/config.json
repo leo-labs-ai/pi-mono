@@ -2,7 +2,7 @@
 	"$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
 	"changelog": false,
 	"commit": false,
-	"fixed": [["@lue-labs/pi-ai", "@lue-labs/pi-agent-core", "@lue-labs/pi-tui", "@lue-labs/pi-telemetry", "@lue-labs/pi-protocol", "@lue-labs/pi-client", "@lue-labs/pi-server", "@lue-labs/pi-durable", "@lue-labs/pi-coding-agent"]],
+	"fixed": [["@leo-labs-ai/pi-ai", "@leo-labs-ai/pi-agent-core", "@leo-labs-ai/pi-tui", "@leo-labs-ai/pi-telemetry", "@leo-labs-ai/pi-protocol", "@leo-labs-ai/pi-client", "@leo-labs-ai/pi-server", "@leo-labs-ai/pi-durable", "@leo-labs-ai/pi-coding-agent"]],
 	"linked": [],
 	"access": "restricted",
 	"baseBranch": "main",

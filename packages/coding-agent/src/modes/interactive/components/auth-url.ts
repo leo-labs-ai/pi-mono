@@ -1,4 +1,4 @@
-import { Container, hyperlink, Text, type TUI } from "@lue-labs/pi-tui";
+import { Container, hyperlink, Text, type TUI } from "@leo-labs-ai/pi-tui";
 import { copyToClipboard } from "../../../utils/clipboard.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";

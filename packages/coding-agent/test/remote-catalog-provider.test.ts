@@ -6,7 +6,7 @@ import {
 	type ModelsPublication,
 	type Provider,
 	type RefreshModelsContext,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VERSION } from "../src/config.ts";
 import { REMOTE_CATALOG_MODEL_TYPES, withRemoteCatalog } from "../src/core/remote-catalog-provider.ts";

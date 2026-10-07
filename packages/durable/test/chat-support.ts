@@ -7,7 +7,7 @@ import {
 	type Message,
 	type Models,
 	type RegisterFauxProviderOptions,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import {
 	type Conversation,
 	createRegistry,
@@ -18,7 +18,7 @@ import {
 	type Registry,
 	type Storage,
 	type ToolRegistration,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { context } from "./session-support.ts";
 

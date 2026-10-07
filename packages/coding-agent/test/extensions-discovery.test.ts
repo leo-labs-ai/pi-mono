@@ -55,7 +55,7 @@ describe("extensions discovery", () => {
 		fs.writeFileSync(
 			path.join(extensionsDir, "coding-agent-import.ts"),
 			`
-				import { getAgentDir } from "@lue-labs/pi-coding-agent";
+				import { getAgentDir } from "@leo-labs-ai/pi-coding-agent";
 				void getAgentDir;
 				export default function(pi) {
 					pi.registerCommand("test", { handler: async () => {} });
@@ -71,25 +71,25 @@ describe("extensions discovery", () => {
 
 	it("does not infer package ownership from ancestor manifests", async () => {
 		// Regression for #9863.
-		const dependencyDir = path.join(tempDir, "node_modules", "@lue-labs", "pi-coding-agent");
+		const dependencyDir = path.join(tempDir, "node_modules", "@leo-labs-ai", "pi-coding-agent");
 		fs.mkdirSync(dependencyDir, { recursive: true });
 		fs.writeFileSync(
 			path.join(tempDir, "package.json"),
 			JSON.stringify({
 				name: "application",
 				type: "module",
-				dependencies: { "@lue-labs/pi-coding-agent": "1.0.0" },
+				dependencies: { "@leo-labs-ai/pi-coding-agent": "1.0.0" },
 			}),
 		);
 		fs.writeFileSync(
 			path.join(dependencyDir, "package.json"),
-			JSON.stringify({ name: "@lue-labs/pi-coding-agent", type: "module", exports: "./index.js" }),
+			JSON.stringify({ name: "@leo-labs-ai/pi-coding-agent", type: "module", exports: "./index.js" }),
 		);
 		fs.writeFileSync(path.join(dependencyDir, "index.js"), "export const physicalDependency = true;");
 		fs.writeFileSync(
 			path.join(extensionsDir, "compiled-esm-extension.js"),
 			`
-				import { physicalDependency } from "@lue-labs/pi-coding-agent";
+				import { physicalDependency } from "@leo-labs-ai/pi-coding-agent";
 				export default function(pi) {
 					if (physicalDependency) pi.registerCommand("physical-dependency", { handler: async () => {} });
 				}
@@ -108,7 +108,7 @@ describe("extensions discovery", () => {
 		fs.writeFileSync(
 			path.join(extensionsDir, "oauth-import.ts"),
 			`
-				import * as oauth from "@lue-labs/pi-ai/oauth";
+				import * as oauth from "@leo-labs-ai/pi-ai/oauth";
 				void oauth;
 				export default function(pi) {
 					pi.registerCommand("test", { handler: async () => {} });

@@ -1,4 +1,4 @@
-import { defineExtension, type PromptInput, section } from "@lue-labs/pi-durable";
+import { defineExtension, type PromptInput, section } from "@leo-labs-ai/pi-durable";
 import { getAgentDir } from "../../config.ts";
 import { loadProjectContextFiles } from "../../core/resource-loader.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";

@@ -1,5 +1,5 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import { getSupportedThinkingLevels, type Model, type Transport } from "@lue-labs/pi-ai";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import { getSupportedThinkingLevels, type Model, type Transport } from "@leo-labs-ai/pi-ai";
 import {
 	type Component,
 	Container,
@@ -11,7 +11,7 @@ import {
 	Spacer,
 	Text,
 	type WheelScrollLines,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
 import {
 	CACHE_WARMING_MODES,

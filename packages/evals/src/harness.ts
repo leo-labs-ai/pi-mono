@@ -5,8 +5,8 @@ import { chmod, chown, lstat, mkdir, mkdtemp, readdir, readFile, rm, writeFile }
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { performance } from "node:perf_hooks";
-import { contentText, InMemoryCredentialStore } from "@lue-labs/pi-ai";
-import { getCurrentSystemPrompt } from "@lue-labs/pi-ai/utils/transcript";
+import { contentText, InMemoryCredentialStore } from "@leo-labs-ai/pi-ai";
+import { getCurrentSystemPrompt } from "@leo-labs-ai/pi-ai/utils/transcript";
 import {
 	type AgentSession,
 	type CreateAgentSessionOptions,
@@ -17,7 +17,7 @@ import {
 	ModelRuntime,
 	readStoredCredential,
 	SessionManager,
-} from "@lue-labs/pi-coding-agent";
+} from "@leo-labs-ai/pi-coding-agent";
 import {
 	attachHarnessRunToError,
 	createHarness,

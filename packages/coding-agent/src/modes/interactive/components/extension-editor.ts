@@ -12,7 +12,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.ts";
 import { editInExternalEditor } from "../external-editor.ts";
 import { getEditorTheme, theme } from "../theme/theme.ts";

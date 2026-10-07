@@ -1,4 +1,4 @@
-import { Container, Markdown, type MarkdownTheme } from "@lue-labs/pi-tui";
+import { Container, Markdown, type MarkdownTheme } from "@leo-labs-ai/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";

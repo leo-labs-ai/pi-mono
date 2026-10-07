@@ -1,7 +1,7 @@
 import type { Context, Draft } from "@earendil-works/chord";
-import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@lue-labs/pi-ai";
-import { calculateContextTokens, estimateMessageTokens } from "@lue-labs/pi-ai/utils/estimate";
-import { isRetryableAssistantError, retryDelayMs } from "@lue-labs/pi-ai/utils/retry";
+import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@leo-labs-ai/pi-ai";
+import { calculateContextTokens, estimateMessageTokens } from "@leo-labs-ai/pi-ai/utils/estimate";
+import { isRetryableAssistantError, retryDelayMs } from "@leo-labs-ai/pi-ai/utils/retry";
 import { CompactionEntry } from "../entries.ts";
 import { defineTask } from "../tasks.ts";
 import type {

@@ -11,7 +11,7 @@ import {
 	type TUI,
 	truncateToWidth,
 	visibleWidth,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import type { ExtensionCommandContext } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
 import { DynamicBorder } from "../../modes/interactive/components/dynamic-border.ts";

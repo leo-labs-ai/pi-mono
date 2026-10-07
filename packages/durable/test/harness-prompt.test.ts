@@ -1,5 +1,5 @@
-import { type SystemMessage, type Tool, Type } from "@lue-labs/pi-ai";
-import { getCurrentTools, toToolDeclaration } from "@lue-labs/pi-ai/utils/transcript";
+import { type SystemMessage, type Tool, Type } from "@leo-labs-ai/pi-ai";
+import { getCurrentTools, toToolDeclaration } from "@leo-labs-ai/pi-ai/utils/transcript";
 import {
 	type Conversation,
 	createRegistry,
@@ -11,7 +11,7 @@ import {
 	SystemEntry,
 	type ToolRegistration,
 	wrapSection,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { resolveAgent, resolveSettings } from "../src/harness/agent.ts";
 import { planSystemEntries, renderSections, replaySections } from "../src/harness/prompt.ts";

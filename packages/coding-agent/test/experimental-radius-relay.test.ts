@@ -1,5 +1,5 @@
-import type { Client } from "@lue-labs/pi-client";
-import type { Server } from "@lue-labs/pi-server";
+import type { Client } from "@leo-labs-ai/pi-client";
+import type { Server } from "@leo-labs-ai/pi-server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { RadiusRelayAuthResolver } from "../src/experimental/radius-auth.ts";
 import {

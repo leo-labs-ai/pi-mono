@@ -1,4 +1,4 @@
-# @lue-labs/pi-protocol
+# @leo-labs-ai/pi-protocol
 
 Runtime-neutral routed envelopes, CBOR encoding, and byte-stream framing for the experimental Pi protocol.
 
@@ -26,7 +26,7 @@ import {
   encodeClientMessage,
   ServerMessageDecoder,
   type ClientHello,
-} from "@lue-labs/pi-protocol";
+} from "@leo-labs-ai/pi-protocol";
 
 const hello: ClientHello = { type: "hello", version: PROTOCOL_VERSION };
 transport.send(encodeClientMessage(hello));

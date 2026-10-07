@@ -18,9 +18,9 @@ import {
 	type Tool as McpTool,
 	toLlmContent,
 } from "@earendil-works/pi-mcp";
-import type { AgentToolResult } from "@lue-labs/pi-agent-core";
-import type { ImageContent, JsonValue, TextContent } from "@lue-labs/pi-ai";
-import { Container, Spacer, Text } from "@lue-labs/pi-tui";
+import type { AgentToolResult } from "@leo-labs-ai/pi-agent-core";
+import type { ImageContent, JsonValue, TextContent } from "@leo-labs-ai/pi-ai";
+import { Container, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import type { TSchema } from "typebox";
 import type {
 	ToolAnnotations,

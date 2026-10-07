@@ -12,8 +12,8 @@ import {
 	type ServiceCatalogueEntry,
 } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type Client, createClientServiceTransport } from "@lue-labs/pi-client";
-import type { SessionTarget } from "@lue-labs/pi-protocol";
+import { type Client, createClientServiceTransport } from "@leo-labs-ai/pi-client";
+import type { SessionTarget } from "@leo-labs-ai/pi-protocol";
 
 export type ServerConnectionState =
 	| { status: "connecting"; attempt: number }

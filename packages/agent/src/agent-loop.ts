@@ -14,7 +14,7 @@ import {
 	type ToolStateChanges,
 	toToolDeclaration,
 	validateToolArguments,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import type {
 	AgentContext,

@@ -16,7 +16,7 @@
  * Then use ctrl+o to toggle between minimal (collapsed) and full (expanded) views.
  */
 
-import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
+import type { ExtensionAPI } from "@leo-labs-ai/pi-coding-agent";
 import {
 	createBashToolDefinition,
 	createEditToolDefinition,
@@ -25,8 +25,8 @@ import {
 	createLsToolDefinition,
 	createReadToolDefinition,
 	createWriteToolDefinition,
-} from "@lue-labs/pi-coding-agent";
-import { Text } from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-coding-agent";
+import { Text } from "@leo-labs-ai/pi-tui";
 import { homedir } from "os";
 
 /**

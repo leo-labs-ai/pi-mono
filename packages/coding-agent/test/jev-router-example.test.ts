@@ -1,4 +1,4 @@
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	type ClassifierModel,
@@ -6,7 +6,7 @@ import {
 	fauxAssistantMessage,
 	fauxProvider,
 	fauxToolCall,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import jevRouter from "../examples/extensions/jev-router.ts";

@@ -7,7 +7,7 @@ import {
 	withContextValue,
 } from "@earendil-works/chord/context";
 import { applyImmutable } from "@earendil-works/chord/delta";
-import { defineDoc } from "@lue-labs/pi-durable";
+import { defineDoc } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { context, documentChanges, flush, openTestSession } from "./session-support.ts";
 

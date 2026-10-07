@@ -1,5 +1,5 @@
-import type { Usage } from "@lue-labs/pi-ai";
-import { Container } from "@lue-labs/pi-tui";
+import type { Usage } from "@leo-labs-ai/pi-ai";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { describe, expect, test, vi } from "vitest";
 import type { SessionEntry } from "../src/core/session-manager.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";

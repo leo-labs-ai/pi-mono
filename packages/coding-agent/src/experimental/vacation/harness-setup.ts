@@ -1,5 +1,5 @@
-import type { ModelThinkingLevel } from "@lue-labs/pi-ai";
-import { createRegistry, type HarnessSettings, type ModelRef, type Registry } from "@lue-labs/pi-durable";
+import type { ModelThinkingLevel } from "@leo-labs-ai/pi-ai";
+import { createRegistry, type HarnessSettings, type ModelRef, type Registry } from "@leo-labs-ai/pi-durable";
 import { applyHttpProxySettings, configureHttpDispatcher } from "../../core/http-dispatcher.ts";
 import { findInitialModel, resolveCliModel } from "../../core/model-resolver.ts";
 import type { ModelRuntime } from "../../core/model-runtime.ts";

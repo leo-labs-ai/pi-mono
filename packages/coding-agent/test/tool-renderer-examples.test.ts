@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@lue-labs/pi-ai/compat";
-import type { TUI } from "@lue-labs/pi-tui";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
+import type { TUI } from "@leo-labs-ai/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";

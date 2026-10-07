@@ -4,7 +4,7 @@
  * Replace everything - no discovery, explicit configuration.
  */
 
-import { getModel } from "@lue-labs/pi-ai/compat";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
 import {
 	createAgentSession,
 	createExtensionRuntime,
@@ -12,7 +12,7 @@ import {
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
-} from "@lue-labs/pi-coding-agent";
+} from "@leo-labs-ai/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create({
 	authPath: "/tmp/my-agent/auth.json",

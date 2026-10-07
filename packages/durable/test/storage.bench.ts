@@ -8,7 +8,7 @@ import {
 	STORAGE_WRITE_BENCHMARKS,
 	seedStorageBenchmark,
 	seedStorageWriteBenchmark,
-} from "@lue-labs/pi-durable/testing";
+} from "@leo-labs-ai/pi-durable/testing";
 import { afterAll, bench, describe } from "vitest";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";

@@ -11,8 +11,8 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: [
-			{ find: /^@lue-labs\/pi-durable$/, replacement: durableSrcIndex },
-			{ find: /^@lue-labs\/pi-durable\/testing$/, replacement: durableSrcTesting },
+			{ find: /^@leo-labs-ai\/pi-durable$/, replacement: durableSrcIndex },
+			{ find: /^@leo-labs-ai\/pi-durable\/testing$/, replacement: durableSrcTesting },
 			{ find: /^@earendil-works\/pi-durable$/, replacement: durableSrcIndex },
 			{ find: /^@earendil-works\/pi-durable\/testing$/, replacement: durableSrcTesting },
 		],

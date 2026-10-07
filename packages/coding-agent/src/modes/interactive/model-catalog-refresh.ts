@@ -1,4 +1,4 @@
-import type { ModelsRefreshResult } from "@lue-labs/pi-ai";
+import type { ModelsRefreshResult } from "@leo-labs-ai/pi-ai";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { raceWithAbortSignal } from "../../utils/abort.ts";
 

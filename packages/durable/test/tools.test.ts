@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
-import type { ToolDiagnostic, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@lue-labs/pi-durable";
+import type { ToolDiagnostic, ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "@leo-labs-ai/pi-durable";
 import { applyPatch } from "diff";
 import { afterAll, describe, expect, it } from "vitest";
 import {

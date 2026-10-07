@@ -51,7 +51,7 @@ vi.mock("../src/utils/clipboard-command.ts", () => ({
 	}),
 }));
 
-vi.mock("@lue-labs/pi-tui", () => ({
+vi.mock("@leo-labs-ai/pi-tui", () => ({
 	getNativeClipboard: () => ({ getImage: async () => createTinyBmp1x1Red24bpp() }),
 }));
 

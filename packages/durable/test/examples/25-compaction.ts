@@ -2,9 +2,9 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/25-compaction.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { AssistantMessage, Message, TranscriptContext } from "@lue-labs/pi-ai";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider } from "@lue-labs/pi-ai/providers/faux";
+import type { AssistantMessage, Message, TranscriptContext } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider } from "@leo-labs-ai/pi-ai/providers/faux";
 import {
 	CompactionEntry,
 	type Conversation,

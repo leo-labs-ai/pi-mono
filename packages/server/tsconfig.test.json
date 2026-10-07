@@ -6,7 +6,7 @@
 		"moduleResolution": "NodeNext",
 		"types": ["node", "vitest"],
 		"paths": {
-			"@lue-labs/pi-protocol": ["../protocol/src/index.ts"]
+			"@leo-labs-ai/pi-protocol": ["../protocol/src/index.ts"]
 		}
 	},
 	"include": ["src/**/*.ts", "test/**/*.ts"]

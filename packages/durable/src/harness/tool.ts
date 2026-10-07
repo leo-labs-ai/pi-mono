@@ -1,8 +1,8 @@
 import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
 import { awaitWithContext } from "@earendil-works/chord/context";
 import { overlap } from "@earendil-works/chord/delta";
-import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@lue-labs/pi-ai";
-import { validateToolArguments } from "@lue-labs/pi-ai/utils/validation";
+import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@leo-labs-ai/pi-ai";
+import { validateToolArguments } from "@leo-labs-ai/pi-ai/utils/validation";
 import { AssistantEntry, ToolResultEntry } from "../entries.ts";
 import { defineTask } from "../tasks.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, utf8ByteLength } from "../truncate.ts";

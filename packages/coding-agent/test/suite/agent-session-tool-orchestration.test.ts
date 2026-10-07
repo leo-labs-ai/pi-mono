@@ -1,5 +1,5 @@
-import { fauxAssistantMessage, fauxToolCall, getCurrentTools, type TranscriptContext } from "@lue-labs/pi-ai";
-import type { ToolResultMessage } from "@lue-labs/pi-ai/compat";
+import { fauxAssistantMessage, fauxToolCall, getCurrentTools, type TranscriptContext } from "@leo-labs-ai/pi-ai";
+import type { ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";

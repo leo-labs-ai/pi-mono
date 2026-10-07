@@ -6,10 +6,10 @@
 //   node --conditions=source --experimental-strip-types test/examples/22-subagent-foreground.ts
 import type { Context } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { type AssistantMessage, type FauxResponseStep, Type } from "@lue-labs/pi-ai";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@lue-labs/pi-ai/providers/faux";
-import { openaiProvider } from "@lue-labs/pi-ai/providers/openai";
+import { type AssistantMessage, type FauxResponseStep, Type } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai/providers/faux";
+import { openaiProvider } from "@leo-labs-ai/pi-ai/providers/openai";
 import {
 	type AgentEvent,
 	AssistantEntry,

@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage } from "@lue-labs/pi-ai";
+import { fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
 import {
 	AssistantEntry,
 	ConversationBusy,
@@ -13,7 +13,7 @@ import {
 	type SubmissionId,
 	type SubmissionRecord,
 	UserEntry,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";

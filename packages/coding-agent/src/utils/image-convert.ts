@@ -1,4 +1,4 @@
-import { getCapabilities, type ImageTranscoder, setImageTranscoder } from "@lue-labs/pi-tui";
+import { getCapabilities, type ImageTranscoder, setImageTranscoder } from "@leo-labs-ai/pi-tui";
 import { applyExifOrientation } from "./exif-orientation.ts";
 import { loadPhoton } from "./photon.ts";
 

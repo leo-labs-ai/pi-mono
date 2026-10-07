@@ -1,4 +1,4 @@
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import type { ExtensionToolContext, ToolDefinition } from "../extensions/types.ts";
 
 /** Creates the context for one tool call. */

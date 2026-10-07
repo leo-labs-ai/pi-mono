@@ -14,7 +14,7 @@ import {
 	type StopReason,
 	type ToolCall,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 
 // Create stream class matching ProxyMessageEventStream
 class ProxyMessageEventStream extends EventStream<AssistantMessageEvent, AssistantMessage> {

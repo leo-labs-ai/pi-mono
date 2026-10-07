@@ -1,4 +1,4 @@
-import type { AuthResult } from "@lue-labs/pi-ai";
+import type { AuthResult } from "@leo-labs-ai/pi-ai";
 import { APP_NAME } from "../config.ts";
 import type { Args } from "./args.ts";
 

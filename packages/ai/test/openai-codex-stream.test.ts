@@ -2786,7 +2786,7 @@ describe("openai-codex streaming", () => {
 	});
 });
 
-// Fork: opaque Codex gateways (ClawRouter and friends). Re-grafted from lue-labs/pi-mono#298, #299 and #459.
+// Fork: opaque Codex gateways (ClawRouter and friends). Re-grafted from leo-labs-ai/pi-mono#298, #299 and #459.
 describe("openai-codex gateway compat", () => {
 	function sseFetch(onRequest: (url: string, init: RequestInit | undefined) => void) {
 		const encoder = new TextEncoder();

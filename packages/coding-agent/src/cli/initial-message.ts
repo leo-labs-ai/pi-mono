@@ -1,4 +1,4 @@
-import type { ImageContent } from "@lue-labs/pi-ai";
+import type { ImageContent } from "@leo-labs-ai/pi-ai";
 import type { Args } from "./args.ts";
 
 export interface InitialMessageInput {

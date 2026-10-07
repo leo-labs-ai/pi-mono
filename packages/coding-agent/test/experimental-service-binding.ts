@@ -1,6 +1,6 @@
 import type { Context, RemoteServices } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import type { Client } from "@lue-labs/pi-client";
+import type { Client } from "@leo-labs-ai/pi-client";
 import {
 	createServerServiceSource,
 	createSessionServiceSource,

@@ -6,14 +6,14 @@
 			"@earendil-works/chord": ["../chord/dist/index.d.ts"],
 			"@earendil-works/chord/bundler": ["../chord/dist/bundler.d.ts"],
 			"@earendil-works/chord/node": ["../chord/dist/node.d.ts"],
-			"@lue-labs/pi-agent-core": ["../agent/dist/index.d.ts"],
-			"@lue-labs/pi-agent-core/*": ["../agent/dist/*.d.ts"],
-			"@lue-labs/pi-ai": ["../ai/dist/index.d.ts"],
-			"@lue-labs/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
-			"@lue-labs/pi-client": ["../client/dist/index.d.ts"],
-			"@lue-labs/pi-protocol": ["../protocol/dist/index.d.ts"],
-			"@lue-labs/pi-tui": ["../tui/dist/index.d.ts"],
-			"@lue-labs/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
+			"@leo-labs-ai/pi-agent-core": ["../agent/dist/index.d.ts"],
+			"@leo-labs-ai/pi-agent-core/*": ["../agent/dist/*.d.ts"],
+			"@leo-labs-ai/pi-ai": ["../ai/dist/index.d.ts"],
+			"@leo-labs-ai/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"],
+			"@leo-labs-ai/pi-client": ["../client/dist/index.d.ts"],
+			"@leo-labs-ai/pi-protocol": ["../protocol/dist/index.d.ts"],
+			"@leo-labs-ai/pi-tui": ["../tui/dist/index.d.ts"],
+			"@leo-labs-ai/pi-tui/*": ["../tui/dist/*.d.ts", "../tui/dist/components/*.d.ts"]
 		},
 		"rootDir": "./src"
 	},

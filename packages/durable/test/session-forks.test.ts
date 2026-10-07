@@ -7,7 +7,7 @@ import {
 	StorageRejected,
 	type StorageWrite,
 	type TaskId,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import {
 	context,

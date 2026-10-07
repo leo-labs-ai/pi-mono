@@ -3,8 +3,8 @@
  * Validates that the faux provider and session factory work correctly.
  */
 
-import type { AgentTool } from "@lue-labs/pi-agent-core";
-import type { AssistantMessage } from "@lue-labs/pi-ai";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, createHarnessWithExtensions, type Harness } from "./test-harness.ts";

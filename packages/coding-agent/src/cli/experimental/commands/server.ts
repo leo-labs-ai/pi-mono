@@ -1,4 +1,4 @@
-import { isServerId, type ServerId } from "@lue-labs/pi-protocol";
+import { isServerId, type ServerId } from "@leo-labs-ai/pi-protocol";
 import { Command, stringOption, valueOption } from "../command.ts";
 import {
 	type AuthInput,

@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // Node strips TypeScript natively, but it does not apply the workspace source
 // aliases from tsconfig.json. Internal source processes preload this resolver so
 // they cannot silently fall through to stale package dist files. The fork's
-// sources import the `@lue-labs/pi-*` scope; the vendored upstream packages keep
+// sources import the `@leo-labs-ai/pi-*` scope; the vendored upstream packages keep
 // `@earendil-works/*`. tsconfig.json aliases both, so honor both here.
 
 interface TsConfig {
@@ -29,7 +29,7 @@ const paths = tsconfig.compilerOptions?.paths;
 if (!paths) throw new Error(`Source runtime requires compilerOptions.paths in ${tsconfigPath}`);
 
 const aliases: SourceAlias[] = Object.entries(paths)
-	.filter(([pattern]) => pattern.startsWith("@earendil-works/") || pattern.startsWith("@lue-labs/"))
+	.filter(([pattern]) => pattern.startsWith("@earendil-works/") || pattern.startsWith("@leo-labs-ai/"))
 	.map(([pattern, replacements]) => {
 		const wildcard = pattern.indexOf("*");
 		if (wildcard !== -1 && pattern.indexOf("*", wildcard + 1) !== -1) {

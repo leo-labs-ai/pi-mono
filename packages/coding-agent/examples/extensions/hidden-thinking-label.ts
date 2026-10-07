@@ -18,7 +18,7 @@
  *   /thinking-label          Reset to the default label
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@lue-labs/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@leo-labs-ai/pi-coding-agent";
 
 const DEFAULT_LABEL = "Pondering...";
 

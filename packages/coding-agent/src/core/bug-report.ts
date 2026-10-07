@@ -1,7 +1,7 @@
 import * as os from "node:os";
-import type { AgentMessage, StreamFn, ThinkingLevel } from "@lue-labs/pi-agent-core";
-import { contentText, normalizeContext, type RetryPolicy, uuidv7 } from "@lue-labs/pi-ai";
-import type { Api, Model, Provider, SimpleStreamOptions } from "@lue-labs/pi-ai/compat";
+import type { AgentMessage, StreamFn, ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import { contentText, normalizeContext, type RetryPolicy, uuidv7 } from "@leo-labs-ai/pi-ai";
+import type { Api, Model, Provider, SimpleStreamOptions } from "@leo-labs-ai/pi-ai/compat";
 import { VERSION } from "../config.ts";
 import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { writeZipArchive } from "../utils/zip.ts";

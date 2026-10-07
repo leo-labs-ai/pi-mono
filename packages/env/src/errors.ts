@@ -1,4 +1,4 @@
-import { err, FileError, type Result } from "@lue-labs/pi-durable/env";
+import { err, FileError, type Result } from "@leo-labs-ai/pi-durable/env";
 import { RemoteError } from "./connection.ts";
 
 export function abortResult<T>(signal: AbortSignal | undefined, path?: string): Result<T, FileError> | undefined {

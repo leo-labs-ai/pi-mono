@@ -11,8 +11,8 @@ import { createInMemoryModelRegistry, getModelRuntime } from "./model-runtime-te
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
-import { Agent } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
+import { Agent } from "@leo-labs-ai/pi-agent-core";
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -26,8 +26,8 @@ import type {
 	ToolCall,
 	TranscriptContext,
 	Usage,
-} from "@lue-labs/pi-ai";
-import { createAssistantMessageEventStream } from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
+import { createAssistantMessageEventStream } from "@leo-labs-ai/pi-ai";
 import { AgentSession, type AgentSessionEvent } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Context, JsonValue } from "@earendil-works/chord";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { registerStorageConformance } from "@lue-labs/pi-durable/testing";
+import { registerStorageConformance } from "@leo-labs-ai/pi-durable/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { err, FileError, type FileSystem, type Result } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";

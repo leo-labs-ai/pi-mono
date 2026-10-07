@@ -1,6 +1,6 @@
 import { type Context, copyJson, type JsonValue } from "@earendil-works/chord";
 import { awaitWithContext, withAbortSignal } from "@earendil-works/chord/context";
-import type { Models } from "@lue-labs/pi-ai";
+import type { Models } from "@leo-labs-ai/pi-ai";
 import type { ExecutionEnv } from "../env/index.ts";
 import type { SessionImpl } from "../session/session.ts";
 import type { Transaction } from "../session/transaction.ts";

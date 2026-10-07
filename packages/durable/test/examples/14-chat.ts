@@ -2,8 +2,8 @@
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/14-chat.ts
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
-import { createModels } from "@lue-labs/pi-ai/models";
-import { fauxAssistantMessage, fauxProvider } from "@lue-labs/pi-ai/providers/faux";
+import { createModels } from "@leo-labs-ai/pi-ai/models";
+import { fauxAssistantMessage, fauxProvider } from "@leo-labs-ai/pi-ai/providers/faux";
 import { AssistantEntry, createRegistry, defineExtension, Harness, MemoryStorage, section } from "../../src/index.ts";
 
 const context = BACKGROUND_CONTEXT;

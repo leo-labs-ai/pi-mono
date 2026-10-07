@@ -3,8 +3,8 @@
 	"compilerOptions": {
 		"outDir": "./dist",
 		"paths": {
-			"@lue-labs/pi-ai": ["../ai/dist/index.d.ts"],
-			"@lue-labs/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
+			"@leo-labs-ai/pi-ai": ["../ai/dist/index.d.ts"],
+			"@leo-labs-ai/pi-ai/*": ["../ai/dist/*.d.ts", "../ai/dist/providers/*.d.ts"]
 		},
 		"rootDir": "./src"
 	},

@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@lue-labs/pi-ai";
+import type { AssistantMessage, ToolResultMessage, Usage, UserMessage } from "@leo-labs-ai/pi-ai";
 import type {
 	ConversationId,
 	EntryRecord,
@@ -7,7 +7,7 @@ import type {
 	TaskGraph,
 	TaskGraphNode,
 	UsageState,
-} from "@lue-labs/pi-durable";
+} from "@leo-labs-ai/pi-durable";
 import {
 	Box,
 	type Component,
@@ -29,7 +29,7 @@ import {
 	TruncatedText,
 	TuiAltScreen,
 	VStack,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { getAgentDir } from "../../config.ts";
 import { KeybindingsManager } from "../../core/keybindings.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";

@@ -1,4 +1,4 @@
-import { resetCapabilitiesCache, setCapabilities } from "@lue-labs/pi-tui";
+import { resetCapabilitiesCache, setCapabilities } from "@leo-labs-ai/pi-tui";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	detectColorFgBgTheme,
