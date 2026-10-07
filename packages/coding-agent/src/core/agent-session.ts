@@ -2497,7 +2497,7 @@ export class AgentSession {
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this.agent.state.model = model;
 		// Sections extensions built for the previous model no longer apply.
-		this._lastRunSystemPromptOptions = undefined;
+		if (!previousModel || !modelsAreEqual(previousModel, model)) this._lastRunSystemPromptOptions = undefined;
 		this.sessionManager.appendModelChange(model.provider, model.id);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
