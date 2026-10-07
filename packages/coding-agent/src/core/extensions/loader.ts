@@ -290,6 +290,10 @@ function createExtensionAPI(
 			};
 		},
 
+		onSessionDispose(handler: () => void | Promise<void>): () => void {
+			return api.on("session_shutdown", () => handler());
+		},
+
 		registerTool(tool: ToolDefinition): void {
 			assertActive();
 			if (typeof tool.parameters !== "object" || tool.parameters === null || Array.isArray(tool.parameters)) {
