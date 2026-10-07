@@ -1,6 +1,6 @@
 {
 	"name": "@leo-labs-ai/pi-env",
-	"version": "1.0.6",
+	"version": "1.0.7",
 	"description": "Remote execution environments for Pi Durable: a small daemon deployed over SSH and its ExecutionEnv client",
 	"type": "module",
 	"main": "./dist/index.js",
