@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Added
+
+- **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
+
 ### Fixed
 
 - **Cached Codex WebSockets no longer cross gateways when no account ID is sent.** With `compat.sendChatgptAccountId: false` the account ID is `undefined`, so every opaque-credential gateway on one session ID shared a single cache slot and could reuse another gateway's socket. `acquireWebSocket` now keys the slot by `accountId ?? url`. Regression test in `packages/ai/test/openai-codex-stream.test.ts` (red before the fix).

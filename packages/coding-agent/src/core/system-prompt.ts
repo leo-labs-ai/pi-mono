@@ -30,6 +30,12 @@ export interface BuildSystemPromptOptions {
 	sections?: Record<string, string>;
 	/** Working directory. */
 	cwd: string;
+	/**
+	 * Leave the `cwd` section out, so sessions in different directories send byte-identical
+	 * system prompts and share one prompt-cache entry. The caller then tells the model its
+	 * directory another way, for example in the first user message.
+	 */
+	omitCwdSection?: boolean;
 	/** Pre-loaded context files. */
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
@@ -71,6 +77,7 @@ export function normalizeBuildSystemPromptOptions(input: BuildSystemPromptOption
 		appendSystemPrompt: input.appendSystemPrompt ?? "",
 		sections: { ...(input.sections ?? {}) },
 		cwd: input.cwd,
+		omitCwdSection: input.omitCwdSection,
 		contextFiles: (input.contextFiles ?? []).map((file) => ({ ...file })),
 		skills: (input.skills ?? []).map((skill) => ({ ...skill })),
 	};
@@ -137,6 +144,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		appendSystemPrompt,
 		sections: customSections,
 		cwd,
+		omitCwdSection,
 		contextFiles,
 		skills,
 	} = options;
@@ -180,7 +188,7 @@ export function buildSystemPromptSections(input: BuildSystemPromptOptions): Syst
 		const skillsPrompt = formatSkillsForPrompt(skills, skillFileReadTool).trim();
 		if (skillsPrompt) promptSections.skills = skillsPrompt;
 	}
-	promptSections.cwd = cwd.replace(/\\/g, "/");
+	if (!omitCwdSection) promptSections.cwd = cwd.replace(/\\/g, "/");
 	for (const [name, content] of Object.entries(customSections)) {
 		if (content) promptSections[name] = content;
 	}
