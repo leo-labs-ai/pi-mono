@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Changed
+
+- **`pi-env` publishes as `@leo-labs-ai/pi-env` on GitHub Packages** (was `@earendil-works/pi-env`, which the Release workflow tried to publish to npmjs and failed with ENEEDAUTH in the 1.1.1 run). Package name, publishConfig, imports, tsconfig paths and release scripts updated.
+
 ### Added
 
 - **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
