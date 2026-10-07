@@ -224,6 +224,8 @@ describe("system prompt updates", () => {
 				respond(fauxAssistantMessage("done")),
 			]);
 			await harness.session.prompt("first");
+			// A loadout change while idle must not discard the retained sections.
+			harness.session.setActiveToolsByName(["probe"]);
 			await harness.session.sendCustomMessage(
 				{ customType: "wake", content: "wake up", display: false },
 				{ triggerTurn: true },
@@ -232,12 +234,10 @@ describe("system prompt updates", () => {
 			expect(requests).toHaveLength(3);
 
 			const systemMessages = harness.session.messages.filter((message) => message.role === "system");
-			expect(systemMessages.map((message) => message.sections)).toEqual([
-				expect.objectContaining({ addendum: expect.stringContaining("Extension addendum.") }),
-			]);
+			expect(systemMessages[0]?.sections?.addendum).toContain("Extension addendum.");
+			// The only later patch is the tool loadout change; it never touches the addendum.
+			for (const message of systemMessages.slice(1)) expect(message.sections ?? {}).not.toHaveProperty("addendum");
 			expect(harness.session.messages.some((message) => message.role === "custom")).toBe(true);
-			const last = requests[2]!.messages.filter((message) => message.role === "system");
-			expect(last).toHaveLength(1);
 		} finally {
 			harness.cleanup();
 		}

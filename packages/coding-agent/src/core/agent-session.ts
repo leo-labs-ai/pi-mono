@@ -1712,7 +1712,6 @@ export class AgentSession {
 		const loadedSkills = this._resourceLoader.getSkills().skills;
 		const loadedContextFiles = this._resourceLoader.getAgentsFiles().agentsFiles;
 
-		this._lastRunSystemPromptOptions = undefined;
 		this._baseSystemPromptOptions = normalizeBuildSystemPromptOptions({
 			cwd: this._cwd,
 			omitCwdSection: this._omitCwdSection,
@@ -3720,6 +3719,8 @@ export class AgentSession {
 			: [];
 		// Tools the new extensions register later, such as MCP tools, are pending until then.
 		for (const name of this.getActiveToolNames()) this._pendingToolNames.add(name);
+		// The old extensions' sections no longer apply.
+		this._lastRunSystemPromptOptions = undefined;
 		this._buildRuntime({
 			activeToolNames: [...this.getActiveToolNames(), ...addedDefaultTools],
 			flagValues: previousFlagValues,
