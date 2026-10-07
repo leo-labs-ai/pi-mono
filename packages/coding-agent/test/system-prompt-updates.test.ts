@@ -99,9 +99,9 @@ describe("system prompt updates", () => {
 			const [a, b, c] = sessions.map((created) => created.session.systemPrompt);
 			expect(a).toBe(b);
 			expect(a).not.toContain("<cwd>");
-			expect(a).not.toContain(root);
+			expect(a).not.toContain(root.replace(/\\/g, "/"));
 			// Default stays unchanged: the cwd section is still present.
-			expect(c).toContain(`<cwd>\n${join(root, "wt-c")}\n</cwd>`);
+			expect(c).toContain(`<cwd>\n${join(root, "wt-c").replace(/\\/g, "/")}\n</cwd>`);
 		} finally {
 			for (const created of sessions) created.session.dispose();
 			rmSync(root, { recursive: true, force: true });
