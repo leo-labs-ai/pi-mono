@@ -13,7 +13,7 @@ import type {
 	ResponseStreamEvent,
 	ResponseToolSearchOutputItemParam,
 } from "openai/resources/responses/responses.js";
-import { calculateCost } from "../models.ts";
+import { calculateCost, getUltrafastCostRates } from "../models.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -105,6 +105,33 @@ function convertToolResultOutput<TApi extends Api>(
 		});
 	}
 	return output;
+}
+
+/**
+ * Resolve the effective tier for pricing. A requested `ultrafast` wins over a missing or
+ * `default` echo, because the ChatGPT/Codex backend echoes `default` even when a tier applied.
+ */
+export function resolveRequestedServiceTier(
+	responseServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	requestServiceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+): ResponseCreateParamsStreaming["service_tier"] | undefined {
+	if (requestServiceTier === "ultrafast" && (responseServiceTier == null || responseServiceTier === "default")) {
+		return requestServiceTier;
+	}
+	return responseServiceTier ?? requestServiceTier;
+}
+
+/**
+ * Replace input and output cost with the flat published Ultrafast rates, regardless of input size
+ * (no long-context surcharge is assumed). Cache read/write costs keep their standard rates as
+ * placeholders because Ultrafast cache rates are unpublished. No-op without known rates.
+ */
+export function applyUltrafastPricing(usage: Usage, model: Pick<Model<Api>, "id" | "api">): void {
+	const rates = getUltrafastCostRates(model);
+	if (!rates) return;
+	usage.cost.input = (rates.input / 1000000) * usage.input;
+	usage.cost.output = (rates.output / 1000000) * usage.output;
+	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 }
 
 export interface OpenAIResponsesStreamOptions {

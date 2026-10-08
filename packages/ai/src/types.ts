@@ -348,8 +348,17 @@ export interface AnthropicAllowedFallbackModel {
 	cost: ModelCost;
 }
 
+/** Service tier values accepted by the OpenAI Responses and OpenAI Codex Responses APIs. */
+export type ResponsesServiceTier = "auto" | "default" | "flex" | "scale" | "priority" | "fast" | "ultrafast";
+
 // Unified options with reasoning passed to streamSimple() and completeSimple()
 export interface SimpleStreamOptions extends StreamOptions {
+	/**
+	 * Service tier sent as `service_tier`. Forwarded only by the `openai-responses` and
+	 * `openai-codex-responses` APIs; other APIs ignore it. Use `supportsUltrafast(model)` before
+	 * requesting `"ultrafast"`.
+	 */
+	serviceTier?: ResponsesServiceTier;
 	/** Provider-neutral tool selection for simple requests. When omitted, adapters use provider-specific behavior. */
 	toolChoice?: ToolChoice;
 	reasoning?: ThinkingLevel;

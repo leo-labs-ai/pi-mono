@@ -4,6 +4,7 @@ import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ContextUsage } from "../../../core/extensions/types.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
+import { getUltrafastState } from "../../../core/ultrafast.ts";
 import { addUsageToTotals, createUsageTotals, type UsageTotals } from "../../../core/usage-totals.ts";
 import { theme } from "../theme/theme.ts";
 
@@ -210,6 +211,21 @@ export class FooterComponent implements Component {
 			contextPercentStr = contextPercentDisplay;
 		}
 		statsParts.push(contextPercentStr);
+		const ultrafastState = getUltrafastState(
+			this.session.settingsManager.getUltrafast(),
+			state.model,
+			this.session.routedModel?.model,
+		);
+		if (ultrafastState !== "off") {
+			const ultrafastLabels = {
+				active: theme.bold(theme.fg("accent", "ultrafast")),
+				ignored: theme.fg("warning", "ultrafast (ignored)"),
+				pending: theme.fg("dim", "ultrafast (routing)"),
+				"routed-active": theme.bold(theme.fg("accent", "ultrafast (latest route)")),
+				"routed-ignored": theme.fg("warning", "ultrafast (latest route ignored)"),
+			};
+			statsParts.push(`${theme.fg("dim", "•")} ${ultrafastLabels[ultrafastState]}`);
+		}
 		if (areExperimentalFeaturesEnabled()) {
 			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
 		}
