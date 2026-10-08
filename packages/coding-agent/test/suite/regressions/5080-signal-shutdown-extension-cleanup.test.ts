@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import chalk from "chalk";
-import { afterEach, describe, expect, test, vi } from "vitest";
-import { APP_NAME } from "../../../src/config.ts";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { APP_NAME, ENV_COMMAND_NAME } from "../../../src/config.ts";
 import type { SessionManager } from "../../../src/core/session-manager.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 
@@ -33,6 +33,7 @@ type InteractiveModePrototypeWithShutdown = {
 const interactiveModePrototype = InteractiveMode.prototype as unknown;
 const tempDirs: string[] = [];
 const originalStdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+const originalCommandName = process.env[ENV_COMMAND_NAME];
 
 class ProcessExitError extends Error {
 	readonly code: number | undefined;
@@ -105,7 +106,16 @@ async function callShutdown(context: ShutdownThis, options?: { fromSignal?: bool
 }
 
 describe("InteractiveMode.shutdown ordering (#5080)", () => {
+	beforeEach(() => {
+		delete process.env[ENV_COMMAND_NAME];
+	});
+
 	afterEach(() => {
+		if (originalCommandName === undefined) {
+			delete process.env[ENV_COMMAND_NAME];
+		} else {
+			process.env[ENV_COMMAND_NAME] = originalCommandName;
+		}
 		vi.restoreAllMocks();
 		restoreStdoutIsTTY();
 		for (const dir of tempDirs.splice(0)) {
