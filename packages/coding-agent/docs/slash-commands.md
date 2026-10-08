@@ -11,6 +11,7 @@ Extensions, prompt templates, and skills can add commands. The command menu in P
 | `/settings` | Open settings |
 | `/model [provider/model]` | Select a model |
 | `/thinking [level]` | Set the thinking level |
+| `/ultrafast [on\|off\|status]` | Toggle the `ultrafast` setting, or set or show it. Applies only to supported models. |
 | `/scoped-models` | Configure the models used by interactive cycling |
 | `/login [provider]` | Add provider authentication |
 | `/logout` | Remove provider authentication |

@@ -43,10 +43,12 @@ import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
+	applyUltrafastPricing,
 	convertResponsesMessages,
 	convertResponsesTools,
 	processResponsesStream,
 	resolveMidConvoEffort,
+	resolveRequestedServiceTier,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -544,6 +546,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 	const base = {
 		...buildBaseOptions(model, context, options, apiKey),
 		toolChoice: options?.toolChoice,
+		serviceTier: options?.serviceTier,
 	} satisfies OpenAICodexResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
@@ -666,8 +669,12 @@ function getServiceTierCostMultiplier(
 function applyServiceTierPricing(
 	usage: Usage,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-	model: Pick<Model<"openai-codex-responses">, "id">,
+	model: Pick<Model<"openai-codex-responses">, "id" | "api">,
 ) {
+	if (serviceTier === "ultrafast") {
+		applyUltrafastPricing(usage, model);
+		return;
+	}
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;
 
@@ -685,7 +692,7 @@ function resolveCodexServiceTier(
 	if (responseServiceTier === "default" && (requestServiceTier === "flex" || requestServiceTier === "priority")) {
 		return requestServiceTier;
 	}
-	return responseServiceTier ?? requestServiceTier;
+	return resolveRequestedServiceTier(responseServiceTier, requestServiceTier);
 }
 
 function resolveCodexUrl(baseUrl?: string): string {

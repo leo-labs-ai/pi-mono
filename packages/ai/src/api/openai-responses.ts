@@ -26,10 +26,12 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
+	applyUltrafastPricing,
 	convertResponsesMessages,
 	convertResponsesTools,
 	processResponsesStream,
 	resolveMidConvoEffort,
+	resolveRequestedServiceTier,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions, resolveSamplingParams } from "./simple-options.ts";
 
@@ -212,6 +214,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				onProviderStreamEvent: options?.onProviderStreamEvent,
 				serviceTier: options?.serviceTier,
 				grammarToolInputProperties,
+				resolveServiceTier: resolveRequestedServiceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			});
 
@@ -262,6 +265,7 @@ export const streamSimple: StreamFunction<"openai-responses", SimpleStreamOption
 	const base = {
 		...buildBaseOptions(model, context, options, options?.apiKey),
 		toolChoice: options?.toolChoice,
+		serviceTier: options?.serviceTier,
 	} satisfies OpenAIResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
 	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
@@ -437,8 +441,12 @@ function getServiceTierCostMultiplier(
 function applyServiceTierPricing(
 	usage: Usage,
 	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
-	model: Pick<Model<"openai-responses">, "id">,
+	model: Pick<Model<"openai-responses">, "id" | "api">,
 ) {
+	if (serviceTier === "ultrafast") {
+		applyUltrafastPricing(usage, model);
+		return;
+	}
 	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;
 

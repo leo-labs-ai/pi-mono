@@ -33,6 +33,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - [Thinking/Reasoning](#thinkingreasoning)
   - [Unified Interface](#unified-interface-streamsimplecompletesimple)
   - [Provider-Specific Options](#provider-specific-options-streamcomplete)
+  - [Service Tiers and Ultrafast](#service-tiers-and-ultrafast)
   - [Streaming Thinking Content](#streaming-thinking-content)
 - [Stop Reasons](#stop-reasons)
 - [Error Handling](#error-handling)
@@ -1052,6 +1053,28 @@ if (hasApi(googleModel, 'google-generative-ai')) {
   });
 }
 ```
+
+### Service Tiers and Ultrafast
+
+`serviceTier` sets the `service_tier` request field. `streamSimple()`/`completeSimple()` and the `openai-responses` and `openai-codex-responses` APIs (HTTP and WebSocket `response.create`) accept it. Other APIs ignore it. Values are `"auto"`, `"default"`, `"flex"`, `"scale"`, `"priority"`, `"fast"`, and `"ultrafast"`. Pi sends the value literally. For Fast mode on the Codex backend, request `"priority"`, not `"fast"`; the backend rejects `"fast"`.
+
+Ultrafast is a service tier, not a model ID. Call `supportsUltrafast(model)` before requesting it. It returns true for the two Responses APIs when the last `/` segment of the model ID starts with `gpt-6.1-sol` or `gpt-6-astra`, so namespace prefixes such as `openai/gpt-6.1-sol` match. This checks model/API capability, not account entitlement. A backend can ignore the tier when the account is not eligible.
+
+```typescript
+import { supportsUltrafast } from '@earendil-works/pi-ai';
+
+await models.completeSimple(model, context, {
+  serviceTier: supportsUltrafast(model) ? 'ultrafast' : undefined,
+});
+```
+
+Cost is an estimate, not a billed amount:
+
+- For `gpt-6.1-sol*`, a requested `ultrafast` tier prices input at $12 and output at $60 per million tokens.
+- The ChatGPT/Codex backend can echo `service_tier: "default"` even when a tier applied. Pi therefore keeps the requested `ultrafast` tier for pricing when the echo is `default` or missing. A different echoed tier (for example `priority`) is used as echoed. The echo is not proof that Ultrafast ran; compare output tokens per second as well.
+- The $12/$60 input and output rates are applied flat to every request, with no long-context (above 272k input tokens) surcharge. The actual Ultrafast long-context rates are unknown.
+- TODO: Ultrafast cached-input and cache-write rates are unknown. The estimate keeps the model's standard cache-read and cache-write costs as placeholders. These are not Ultrafast rates, so totals for requests with cached or cache-write tokens are approximate.
+- `gpt-6-astra` accepts `ultrafast` on the wire, but its Ultrafast price is unknown. Its cost estimate stays at the standard rates.
 
 ### Streaming Thinking Content
 

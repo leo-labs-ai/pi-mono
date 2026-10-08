@@ -1217,6 +1217,37 @@ export function calculateCost(model: AnyModel, usage: Usage): Usage["cost"] {
 	return usage.cost;
 }
 
+const ULTRAFAST_API_IDS: ReadonlySet<string> = new Set(["openai-responses", "openai-codex-responses"]);
+
+/** Last path segment of a model id, so `openai/gpt-6.1-sol` and `gpt-6.1-sol` match alike. */
+function getTrailingModelId(modelId: string): string {
+	return modelId.slice(modelId.lastIndexOf("/") + 1).toLowerCase();
+}
+
+/**
+ * Whether the model accepts the literal `service_tier: "ultrafast"` on a Responses-style API.
+ * Matches any namespace prefix and any suffix of `gpt-6.1-sol` and `gpt-6-astra`.
+ */
+export function supportsUltrafast(model: Pick<AnyModel, "id" | "api">): boolean {
+	if (!ULTRAFAST_API_IDS.has(model.api)) return false;
+	const id = getTrailingModelId(model.id);
+	return id.startsWith("gpt-6.1-sol") || id.startsWith("gpt-6-astra");
+}
+
+/**
+ * Published Ultrafast rates in USD per million tokens, or undefined when unpublished.
+ * Only flat input and output rates are known. They apply to all input sizes; no long-context
+ * (>272k) surcharge is assumed. TODO: cached-input, cache-write and long-context Ultrafast rates
+ * are unpublished. Callers keep the standard cache-read/write costs as placeholders, not as
+ * Ultrafast rates. gpt-6-astra has no known price.
+ */
+export function getUltrafastCostRates(
+	model: Pick<AnyModel, "id" | "api">,
+): { input: number; output: number } | undefined {
+	if (!supportsUltrafast(model)) return undefined;
+	return getTrailingModelId(model.id).startsWith("gpt-6.1-sol") ? { input: 12, output: 60 } : undefined;
+}
+
 const EXTENDED_THINKING_LEVELS: ModelThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export function getSupportedThinkingLevels<TApi extends Api>(model: Model<TApi>): ModelThinkingLevel[] {
