@@ -10,6 +10,7 @@ This package's release notes are split:
 ## Unreleased
 
 - Fix: align Kimi K3 cache-write and Claude Sonnet 5.5 cache-read pricing fallbacks and fixtures with the official provider rates.
+- Fix: on addition-only transports (OpenAI Responses `additional_tools` or synthetic tool search, Kimi tool messages), one tool removal or same-name redeclaration no longer turns every later tool load into a full prompt-cache miss. The top-level tool list is now the tool set after the last removal or redeclaration, and later additions stay anchored in place. Before, `resolveTranscriptTools` fell back to the current tool list for the rest of the session, so each `tool_search` load rewrote `tools` (measured on ClawRouter `gpt-6-astra-200k`: 0 cached tokens after each load; after the fix the loads read the cached prefix).
 
 - Fix: `isContextOverflow` recognizes Anthropic's "input length and `max_tokens` exceed context limit" error, so the overflow routes to compaction like "prompt is too long".
 - Fix: an errored tool result that carries an image no longer wedges the session. Anthropic returns a permanent 400 (`all content must be type text if is_error is true`) on every later request; Bedrock Claude had the same risk. Both converters now drop the image blocks from errored results and, for Anthropic, add a text note.
