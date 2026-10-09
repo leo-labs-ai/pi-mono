@@ -2483,6 +2483,17 @@ export class AgentSession {
 	}
 
 	/**
+	 * Apply a model change to agent state and record it in the transcript.
+	 * Drops retained system prompt options when the model actually changes, so sections
+	 * extensions built for the previous model don't leak into the next run (see #601).
+	 */
+	private _applyModelChange(nextModel: Model<any>, previousModel: Model<any> | undefined): void {
+		this.agent.state.model = nextModel;
+		if (!modelsAreEqual(previousModel, nextModel)) this._lastRunSystemPromptOptions = undefined;
+		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
+	}
+
+	/**
 	 * Set model directly.
 	 * Validates that auth is configured and saves to the session transcript.
 	 * Persists to global defaults only when options.persist is true.
@@ -2495,8 +2506,7 @@ export class AgentSession {
 
 		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
-		this.agent.state.model = model;
-		this.sessionManager.appendModelChange(model.provider, model.id);
+		this._applyModelChange(model, previousModel);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 			this._addPersistedDefaultToNonEmptyScope(model);
@@ -2562,8 +2572,7 @@ export class AgentSession {
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.model, next.thinkingLevel);
 
 		// Apply model
-		this.agent.state.model = next.model;
-		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+		this._applyModelChange(next.model, currentModel);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
 			this._addPersistedDefaultToNonEmptyScope(next.model);
@@ -2597,8 +2606,7 @@ export class AgentSession {
 		const nextModel = availableModels[nextIndex];
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
-		this.agent.state.model = nextModel;
-		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
+		this._applyModelChange(nextModel, currentModel);
 		if (options.persist) {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
 			this._addPersistedDefaultToNonEmptyScope(nextModel);

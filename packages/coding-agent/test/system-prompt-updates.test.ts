@@ -243,6 +243,50 @@ describe("system prompt updates", () => {
 		}
 	});
 
+	// #601
+	test("a run started by a custom message drops retained sections after a model change", async () => {
+		const extension: ExtensionFactory = (pi) => {
+			pi.registerTool({
+				name: "probe",
+				label: "probe",
+				description: "probe",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+			pi.on("before_agent_start", (event, ctx) => {
+				event.systemPromptOptions.sections.addendum = `Addendum for ${ctx.model?.id}.`;
+			});
+		};
+		const harness = await createHarness({
+			extensionFactories: [extension],
+			models: [{ id: "faux-a" }, { id: "faux-b" }],
+		});
+		try {
+			const requests: TranscriptContext[] = [];
+			const respond = (message: ReturnType<typeof fauxAssistantMessage>) => (providerContext: TranscriptContext) => {
+				requests.push(providerContext);
+				return message;
+			};
+			harness.setResponses([
+				respond(fauxAssistantMessage("first")),
+				respond(fauxAssistantMessage([fauxToolCall("probe", {})], { stopReason: "toolUse" })),
+				respond(fauxAssistantMessage("done")),
+			]);
+			await harness.session.prompt("first");
+			expect(getCurrentSystemPrompt(harness.session.messages)).toContain("Addendum for faux-a.");
+			await harness.session.setModel(harness.getModel("faux-b")!);
+			await harness.session.sendCustomMessage(
+				{ customType: "wake", content: "wake up", display: false },
+				{ triggerTurn: true },
+			);
+			await harness.session.agent.waitForIdle();
+			expect(requests).toHaveLength(3);
+			expect(getCurrentSystemPrompt(requests[2]!.messages)).not.toContain("Addendum for faux-a.");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	test("setActiveTools emits prompt sections and tool changes before the next request", async () => {
 		const extension: ExtensionFactory = (pi) => {
 			for (const name of ["first", "second"]) {
