@@ -316,6 +316,45 @@ describe("transcript system messages", () => {
 		expect(payload.input.filter((item) => item.role === "developer")).toHaveLength(2);
 	});
 
+	for (const [label, toolCompat] of [
+		["additional tools", { supportsAdditionalTools: true }],
+		["synthetic tool search", { supportsToolSearch: true }],
+	] as const) {
+		test(`keeps the request prefix for OpenAI additions after a removal (${label})`, async () => {
+			const model: Model<"openai-responses"> = {
+				...modelBase,
+				id: "gpt-5.4",
+				name: "GPT-5.4",
+				api: "openai-responses",
+				provider: "openai",
+				compat: { supportsMidConvoSystemMessages: true, ...toolCompat },
+			};
+			type Payload = { tools?: Array<{ name: string }>; input: unknown[] };
+			const firstLoad: Context = {
+				messages: [
+					...context.messages,
+					{ role: "user", content: "load one", timestamp: 3 },
+					{ role: "system", content: "", toolsAdded: [tool("loaded_one")], timestamp: 4 },
+				],
+			};
+			const secondLoad: Context = {
+				messages: [
+					...firstLoad.messages,
+					{ role: "user", content: "load two", timestamp: 5 },
+					{ role: "system", content: "", toolsAdded: [tool("loaded_two")], timestamp: 6 },
+				],
+			};
+			const first = await capturePayload<Payload>(model, firstLoad);
+			const second = await capturePayload<Payload>(model, secondLoad);
+
+			// The top-level list is the tool set after the removal; later loads do not rewrite it.
+			expect(first.tools?.map((value) => value.name)).toEqual(["late_tool"]);
+			expect(second.tools).toEqual(first.tools);
+			expect(second.input.slice(0, first.input.length)).toEqual(first.input);
+			expect(JSON.stringify(second.input.slice(first.input.length))).toContain("loaded_two");
+		});
+	}
+
 	test("anchors Kimi additions in tool-bearing system messages", async () => {
 		const model: Model<"openai-completions"> = {
 			...modelBase,

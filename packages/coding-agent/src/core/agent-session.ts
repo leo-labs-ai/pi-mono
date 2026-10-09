@@ -467,6 +467,12 @@ export class AgentSession {
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** Declared tools whose declarations requests leave out, from `prepareLoadout` hooks. */
 	private _hiddenDeclarations: ReadonlySet<string> = new Set();
+	/**
+	 * Tools whose declarations the request projection leaves out of the transcript. A hidden tool
+	 * stays here after it is deactivated, so its earlier declarations stay out and the cached
+	 * request prefix does not change; it leaves only when it is declared without being hidden.
+	 */
+	private _projectedHiddenDeclarations: ReadonlySet<string> = new Set();
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
@@ -1615,6 +1621,11 @@ export class AgentSession {
 			});
 		}
 		this._hiddenDeclarations = hidden;
+		const declaredNames = new Set(declared.map((tool) => tool.name));
+		this._projectedHiddenDeclarations = new Set([
+			...[...this._projectedHiddenDeclarations].filter((name) => !declaredNames.has(name)),
+			...hidden,
+		]);
 		this.agent.state.tools = declared;
 		return declared;
 	}
@@ -1762,14 +1773,15 @@ export class AgentSession {
 	 */
 	/**
 	 * Remove the declarations that `prepareLoadout` hooks hide from every request. The whole
-	 * transcript is filtered with the current set, so the projected declarations stay consistent
-	 * across requests and only change when the loadout does.
+	 * transcript is filtered with one set, so the projected declarations stay consistent across
+	 * requests. Deactivating a hidden tool keeps it in the set, so a tool change does not reveal
+	 * its earlier declarations and rewrite the cached prefix.
 	 */
 	private _installHiddenDeclarationsProjection(): void {
 		const previousTransformContext = this.agent.transformContext;
 		this.agent.transformContext = async (messages, signal) => {
 			const transformed = previousTransformContext ? await previousTransformContext(messages, signal) : messages;
-			const hidden = this._hiddenDeclarations;
+			const hidden = this._projectedHiddenDeclarations;
 			if (hidden.size === 0) return transformed;
 			return transformed.map((message) => {
 				if (message.role !== "system" || (!message.toolsAdded && !message.toolsRemoved)) return message;

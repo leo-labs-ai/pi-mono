@@ -1246,7 +1246,7 @@ export function convertMessages(
 		}
 
 		if (msg.role === "system") {
-			const addedTools = i > 0 && transcriptTools.anchorsAdditions ? (msg.toolsAdded ?? []) : [];
+			const addedTools = i > 0 ? transcriptTools.anchoredAdditions(msg) : [];
 			if (addedTools.length > 0) {
 				const kimiToolMessage: KimiToolSystemMessageParam = {
 					role: "system",
