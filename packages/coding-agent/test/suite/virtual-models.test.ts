@@ -391,8 +391,8 @@ describe("AgentSession virtual models", () => {
 
 		expect(result.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
-		// The router's thinking level applies. Summaries set no output cap of their own, so pi-ai sizes
-		// them from the routed large model.
-		expect(summaries).toEqual(["large:low:undefined", "large:low:undefined"]);
+		// Summaries run without thinking, whatever level the router picked. They set no output cap of
+		// their own, so pi-ai sizes them from the routed large model.
+		expect(summaries).toEqual(["large:off:undefined", "large:off:undefined"]);
 	});
 });

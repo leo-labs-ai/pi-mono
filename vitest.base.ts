@@ -50,6 +50,14 @@ export default defineConfig({
 				find: /^@leo-labs-ai\/pi-ai\/providers\/(.+)$/,
 				replacement: `${workspaceSourcePaths.aiProviders}/$1.ts`,
 			},
+			{
+				find: /^@leo-labs-ai\/pi-ai\/utils\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiUtils}/$1.ts`,
+			},
+			{
+				find: /^@leo-labs-ai\/pi-ai\/api\/(.+)$/,
+				replacement: `${workspaceSourcePaths.aiApi}/$1.ts`,
+			},
 			{ find: /^@leo-labs-ai\/pi-agent-core$/, replacement: workspaceSourcePaths.agentIndex },
 			{ find: /^@leo-labs-ai\/pi-tui$/, replacement: workspaceSourcePaths.tuiIndex },
 			{ find: /^@earendil-works\/pi-mcp$/, replacement: workspaceSourcePaths.mcpIndex },
