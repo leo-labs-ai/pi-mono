@@ -9,6 +9,8 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: deactivating a tool whose declaration a `prepareLoadout` hook hides (for example a direct tool in codemode `only` mode) no longer reveals its earlier declarations. The request projection keeps such a tool hidden until it is declared without being hidden, so the first tool change after it no longer rewrites the leading tool list and the cached prefix.
+
 - Fix: a run started by an extension custom message (for example a wake-up) no longer drops sections that extensions added in an earlier `before_agent_start` (such as `addendum` and `mcp_servers`). The dropped sections changed the head system prompt on models without mid-conversation system messages and busted the prompt cache ([#599](https://github.com/leo-labs-ai/pi-mono/pull/599)).
 - Fix: after a truncated response fails its one compact-and-retry attempt, a later turn started by an extension custom message (for example a wake-up) now gets its own compact-and-retry attempt. Previously only a user message re-armed recovery, so every later custom-message turn reported "Truncated response recovery failed after one compact-and-retry attempt." without compacting ([#593](https://github.com/leo-labs-ai/pi-mono/pull/593)).
 - Fix: a failed codemode script no longer returns image blocks from earlier `image()` calls. The result keeps its text and adds a note with the number of omitted images, because providers reject images in error results.

@@ -130,6 +130,68 @@ describe("AgentSession tool orchestration", () => {
 		expect(initial.session.getActiveToolNames()).toEqual(["tool_search"]);
 	});
 
+	it("keeps a deactivated hidden tool out of earlier declarations", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: [],
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "echo",
+						label: "echo",
+						description: "Echo text.",
+						parameters: Type.Object({ text: Type.String() }),
+						execute: async (_id, { text }) => ({ content: [{ type: "text", text }], details: {} }),
+					});
+					// Like codemode's "only" mode: hide the direct tools that are currently declared.
+					pi.registerTool({
+						name: "run_tools",
+						label: "run_tools",
+						description: "Runs tools.",
+						parameters: Type.Object({}),
+						exposure: "model-only",
+						prepareLoadout: (loadout) => ({
+							hiddenDeclarations: loadout.declared.some((tool) => tool.name === "echo") ? ["echo"] : [],
+						}),
+						execute: async () => ({ content: [{ type: "text", text: "ran" }], details: {} }),
+					});
+					pi.registerTool({
+						name: "drop_echo",
+						label: "drop_echo",
+						description: "Deactivate echo.",
+						parameters: Type.Object({}),
+						execute: async () => {
+							pi.setActiveTools(pi.getActiveTools().filter((name) => name !== "echo"));
+							return { content: [{ type: "text", text: "dropped" }], details: {} };
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		await harness.session.bindExtensions({});
+		const initialTools: string[][] = [];
+		const record = (context: TranscriptContext) => {
+			const head = context.messages[0];
+			initialTools.push(head?.role === "system" ? (head.toolsAdded ?? []).map((tool) => tool.name) : []);
+		};
+		harness.setResponses([
+			(context: TranscriptContext) => {
+				record(context);
+				return fauxAssistantMessage([fauxToolCall("drop_echo", {})], { stopReason: "toolUse" });
+			},
+			(context: TranscriptContext) => {
+				record(context);
+				return fauxAssistantMessage("done");
+			},
+		]);
+		await harness.session.prompt("go");
+
+		expect(harness.session.getActiveToolNames()).not.toContain("echo");
+		// The leading declarations, part of the cached prefix, are the same before and after.
+		expect(initialTools[0]).not.toContain("echo");
+		expect(initialTools[1]).toEqual(initialTools[0]);
+	});
+
 	it("leaves results without nested calls unchanged", async () => {
 		const harness = await createHarness({ initialActiveToolNames: [], extensionFactories: [orchestratorExtension] });
 		harnesses.push(harness);
