@@ -1126,7 +1126,9 @@ describe("AgentSession MCP tools after resume and reload", () => {
 		sessionManager?: SessionManager,
 		extensionFactories: ExtensionFactory[] = [],
 		initializeDelayMs = 0,
+		options: { startupWaitMs?: number; initialActiveToolNames?: string[]; usesDefaultTools?: boolean } = {},
 	) {
+		const { startupWaitMs, ...toolOptions } = options;
 		const connected: string[] = [];
 		const servers: McpServerEntry[] = [
 			{ name: "docs", config: { url: "http://unused.invalid", exposure: "deferred" }, source: "test" },
@@ -1142,6 +1144,7 @@ describe("AgentSession MCP tools after resume and reload", () => {
 					void pair.server.start();
 					return pair.client;
 				},
+				...(startupWaitMs === undefined ? {} : { startupWaitMs }),
 			}),
 		];
 		let extensions = await createTestExtensionsResult(factories);
@@ -1152,7 +1155,7 @@ describe("AgentSession MCP tools after resume and reload", () => {
 				extensions = await createTestExtensionsResult(factories);
 			},
 		};
-		const harness = await createHarness({ resourceLoader, sessionManager });
+		const harness = await createHarness({ resourceLoader, sessionManager, ...toolOptions });
 		harnesses.push(harness);
 		// `/reload` emits session_start only to bound extensions.
 		await harness.session.bindExtensions({ uiContext: createTestUiContext() });
@@ -1212,12 +1215,60 @@ describe("AgentSession MCP tools after resume and reload", () => {
 		},
 	);
 
+	// The CLI passes the `defaultTools` setting as the initial tools when no `--tools` is given. A
+	// resumed session keeps the transcript's loadout instead, so its tool declarations, and with them
+	// the prompt cache, do not change (my-pi#1816).
+	it("restores the transcript's tools on resume when the session starts with the default tools", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+		const loadout = [...first.harness.session.getActiveToolNames()].sort();
+
+		const second = await setup(first.harness.sessionManager, [], 0, {
+			initialActiveToolNames: ["read"],
+			usesDefaultTools: true,
+		});
+		await vi.waitFor(() => expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search"));
+
+		expect([...second.harness.session.getActiveToolNames()].sort()).toEqual(loadout);
+	});
+
+	it("keeps an explicit tool list on resume", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+
+		const second = await setup(first.harness.sessionManager, [], 0, {
+			initialActiveToolNames: ["read"],
+			usesDefaultTools: false,
+		});
+		await vi.waitFor(() =>
+			expect(second.harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+		);
+
+		expect(second.harness.session.getActiveToolNames()).toContain("read");
+		expect(second.harness.session.getActiveToolNames()).not.toContain("mcp__docs__search");
+	});
+
+	it("holds the first prompt after resume for servers that own restored tools", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+
+		const second = await setup(first.harness.sessionManager, [], 200);
+		second.harness.setResponses([fauxAssistantMessage("done")]);
+		await second.harness.session.prompt("go");
+
+		expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search");
+		const removals = second.harness.session.messages.filter(
+			(message) => message.role === "system" && (message.toolsRemoved ?? []).length > 0,
+		);
+		expect(removals).toEqual([]);
+	});
+
 	it("does not activate restored tools that register after the next prompt starts", async () => {
 		const first = await setup();
 		await loadDocsSearch(first.harness);
 
-		// The first prompt does not wait for servers without direct tools.
-		const second = await setup(first.harness.sessionManager, [], 200);
+		// The first prompt waits for the server only up to startupWaitMs.
+		const second = await setup(first.harness.sessionManager, [], 200, { startupWaitMs: 20 });
 		second.harness.setResponses([fauxAssistantMessage("done")]);
 		await second.harness.session.prompt("go");
 		await vi.waitFor(() =>
