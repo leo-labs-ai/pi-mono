@@ -27,6 +27,7 @@
  */
 
 import { join, resolve } from "node:path";
+import { getCurrentSystemMessage } from "@leo-labs-ai/pi-ai";
 import type { SelectItem } from "@leo-labs-ai/pi-tui";
 import type { TSchema } from "typebox";
 import { getAgentDir } from "../../config.ts";
@@ -83,9 +84,10 @@ export interface McpExtensionOptions {
 	 */
 	updateConfig?: (entry: McpServerEntry, patch: McpServerConfigPatch) => void;
 	/**
-	 * How long the first prompt waits for servers with `direct` tools that are still connecting at
-	 * startup, in milliseconds. Their tools become available when they connect. Other servers are
-	 * waited for when a script or search needs them. Default: 10000.
+	 * How long the first prompt waits for servers that are still connecting at startup and have
+	 * `direct` tools or tools in the resumed session's loadout, in milliseconds. Their tools become
+	 * available when they connect. Other servers are waited for when a script or search needs them.
+	 * Default: 10000.
 	 */
 	startupWaitMs?: number;
 }
@@ -1037,11 +1039,23 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 		// The first prompt waits for servers whose tools are declared to the model, so they are declared
 		// in its first request, but not indefinitely: a slow or hanging server must not hold up the
 		// prompt. Other servers are waited for when a script or search needs them (below).
-		const waitForDirectServers = async (ctx: ExtensionContext) => {
+		// A resumed session declares the tools its transcript names, such as tools tool_search loaded.
+		// Pi drops restored tools that are not registered when the prompt starts, and dropping them
+		// changes the declarations and busts the prompt cache, so their servers are waited for too.
+		const waitForStartupServers = async (ctx: ExtensionContext) => {
 			if (waitedForStartup) return;
 			waitedForStartup = true;
+			const restored = (
+				getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages)?.toolsAdded ?? []
+			).map((tool) => tool.name);
+			const ownsRestoredTool = (server: McpServer) => {
+				const prefix = `${mcpNamespace(server.entry.name)}__`;
+				return restored.some((name) => name.startsWith(prefix));
+			};
 			const ready = servers.flatMap((server) =>
-				isEnabled(server) && hasDirectTools(server.entry) && server.ready ? [server.ready] : [],
+				isEnabled(server) && (hasDirectTools(server.entry) || ownsRestoredTool(server)) && server.ready
+					? [server.ready]
+					: [],
 			);
 			if (ready.length === 0) return;
 			let timer: NodeJS.Timeout | undefined;
@@ -1060,7 +1074,7 @@ export function createMcpExtension(options: McpExtensionOptions = {}): Extension
 		// Every prompt lists the servers in the `mcp_servers` section as they are when it starts. Pi
 		// appends the section to the conversation when it changed, for example after a server connected.
 		pi.on("before_agent_start", async (event, ctx) => {
-			await waitForDirectServers(ctx);
+			await waitForStartupServers(ctx);
 			const { sections } = event.systemPromptOptions;
 			const section = renderServersSection(servers);
 			if (section) sections[MCP_SERVERS_SECTION] = section;
