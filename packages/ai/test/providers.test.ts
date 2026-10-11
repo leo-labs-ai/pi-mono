@@ -267,7 +267,7 @@ describe("builtin providers", () => {
 				input: 3,
 				output: 15,
 				cacheRead: 0.3,
-				cacheWrite: 0,
+				cacheWrite: 3, // https://platform.moonshot.ai/docs/pricing/chat
 			});
 		}
 	});
@@ -275,7 +275,7 @@ describe("builtin providers", () => {
 	it("uses API-equivalent implied pricing for Kimi Coding subscription models", () => {
 		const models = builtinModels();
 		const expectedCosts = {
-			k3: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
+			k3: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3 },
 			"kimi-for-coding-highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
 		};
 
