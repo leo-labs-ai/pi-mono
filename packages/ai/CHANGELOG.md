@@ -9,6 +9,8 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: `openai-responses` honours `compat.sendSessionAffinityHeaders` and sends `x-session-affinity` from `options.sessionId`, matching `openai-completions` and `anthropic-messages`. The flag was read on those two transports only, so moving a model to the Responses wire silently dropped the header that affinity-routing gateways key off — hit by the Grok 4.7 entries, which set `sendSessionAffinityHeaders: true` with `sessionAffinityFormat: "openai-nosession"`. The flag adds only that header: `session_id`, `x-client-request-id`, and `x-session-id` still go out for any `sessionId`, so Responses behaviour with the flag unset is unchanged ([my-pi#1831](https://github.com/leo-labs-ai/my-pi/issues/1831)).
+
 - Fix: align Kimi K3 cache-write and Claude Sonnet 5.5 cache-read pricing fallbacks and fixtures with the official provider rates.
 
 - Fix: `isContextOverflow` recognizes Anthropic's "input length and `max_tokens` exceed context limit" error, so the overflow routes to compaction like "prompt is too long".
