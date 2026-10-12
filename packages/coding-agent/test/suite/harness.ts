@@ -113,6 +113,8 @@ export interface HarnessOptions {
 	settings?: Partial<Settings>;
 	tools?: AgentTool[];
 	initialActiveToolNames?: string[];
+	/** Whether `initialActiveToolNames` are the `defaultTools` setting, as when no `--tools` is given. */
+	usesDefaultTools?: boolean;
 	allowedToolNames?: string[];
 	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
@@ -238,6 +240,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		resourceLoader,
 		baseToolsOverride: toolMap,
 		initialActiveToolNames: options.initialActiveToolNames,
+		usesDefaultTools: options.usesDefaultTools,
 		allowedToolNames: options.allowedToolNames,
 		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,

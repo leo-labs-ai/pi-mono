@@ -263,8 +263,10 @@ export interface AgentSessionConfig {
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/**
-	 * Whether the initial tools come from the `defaultTools` setting. When true, reload activates
-	 * tools newly added to the setting. Tools removed from it stay active.
+	 * Whether the initial tools come from the `defaultTools` setting rather than an explicit list.
+	 * When true, a resumed session restores the loadout its transcript declares instead of the
+	 * defaults, and reload activates tools newly added to the setting. Tools removed from it stay
+	 * active.
 	 */
 	usesDefaultTools?: boolean;
 	/**
@@ -521,7 +523,10 @@ export class AgentSession {
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
 		});
-		if (this._initialActiveToolNames === undefined) this._restoreToolsFromTranscript();
+		// Default tools only seed a new session. A resumed session keeps the loadout its transcript
+		// declares, such as tools loaded by tool_search; replacing it would change the request's tool
+		// declarations and bust the prompt cache. An explicit tool list still wins (my-pi#1816).
+		if (this._initialActiveToolNames === undefined || this._usesDefaultTools) this._restoreToolsFromTranscript();
 	}
 
 	get modelRuntime(): ModelRuntime {
