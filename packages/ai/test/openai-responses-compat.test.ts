@@ -35,16 +35,19 @@ async function captureOpenAIResponseHeaders(
 	sessionId: string | null;
 	clientRequestId: string | null;
 	xSessionId: string | null;
+	sessionAffinity: string | null;
 }> {
 	const captured = {
 		sessionId: null as string | null,
 		clientRequestId: null as string | null,
 		xSessionId: null as string | null,
+		sessionAffinity: null as string | null,
 	};
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
 		captured.sessionId = getHeader(init?.headers, "session_id");
 		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
 		captured.xSessionId = getHeader(init?.headers, "x-session-id");
+		captured.sessionAffinity = getHeader(init?.headers, "x-session-affinity");
 		return new Response("data: [DONE]\n\n", {
 			status: 200,
 			headers: { "content-type": "text/event-stream" },
@@ -338,6 +341,51 @@ describe("openai-responses provider defaults", () => {
 
 		expect(captured.sessionId).toBe("session-123");
 		expect(captured.clientRequestId).toBe("session-123");
+	});
+
+	// leo-labs-ai/my-pi#1831
+	it("sends x-session-affinity only when compat.sendSessionAffinityHeaders is set", async () => {
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "proxy",
+			baseUrl: "https://proxy.example.com/v1",
+		};
+		const enabled = await captureOpenAIResponseHeaders(
+			{ sessionId: "session-affinity" },
+			{ ...proxyModel, compat: { sendSessionAffinityHeaders: true } },
+		);
+		const disabled = await captureOpenAIResponseHeaders({ sessionId: "session-affinity" }, proxyModel);
+
+		expect(enabled.sessionAffinity).toBe("session-affinity");
+		expect(enabled.sessionId).toBe("session-affinity");
+		expect(enabled.clientRequestId).toBe("session-affinity");
+
+		expect(disabled.sessionAffinity).toBeNull();
+		expect(disabled.sessionId).toBe("session-affinity");
+		expect(disabled.clientRequestId).toBe("session-affinity");
+	});
+
+	// leo-labs-ai/my-pi#1831: the Grok 4.7 entries that moved to the Responses wire carry
+	// exactly these two compat flags, so the header has to follow the no-session format too.
+	it("sends x-session-affinity with the openai-nosession format only when compat.sendSessionAffinityHeaders is set", async () => {
+		const grokModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "xai",
+			baseUrl: "https://api.x.ai/v1",
+			compat: { sessionAffinityFormat: "openai-nosession" },
+		};
+		const enabled = await captureOpenAIResponseHeaders(
+			{ sessionId: "grok-session" },
+			{ ...grokModel, compat: { sendSessionAffinityHeaders: true, sessionAffinityFormat: "openai-nosession" } },
+		);
+		const disabled = await captureOpenAIResponseHeaders({ sessionId: "grok-session" }, grokModel);
+
+		expect(enabled.sessionAffinity).toBe("grok-session");
+		expect(enabled.clientRequestId).toBe("grok-session");
+		expect(enabled.sessionId).toBeNull();
+
+		expect(disabled.sessionAffinity).toBeNull();
+		expect(disabled.clientRequestId).toBe("grok-session");
 	});
 
 	it("uses OpenRouter session-affinity header when configured", async () => {

@@ -878,7 +878,16 @@ export interface OpenAIResponsesCompat {
 	supportsDeveloperRole?: boolean;
 	/** Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. Default: false; the generated model catalog enables it for verified models. */
 	supportsMidConvoSystemMessages?: boolean;
-	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
+	/**
+	 * Whether to also send the `x-session-affinity` header from `options.sessionId`.
+	 * Gateways that route by replica affinity key off this header, so it carries the same
+	 * meaning as {@link OpenAICompletionsCompat.sendSessionAffinityHeaders}. It only adds
+	 * that one header: `session_id` and `x-client-request-id` are sent for any `sessionId`
+	 * on this transport regardless, and the `openrouter` format sends `x-session-id` instead.
+	 * Default: true for OpenRouter endpoints, false otherwise.
+	 */
+	sendSessionAffinityHeaders?: boolean;
+	/** Session-affinity header format: `openai` sends `session_id` and `x-client-request-id`; `openai-nosession` sends `x-client-request-id`; `openrouter` sends `x-session-id`. The `openai` and `openai-nosession` formats add `x-session-affinity` when `sendSessionAffinityHeaders` is set. Does not affect the `prompt_cache_key` body param, which is governed by cache retention. Default: auto-detected. */
 	sessionAffinityFormat?: SessionAffinityFormat;
 	/** Whether the provider supports long prompt cache retention. This uses `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and `prompt_cache_retention: "24h"` on earlier models. Default: true. */
 	supportsLongCacheRetention?: boolean;
