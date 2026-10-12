@@ -198,16 +198,7 @@ export function hasToolRedefinitions(messages: TranscriptMessages): boolean {
 
 /** Whether tool history contains a removal or same-name redeclaration that an addition-only transport cannot replay. */
 export function hasNonAdditiveToolChanges(messages: TranscriptMessages): boolean {
-	const declared = new Set<string>();
-	for (const message of messages) {
-		if (!isSystemMessage(message)) continue;
-		if ((message.toolsRemoved?.length ?? 0) > 0) return true;
-		for (const tool of message.toolsAdded ?? []) {
-			if (declared.has(tool.name)) return true;
-			declared.add(tool.name);
-		}
-	}
-	return false;
+	return getLastNonAdditiveToolChangeIndex(messages) >= 0;
 }
 
 export interface TranscriptTools {
