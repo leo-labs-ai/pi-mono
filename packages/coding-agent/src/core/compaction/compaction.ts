@@ -705,24 +705,22 @@ export function getSummarizationFailure(response: AssistantMessage, label: strin
  *   no prefix with any live session, so there is nothing to hit and caching would only pay
  *   for a write that is never read. `"none"` is correct there, and stays the default.
  *
- * Summary requests set no output cap of their own. Like a normal turn, pi-ai sends the model's
- * output limit, clamped to the room left in the context window. Providers count thinking inside
- * max_tokens, so a smaller compaction-specific cap (formerly 0.8 × reserveTokens) let thinking
- * starve the summary and fail compaction with a length stop. The summary prompt, not
+ * Summary requests set no output cap of their own and never enable thinking. Like a normal turn,
+ * pi-ai sends the model's output limit, clamped to the room left in the context window.
+ * Providers count thinking inside max_tokens, so session thinking (for example xhigh) could
+ * exhaust the cap and fail compaction with a length stop. The summary prompt, not
  * max_tokens, governs summary length.
  */
 function createSummarizationOptions(
-	model: Model<any>,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
-	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
 	cacheSafe: boolean,
 ): SimpleStreamOptions {
 	const liveRetention = getProviderEnvValue("PI_CACHE_RETENTION", env) === "long" ? "long" : "short";
-	const options: SimpleStreamOptions = {
+	return {
 		signal,
 		apiKey,
 		headers,
@@ -730,10 +728,6 @@ function createSummarizationOptions(
 		cacheRetention: cacheSafe ? liveRetention : "none",
 		sessionId,
 	};
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
-	}
-	return options;
 }
 
 function createSummaryUserMessage(promptText: string): Message {
@@ -856,7 +850,8 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 /**
  * Generate or update a conversation summary and return its provider usage.
  *
- * `_reserveTokens` is kept for API compatibility. It no longer caps summary output; see
+ * `_reserveTokens` and `_thinkingLevel` are kept for API compatibility. Neither affects the
+ * request: summaries set no output cap and run without thinking; see
  * {@link createSummarizationOptions}.
  */
 export async function generateSummaryWithUsage(
@@ -868,7 +863,7 @@ export async function generateSummaryWithUsage(
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -877,12 +872,10 @@ export async function generateSummaryWithUsage(
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<{ text: string; usage: Usage }> {
 	const completionOptions = createSummarizationOptions(
-		model,
 		apiKey,
 		headers,
 		env,
 		signal,
-		thinkingLevel,
 		sessionId,
 		cacheSafeContext !== undefined,
 	);
@@ -1290,7 +1283,7 @@ export async function generateTurnPrefixSummary(
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
 	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
@@ -1320,16 +1313,7 @@ export async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		context,
-		createSummarizationOptions(
-			model,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
-			sessionId,
-			cacheSafeContext !== undefined,
-		),
+		createSummarizationOptions(apiKey, headers, env, signal, sessionId, cacheSafeContext !== undefined),
 		streamFn,
 		retry,
 		callbacks,
