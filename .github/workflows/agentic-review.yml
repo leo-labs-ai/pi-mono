@@ -313,8 +313,18 @@ jobs:
             session.dispose();
           }
           JS
-          OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1)
+          # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
+          set -e
+          if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
+            STATUS=0
+          else
+            STATUS=$?
+          fi
           echo "$OUT"
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::boot smoke CLI failed (exit $STATUS) — see output above"
+            exit "$STATUS"
+          fi
           if printf '%s' "$OUT" | grep -qiE "Failed to load extension|is not a function"; then
             echo "::error::actions profile failed to load against this fork (extension/API skew) — see output above"; exit 1
           fi
