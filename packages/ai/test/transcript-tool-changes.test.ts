@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { streamSimple } from "../src/compat.ts";
+import { fauxAssistantMessage, fauxToolCall } from "../src/providers/faux.ts";
 import type { Api, Context, Model, Tool } from "../src/types.ts";
 
 class PayloadCaptured extends Error {}
@@ -341,12 +342,31 @@ describe("transcript system messages", () => {
 				messages: [
 					...firstLoad.messages,
 					{ role: "user", content: "load two", timestamp: 5 },
+					fauxAssistantMessage(fauxToolCall("tool_search", { query: "loaded_two" }, { id: "load_two" }), {
+						stopReason: "toolUse",
+						timestamp: 6,
+					}),
+					{
+						role: "toolResult",
+						toolCallId: "load_two",
+						toolName: "tool_search",
+						content: [{ type: "text", text: "Loaded 1 tool: loaded_two" }],
+						isError: false,
+						timestamp: 7,
+					},
 					{ role: "system", content: "", toolsAdded: [tool("loaded_two")], timestamp: 6 },
 				],
 			};
 			const first = await capturePayload<Payload>(model, firstLoad);
 			const second = await capturePayload<Payload>(model, secondLoad);
 
+			// Regression for #616: compare serialized bytes, not only structural equality.
+			const { input: firstInput, ...firstRequest } = first;
+			const { input: secondInput, ...secondRequest } = second;
+			expect(Buffer.from(JSON.stringify(secondRequest))).toEqual(Buffer.from(JSON.stringify(firstRequest)));
+			expect(Buffer.from(JSON.stringify(secondInput.slice(0, firstInput.length)))).toEqual(
+				Buffer.from(JSON.stringify(firstInput)),
+			);
 			// The top-level list is the tool set after the removal; later loads do not rewrite it.
 			expect(first.tools?.map((value) => value.name)).toEqual(["late_tool"]);
 			expect(second.tools).toEqual(first.tools);
