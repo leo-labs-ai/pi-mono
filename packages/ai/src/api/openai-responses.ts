@@ -66,8 +66,12 @@ function getClientApiKey(provider: string, apiKey: string | undefined, headers: 
 	throw new Error(`No API key for provider: ${provider}`);
 }
 
+function isOpenRouterEndpoint(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">): boolean {
+	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai");
+}
+
 function detectSessionAffinityFormat(model: Pick<Model<"openai-responses">, "provider" | "baseUrl">) {
-	return model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai") ? "openrouter" : "openai";
+	return isOpenRouterEndpoint(model) ? "openrouter" : "openai";
 }
 
 /**
@@ -88,6 +92,7 @@ function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCo
 	return {
 		supportsDeveloperRole: model.compat?.supportsDeveloperRole ?? true,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+		sendSessionAffinityHeaders: model.compat?.sendSessionAffinityHeaders ?? isOpenRouterEndpoint(model),
 		sessionAffinityFormat: model.compat?.sessionAffinityFormat ?? detectSessionAffinityFormat(model),
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 		supportsStrictMode: model.compat?.supportsStrictMode ?? false,
@@ -299,6 +304,11 @@ function createClient(
 				headers.session_id = sessionId;
 			}
 			headers["x-client-request-id"] = sessionId;
+			// Parity with Chat Completions and Anthropic Messages: gateways that route by
+			// replica affinity key off x-session-affinity, so the flag must reach this wire too.
+			if (compat.sendSessionAffinityHeaders) {
+				headers["x-session-affinity"] = sessionId;
+			}
 		}
 	}
 
