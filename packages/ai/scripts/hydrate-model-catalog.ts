@@ -12,6 +12,7 @@ import {
 	readModelDataProviderIds,
 	validateModelDataDirectory,
 } from "./model-data.ts";
+import { unsupportedApiSkip } from "./model-api-support.ts";
 
 type CatalogEntry = ModelCatalogEntry & Record<string, unknown>;
 
@@ -53,6 +54,12 @@ export function hydrateModelCatalog(
 		const entries: CatalogEntry[] = [];
 		for (const model of models) {
 			if (!isCatalogEntry(model)) throw new Error(`Model catalog has an invalid entry for provider ${provider}`);
+			// An older catalog may list an API this checkout's provider cannot serve.
+			const skipped = model.type === "chat" ? unsupportedApiSkip(provider, model.id, model.api) : undefined;
+			if (skipped) {
+				console.warn(`Skipped model: ${skipped.message}`);
+				continue;
+			}
 			entries.push(model);
 		}
 		const grouped = groupProviderModelData(provider, entries);
