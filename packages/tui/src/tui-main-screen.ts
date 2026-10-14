@@ -454,9 +454,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// which happens constantly while background agents update status rows above
 		// the fold. Repaint the visible remainder instead, and skip the paint entirely
 		// when nothing on screen changed.
-		// Shrinking content still needs the full redraw: rows the buffer no longer has
-		// are stale on screen and only a clear removes them.
+		// Shrinking content that reaches into scrollback repaints in place when the shrink is
+		// small and at most one trailing row is blank (see repaintShrunkViewport). Anything
+		// else needs the full redraw: rows the buffer no longer has are stale on screen and
+		// only a clear removes them.
 		if (firstChanged < prevViewportTop && newLines.length < this.previousLines.length) {
+			if (!heightChanged && this.repaintShrunkViewport(newLines, cursorPos, width, height, prevViewportTop)) {
+				logRedraw("off-screen shrink repainted in place");
+				return;
+			}
 			logRedraw(`firstChanged < viewportTop with shrink (${firstChanged} < ${prevViewportTop})`);
 			fullRender(true);
 			return;
@@ -607,6 +613,85 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		this.previousKittyImageIds = this.collectKittyImageIds(newLines);
 		this.previousWidth = width;
 		this.previousHeight = height;
+	}
+
+	/**
+	 * Handle a shrink whose first changed line is above the viewport without clearing scrollback.
+	 *
+	 * Problem: removing `k` lines from the buffer (for example a custom message above the fold) changes every
+	 * following line index. A clear-and-replay fixes that but resets the user's scroll position and history.
+	 *
+	 * Solution: keep the physical screen where it is and subtract `k` from the logical viewport top, cursor row and
+	 * working-area size. Screen row `r` then maps to `newLines[viewportTop - k + r]` instead of
+	 * `previousLines[viewportTop + r]`. The last content row stays on the same screen row, so no stale rows or
+	 * additional blank rows appear. Only screen rows whose text differs are repainted. Scrollback is not rewritten, so it may
+	 * keep the `k` removed lines, as it already does for same-length offscreen edits.
+	 *
+	 * Blank rows below the content (the working area is taller than the content after an earlier visible-only
+	 * shrink) stay blank after rebasing. Allow one trailing blank row, as observed after editor updates. Larger
+	 * blank areas retain the existing full-redraw cleanup after transient components disappear.
+	 *
+	 * Falls back (returns false, nothing written) when it cannot prove this is safe:
+	 * - more than `height` lines were removed, or more than the lines above the viewport (deep shrink such as
+	 *   `/clear` or compaction, where the full clear is wanted);
+	 * - more than one trailing row is blank, no content is on screen, or the cursor is outside the viewport;
+	 * - any previous or new line holds an inline image, whose placements cannot be moved or deleted this way.
+	 */
+	private repaintShrunkViewport(
+		newLines: string[],
+		cursorPos: { row: number; col: number } | null,
+		width: number,
+		height: number,
+		viewportTop: number,
+	): boolean {
+		const previousLines = this.previousLines;
+		const removed = previousLines.length - newLines.length;
+		if (removed <= 0 || removed > height || removed > viewportTop) return false;
+		// Screen rows holding content; any rows below them up to `height` are blank working area.
+		const screenRows = previousLines.length - viewportTop;
+		if (screenRows <= 0 || screenRows < height - 1 || screenRows > height) return false;
+		const cursorScreenRow = this.hardwareCursorRow - viewportTop;
+		if (cursorScreenRow < 0 || cursorScreenRow >= height) return false;
+		if (previousLines.some(isImageLine) || newLines.some(isImageLine)) return false;
+
+		const newViewportTop = viewportTop - removed;
+		let firstRow = -1;
+		let lastRow = -1;
+		for (let row = 0; row < screenRows; row++) {
+			if (previousLines[viewportTop + row] === newLines[newViewportTop + row]) continue;
+			if (firstRow === -1) firstRow = row;
+			lastRow = row;
+		}
+
+		let hardwareCursorRow = this.hardwareCursorRow - removed;
+		if (firstRow !== -1) {
+			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
+			output.append("\x1b[?2026h");
+			const lineDiff = firstRow - cursorScreenRow;
+			if (lineDiff > 0) output.append(`\x1b[${lineDiff}B`);
+			else if (lineDiff < 0) output.append(`\x1b[${-lineDiff}A`);
+			output.append("\r");
+			for (let row = firstRow; row <= lastRow; row++) {
+				if (row > firstRow) output.append("\r\n");
+				const index = newViewportTop + row;
+				output.append("\x1b[2K");
+				output.append(this.clampOverwideTextLine(newLines, index, width, newLines[index]));
+			}
+			output.append("\x1b[?2026l");
+			output.flush();
+			hardwareCursorRow = newViewportTop + lastRow;
+		}
+
+		this.cursorRow = Math.max(0, newLines.length - 1);
+		this.hardwareCursorRow = hardwareCursorRow;
+		this.maxLinesRendered = Math.max(newLines.length, this.maxLinesRendered - removed);
+		this.previousViewportTop = newViewportTop;
+		this.positionHardwareCursor(cursorPos, newLines.length);
+		this.previousLines = newLines;
+		this.previousKittyImageIds = new Set();
+		this.previousWidth = width;
+		this.previousHeight = height;
+		return true;
 	}
 
 	private writeOverwideLineLog(newLines: string[], lineIndex: number, width: number, line: string): void {
