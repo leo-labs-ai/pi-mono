@@ -198,40 +198,69 @@ export function hasToolRedefinitions(messages: TranscriptMessages): boolean {
 
 /** Whether tool history contains a removal or same-name redeclaration that an addition-only transport cannot replay. */
 export function hasNonAdditiveToolChanges(messages: TranscriptMessages): boolean {
-	const declared = new Set<string>();
-	for (const message of messages) {
-		if (!isSystemMessage(message)) continue;
-		if ((message.toolsRemoved?.length ?? 0) > 0) return true;
-		for (const tool of message.toolsAdded ?? []) {
-			if (declared.has(tool.name)) return true;
-			declared.add(tool.name);
-		}
-	}
-	return false;
+	return getLastNonAdditiveToolChangeIndex(messages) >= 0;
 }
 
 export interface TranscriptTools {
 	/** Tools sent in the top-level request field. */
 	requestTools: Tool[];
 	/**
-	 * Whether later system messages carry their own `toolsAdded` as in-place additions.
+	 * Whether later system messages can carry their own `toolsAdded` as in-place additions.
 	 * When false, `requestTools` already holds the complete current tool set.
 	 */
 	anchorsAdditions: boolean;
+	/**
+	 * The tools to declare in place at this later system message: its `toolsAdded` when the
+	 * message comes after the last removal or redeclaration, otherwise none, because
+	 * `requestTools` already holds them.
+	 */
+	anchoredAdditions(message: SystemMessage): Tool[];
+}
+
+/** Index of the last system message that removes or redeclares a tool, or -1. */
+function getLastNonAdditiveToolChangeIndex(messages: TranscriptMessages): number {
+	const declared = new Set<string>();
+	let last = -1;
+	messages.forEach((message, index) => {
+		if (!isSystemMessage(message)) return;
+		if ((message.toolsRemoved?.length ?? 0) > 0) last = index;
+		for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name);
+		for (const tool of message.toolsAdded ?? []) {
+			if (declared.has(tool.name)) last = index;
+			declared.add(tool.name);
+		}
+	});
+	return last;
 }
 
 /**
  * Split tool declarations between the top-level request field and in-place additions.
- * Transports that can anchor additions at a system message keep the initial tools at the
- * top and load later ones where they appear; that only works when no tool was removed or
- * redeclared, so everything else sends the current tool list.
+ * Transports that can anchor additions at a system message keep a stable tool list at the
+ * top and load later tools where they appear. They can only add tools, so the top-level
+ * list is the tool set after the last removal or redeclaration (the initial tools when
+ * there is none), and only additions after that point are anchored. A removal changes the
+ * prefix once; later additions keep it. Transports without in-place additions send the
+ * current tool list.
  */
 export function resolveTranscriptTools(messages: TranscriptMessages, supportsToolAdditions: boolean): TranscriptTools {
-	const anchorsAdditions = supportsToolAdditions && !hasNonAdditiveToolChanges(messages);
+	if (!supportsToolAdditions) {
+		return { requestTools: getCurrentTools(messages), anchorsAdditions: false, anchoredAdditions: () => [] };
+	}
+	const boundary = getLastNonAdditiveToolChangeIndex(messages);
+	// Match by the `toolsAdded` array: message conversion may copy a message object but keeps its fields.
+	const anchored = new Set<readonly Tool[]>();
+	messages.forEach((message, index) => {
+		if (index > Math.max(boundary, 0) && isSystemMessage(message) && message.toolsAdded?.length) {
+			anchored.add(message.toolsAdded);
+		}
+	});
 	return {
-		requestTools: anchorsAdditions
-			? (getInitialSystemMessage(messages)?.toolsAdded ?? [])
-			: getCurrentTools(messages),
-		anchorsAdditions,
+		requestTools:
+			boundary < 0
+				? (getInitialSystemMessage(messages)?.toolsAdded ?? [])
+				: getCurrentTools(messages.slice(0, boundary + 1)),
+		anchorsAdditions: true,
+		anchoredAdditions: (message) =>
+			message.toolsAdded !== undefined && anchored.has(message.toolsAdded) ? message.toolsAdded : [],
 	};
 }
