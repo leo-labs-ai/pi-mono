@@ -247,6 +247,7 @@ jobs:
             "defaultProvider": "claude-bridge",
             "defaultModel": "claude-opus-4-8",
             "enabledModels": ["claude-bridge/*"],
+            "defaultTools": ["+Workflow"],
             "extensions": $EXTENSIONS
           }
           EOF
@@ -291,7 +292,27 @@ jobs:
         # Fail loudly and specifically if the profile can't boot against this fork,
         # instead of the cryptic "no review result produced" from a crashed pi.
         run: |
-          set +e
+          # Explicit activation is smaller than adding discovery extensions: this
+          # reviewer always needs the same tool. Check the actual model loadout,
+          # not just the extension path or a model claiming it can use Workflow.
+          timeout 60 node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { createAgentSession, SessionManager } from "./packages/coding-agent/dist/index.js";
+          const { session, extensionsResult } = await createAgentSession({
+            sessionManager: SessionManager.inMemory(),
+          });
+          try {
+            assert.deepEqual(extensionsResult.errors, [], "actions profile extension load errors");
+            const errors = [];
+            await session.bindExtensions({ onError: (error) => errors.push(error) });
+            assert.deepEqual(errors, [], "actions profile startup errors");
+            const active = session.getActiveToolNames();
+            console.log("review model tools:", active.join(", "));
+            assert.ok(active.includes("Workflow"), "Workflow is not declared to the review model");
+          } finally {
+            session.dispose();
+          }
+          JS
           OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1)
           echo "$OUT"
           if printf '%s' "$OUT" | grep -qiE "Failed to load extension|is not a function"; then
