@@ -335,7 +335,7 @@ describe("transcript system messages", () => {
 				messages: [
 					...context.messages,
 					{ role: "user", content: "load one", timestamp: 3 },
-					{ role: "system", content: "", toolsAdded: [tool("loaded_one")], timestamp: 4 },
+					{ role: "system", content: "", toolsAdded: [tool("loaded_one"), tool("tool_search")], timestamp: 4 },
 				],
 			};
 			const secondLoad: Context = {
@@ -354,7 +354,7 @@ describe("transcript system messages", () => {
 						isError: false,
 						timestamp: 7,
 					},
-					{ role: "system", content: "", toolsAdded: [tool("loaded_two")], timestamp: 6 },
+					{ role: "system", content: "", toolsAdded: [tool("loaded_two")], timestamp: 8 },
 				],
 			};
 			const first = await capturePayload<Payload>(model, firstLoad);
@@ -371,7 +371,29 @@ describe("transcript system messages", () => {
 			expect(first.tools?.map((value) => value.name)).toEqual(["late_tool"]);
 			expect(second.tools).toEqual(first.tools);
 			expect(second.input.slice(0, first.input.length)).toEqual(first.input);
-			expect(JSON.stringify(second.input.slice(first.input.length))).toContain("loaded_two");
+			const anchorType = "supportsAdditionalTools" in toolCompat ? "additional_tools" : "tool_search_output";
+			expect(first.input).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						type: anchorType,
+						tools: expect.arrayContaining([expect.objectContaining({ name: "loaded_one" })]),
+					}),
+				]),
+			);
+			const tail = second.input.slice(first.input.length);
+			expect(tail).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ type: "function_call", name: "tool_search" }),
+					expect.objectContaining({ type: "function_call_output" }),
+					expect.objectContaining({
+						type: anchorType,
+						tools: expect.arrayContaining([expect.objectContaining({ name: "loaded_two" })]),
+					}),
+				]),
+			);
+			if ("supportsToolSearch" in toolCompat) {
+				expect(tail).toEqual(expect.arrayContaining([expect.objectContaining({ type: "tool_search_call" })]));
+			}
 		});
 	}
 
