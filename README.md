@@ -69,6 +69,10 @@ Nix builds are offline, so the bundled model data comes from a pi.dev model cata
 npm run update:model-catalog-pin
 ```
 
+Source builds do not use the Nix pin. `npm run build` in `packages/ai` hydrates model data from the committed `packages/ai/model-catalog.snapshot.json` and never contacts models.dev, so a build does not change when upstream model data changes. To hydrate by hand, run `npm run hydrate:model-snapshot`. To update the snapshot, run `npm run refresh:model-snapshot`. It regenerates the catalog from live data with `--check-api-drift`, validates it, and overwrites the snapshot only if no upstream model was skipped. Review and commit the snapshot diff. `npm run hydrate:model-data` and `npm run generate:models` remain live refreshes of the local data. Live refreshes skip upstream models whose npm adapter or API pi cannot serve and print `Skipped model:` warnings. Add `--check-api-drift` (and optionally `--diagnostics-json <file>`) to `node packages/ai/scripts/generate-models.ts` to exit non-zero when anything was skipped.
+
+OpenRouter snapshot costs come from each model ID's `pricing.prompt`, `pricing.completion`, and cache fields in [its models API](https://openrouter.ai/api/v1/models), converted from dollars per token to dollars per million tokens. A `:batch` suffix does not guarantee a lower price than another ID. For example, on 2026-10-14 the API returned GPT-OSS 20B at $0.018/$0.09 input/output and its batch variant at $0.024/$0.112. `openrouter-catalog-pricing.test.ts` records those source fields and verifies the conversion without adjusting either price.
+
 ## Packages
 
 This monorepo contains the Pi CLI and its supporting libraries.

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSy
 import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getEffortThinkingLevelMap, type ModelsDevReasoningOption } from "./models-dev-reasoning-options.ts";
+import { isKnownNpmAdapter, resolveNpmAdapter, type SkippedModel, unknownAdapterSkip, unsupportedApiSkip } from "./model-api-support.ts";
 import { buildOpenRouterCatalog, type OpenRouterCatalog, type OpenRouterModelListItem } from "./openrouter-catalog.ts";
 import {
 	CLOUDFLARE_AI_GATEWAY_ANTHROPIC_BASE_URL,
@@ -53,12 +54,16 @@ function readGeneratorOptions(args: string[]): {
 	jsonOnly: boolean;
 	jsonOutputDir: string | undefined;
 	pretty: boolean;
+	checkApiDrift: boolean;
+	diagnosticsJson: string | undefined;
 } {
 	let strict = false;
 	let dataOnly = false;
 	let jsonOnly = false;
 	let jsonOutputDir: string | undefined;
 	let pretty = false;
+	let checkApiDrift = false;
+	let diagnosticsJson: string | undefined;
 
 	for (let index = 0; index < args.length; index++) {
 		const arg = args[index];
@@ -78,6 +83,16 @@ function readGeneratorOptions(args: string[]): {
 			pretty = true;
 			continue;
 		}
+		if (arg === "--check-api-drift") {
+			checkApiDrift = true;
+			continue;
+		}
+		if (arg === "--diagnostics-json") {
+			const value = args[++index];
+			if (!value) throw new Error("--diagnostics-json requires a file path");
+			diagnosticsJson = resolve(value);
+			continue;
+		}
 		if (arg === "--json-output") {
 			const value = args[++index];
 			if (!value) throw new Error("--json-output requires a directory");
@@ -89,10 +104,13 @@ function readGeneratorOptions(args: string[]): {
 
 	if (jsonOnly && !jsonOutputDir) throw new Error("--json-only requires --json-output");
 	if (dataOnly && (jsonOnly || jsonOutputDir)) throw new Error("--data-only cannot be combined with JSON catalog output");
-	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty };
+	return { strict, dataOnly, jsonOnly, jsonOutputDir, pretty, checkApiDrift, diagnosticsJson };
 }
 
 const generatorOptions = readGeneratorOptions(process.argv.slice(2));
+
+/** Upstream entries the generator skipped because pi cannot serve their API. */
+const skippedModels: SkippedModel[] = [];
 
 interface ModelsDevModel {
 	id: string;
@@ -2254,7 +2272,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				if (m.tool_call !== true) continue;
 				if (m.status === "deprecated") continue;
 
-				const npm = m.provider?.npm;
+				const npm = resolveNpmAdapter(variant.provider, modelId, m.provider?.npm);
 				let api: Api;
 				let baseUrl: string;
 				let compat: OpenAICompletionsCompat | OpenAIResponsesCompat | undefined;
@@ -2274,10 +2292,14 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					api = "openai-completions";
 					baseUrl = `${variant.basePath}/v1`;
 					compat = { cacheControlFormat: "anthropic" };
-				} else {
+				} else if (isKnownNpmAdapter(npm)) {
 					// null, undefined, or @ai-sdk/openai-compatible
 					api = "openai-completions";
 					baseUrl = `${variant.basePath}/v1`;
+				} else {
+					// An unmapped adapter would otherwise be coerced to an API pi may not speak.
+					skippedModels.push(unknownAdapterSkip(variant.provider, modelId, npm as string));
+					continue;
 				}
 
 				if (variant.provider === "opencode" && modelId === "grok-build-0.1") {
@@ -2319,6 +2341,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					) {
 						compat = { ...compat, supportsLongCacheRetention: false };
 					}
+				}
+
+				const unsupported = unsupportedApiSkip(variant.provider, modelId, api, npm);
+				if (unsupported) {
+					skippedModels.push(unsupported);
+					continue;
 				}
 
 				let thinkingLevelMap: NonNullable<Model<Api>["thinkingLevelMap"]> | undefined;
@@ -3720,8 +3748,22 @@ async function generateModels() {
 	}
 }
 
+/** Log skipped upstream entries, write the optional diagnostics file, and fail under --check-api-drift. */
+function reportSkippedModels(): void {
+	for (const skipped of skippedModels) console.warn(`Skipped model: ${skipped.message}`);
+	if (generatorOptions.diagnosticsJson) {
+		writeFileSync(generatorOptions.diagnosticsJson, `${JSON.stringify({ skipped: skippedModels }, null, 2)}\n`);
+	}
+	if (generatorOptions.checkApiDrift && skippedModels.length > 0) {
+		console.error(`API drift: ${skippedModels.length} upstream model(s) were skipped (see "Skipped model" lines above).`);
+		process.exitCode = 1;
+	}
+}
+
 // Run the generator
-generateModels().catch((error) => {
-	console.error(error);
-	process.exitCode = 1;
-});
+generateModels()
+	.catch((error) => {
+		console.error(error);
+		process.exitCode = 1;
+	})
+	.finally(reportSkippedModels);
