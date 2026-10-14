@@ -69,6 +69,8 @@ Nix builds are offline, so the bundled model data comes from a pi.dev model cata
 npm run update:model-catalog-pin
 ```
 
+Source builds do not use the Nix pin. `npm run build` in `packages/ai` hydrates model data from the committed `packages/ai/model-catalog.snapshot.json` and never contacts models.dev, so a build does not change when upstream model data changes. To hydrate by hand, run `npm run hydrate:model-snapshot`. To update the snapshot, run `npm run refresh:model-snapshot`. It regenerates the catalog from live data with `--check-api-drift`, validates it, and overwrites the snapshot only if no upstream model was skipped. Review and commit the snapshot diff. `npm run hydrate:model-data` and `npm run generate:models` remain live refreshes of the local data. Live refreshes skip upstream models whose npm adapter or API pi cannot serve and print `Skipped model:` warnings. Add `--check-api-drift` (and optionally `--diagnostics-json <file>`) to `node packages/ai/scripts/generate-models.ts` to exit non-zero when anything was skipped.
+
 ## Packages
 
 This monorepo contains the Pi CLI and its supporting libraries.
