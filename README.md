@@ -1,3 +1,5 @@
+> **leo-labs** — brand name (Leonardo + leopard). GitHub org: [`leo-labs-ai`](https://github.com/leo-labs-ai). Fork packages publish to GitHub Packages as `@leo-labs-ai/*`.
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
