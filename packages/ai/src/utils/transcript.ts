@@ -224,6 +224,7 @@ function getLastNonAdditiveToolChangeIndex(messages: TranscriptMessages): number
 	messages.forEach((message, index) => {
 		if (!isSystemMessage(message)) return;
 		if ((message.toolsRemoved?.length ?? 0) > 0) last = index;
+		for (const tool of message.toolsRemoved ?? []) declared.delete(tool.name);
 		for (const tool of message.toolsAdded ?? []) {
 			if (declared.has(tool.name)) last = index;
 			declared.add(tool.name);
