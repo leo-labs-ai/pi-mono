@@ -18,6 +18,8 @@ function createSession(options: {
 	sessionName: string;
 	modelId?: string;
 	provider?: string;
+	api?: string;
+	ultrafast?: boolean;
 	reasoning?: boolean;
 	thinkingLevel?: string;
 	usage?: AssistantUsage;
@@ -25,7 +27,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
-	routedModel?: { model: { id: string }; thinkingLevel?: string };
+	routedModel?: { model: { id: string; api?: string }; thinkingLevel?: string };
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -69,6 +71,7 @@ function createSession(options: {
 			model: {
 				id: options.modelId ?? "test-model",
 				provider: options.provider ?? "test",
+				api: options.api ?? "test-api",
 				contextWindow: 200_000,
 				reasoning: options.reasoning ?? false,
 			},
@@ -84,6 +87,7 @@ function createSession(options: {
 		},
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 12.3 }),
 		routedModel: options.routedModel,
+		settingsManager: { getUltrafast: () => options.ultrafast ?? false },
 		modelRuntime: {
 			isUsingSubscription: () => options.usingSubscription ?? false,
 		},
@@ -114,6 +118,67 @@ describe("formatCwdForFooter", () => {
 	it("abbreviates the home directory and descendants", () => {
 		expect(formatCwdForFooter("/home/user", "/home/user")).toBe("~");
 		expect(formatCwdForFooter("/home/user/project", "/home/user")).toBe("~/project");
+	});
+});
+
+describe("FooterComponent ultrafast indicator", () => {
+	beforeAll(() => {
+		initTheme(undefined, false);
+	});
+
+	const render = (options: Parameters<typeof createSession>[0]) =>
+		stripAnsi(new FooterComponent(createSession(options), createFooterData(1)).render(120).join("\n"));
+
+	it("shows ultrafast when enabled on a supported model", () => {
+		const text = render({
+			sessionName: "",
+			modelId: "openai/gpt-6.1-sol",
+			api: "openai-responses",
+			ultrafast: true,
+		});
+		expect(text).toContain("ultrafast");
+		expect(text).not.toContain("ultrafast (ignored)");
+	});
+
+	it("shows an ignored note when enabled on an unsupported model", () => {
+		expect(render({ sessionName: "", modelId: "gpt-5.5", api: "openai-responses", ultrafast: true })).toContain(
+			"ultrafast (ignored)",
+		);
+	});
+
+	it("labels a virtual selection as routing before a route, not ignored", () => {
+		const text = render({ sessionName: "", modelId: "auto", api: "pi-virtual", ultrafast: true });
+		expect(text).toContain("ultrafast (routing)");
+		expect(text).not.toContain("ignored");
+	});
+
+	it("labels the latest route for a virtual selection routed to a supported model", () => {
+		const text = render({
+			sessionName: "",
+			modelId: "auto",
+			api: "pi-virtual",
+			ultrafast: true,
+			routedModel: { model: { id: "gpt-6.1-sol", api: "openai-responses" } },
+		});
+		expect(text).toContain("ultrafast (latest route)");
+		expect(text).not.toContain("ignored");
+	});
+
+	it("labels the latest route as ignored when it is unsupported", () => {
+		const text = render({
+			sessionName: "",
+			modelId: "auto",
+			api: "pi-virtual",
+			ultrafast: true,
+			routedModel: { model: { id: "gpt-5.5", api: "openai-responses" } },
+		});
+		expect(text).toContain("ultrafast (latest route ignored)");
+	});
+
+	it("shows nothing when disabled", () => {
+		expect(
+			render({ sessionName: "", modelId: "gpt-6.1-sol", api: "openai-responses", ultrafast: false }),
+		).not.toContain("ultrafast");
 	});
 });
 

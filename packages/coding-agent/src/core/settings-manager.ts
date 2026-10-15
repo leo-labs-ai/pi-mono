@@ -137,6 +137,7 @@ export interface Settings {
 	defaultThinkingLevel?: ThinkingLevel;
 	modelThinkingLevels?: Record<string, ThinkingLevel>; // per-model default thinking level overrides keyed by "provider/modelId"
 	transport?: TransportSetting; // default: "auto"
+	ultrafast?: boolean; // request service_tier "ultrafast" on supporting models; default: false
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
 	theme?: string;
@@ -908,6 +909,23 @@ export class SettingsManager {
 	setTransport(transport: TransportSetting): void {
 		this.globalSettings.transport = transport;
 		this.markModified("transport");
+		this.save();
+	}
+
+	getUltrafast(): boolean {
+		return this.settings.ultrafast ?? false;
+	}
+
+	setUltrafast(enabled: boolean): void {
+		// A project value overrides the global one, so write to the scope that owns the effective value.
+		if (this.projectSettings.ultrafast !== undefined) {
+			this.updateProjectSettings("ultrafast", (settings) => {
+				settings.ultrafast = enabled;
+			});
+			return;
+		}
+		this.globalSettings.ultrafast = enabled;
+		this.markModified("ultrafast");
 		this.save();
 	}
 

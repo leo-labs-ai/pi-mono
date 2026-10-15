@@ -120,6 +120,7 @@ import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import { withBuiltInRenderers } from "../../core/tools/renderers/index.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../../core/trust-manager.ts";
+import { describeUltrafastStatus, getUltrafastState, parseUltrafastArgument } from "../../core/ultrafast.ts";
 import { getUsageCostBreakdown } from "../../core/usage-totals.ts";
 import { addMcpServerConfig, loadMcpConfig } from "../../extensions/mcp/config.ts";
 import { getChangelogPath, getNewEntries, normalizeChangelogLinks, parseChangelog } from "../../utils/changelog.ts";
@@ -3202,6 +3203,11 @@ export class InteractiveMode {
 				const searchTerm = text.startsWith("/thinking ") ? text.slice(10).trim() : undefined;
 				this.editor.setText("");
 				this.handleThinkingCommand(searchTerm);
+				return;
+			}
+			if (text === "/ultrafast" || text.startsWith("/ultrafast ")) {
+				this.handleUltrafastCommand(text.slice("/ultrafast".length));
+				this.editor.setText("");
 				return;
 			}
 			if (text === "/export" || text.startsWith("/export ")) {
@@ -6626,6 +6632,29 @@ export class InteractiveMode {
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	private handleUltrafastCommand(argument: string): void {
+		const action = parseUltrafastArgument(argument);
+		if (!action) {
+			this.showWarning("Usage: /ultrafast [on|off|status]");
+			return;
+		}
+		const settings = this.settingsManager;
+		if (action !== "status") {
+			settings.setUltrafast(action === "toggle" ? !settings.getUltrafast() : action === "on");
+		}
+		const enabled = settings.getUltrafast();
+		const routed = this.session.routedModel?.model;
+		const message = describeUltrafastStatus(enabled, this.session.model, routed);
+		const state = getUltrafastState(enabled, this.session.model, routed);
+		if (state === "ignored" || state === "routed-ignored") {
+			this.showWarning(message);
+		} else {
+			this.showStatus(message);
+		}
+		this.footer.invalidate();
+		this.ui.requestRender();
 	}
 
 	private handleNameCommand(text: string): void {

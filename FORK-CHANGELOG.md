@@ -12,6 +12,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Added
 
+- **Ultrafast service tier for GPT-6.1 Sol and GPT-6 Astra on the OpenAI Responses and OpenAI Codex Responses APIs.** `serviceTier: "ultrafast"` is sent literally over HTTP and WebSocket, including through `streamSimple()`/`completeSimple()`. `supportsUltrafast(model)` matches any namespace prefix of `gpt-6.1-sol*` and `gpt-6-astra*`. A requested `ultrafast` tier wins over a `default` echo for cost, and `gpt-6.1-sol*` is estimated at a flat $12 input / $60 output per million tokens. Cached-input, cache-write and long-context Ultrafast rates are unknown, so standard cache costs stay as placeholders, and `gpt-6-astra` has no Ultrafast price. Tests in `packages/ai/test/ultrafast-service-tier.test.ts`.
 - **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
 
 ### Fixed
