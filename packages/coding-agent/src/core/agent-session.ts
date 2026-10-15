@@ -84,6 +84,7 @@ import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
 import {
 	type AgentActivityOutcome,
 	type BoundaryContextPreview,
+	type CompactIfIdleOptions,
 	type ContextUsage,
 	type ExecuteToolOptions,
 	type ExtensionCommandContextActions,
@@ -381,6 +382,8 @@ export class AgentSession {
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
 	private _isAgentRunActive = false;
+	/** Covers asynchronous input preflight and deferred settlement work before a run owns the session. */
+	private _pendingInputAdmissions = 0;
 	private _agentRunAbortRequested = false;
 	private _idleWaitPromise: Promise<void> | undefined;
 	private _resolveIdleWait: (() => void) | undefined;
@@ -1100,9 +1103,11 @@ export class AgentSession {
 
 		const deferred = this._deferredSettledActions.splice(0);
 		if (deferred.length > 0) {
+			this._pendingInputAdmissions++;
 			try {
 				for (const action of deferred) await action();
 			} finally {
+				this._pendingInputAdmissions--;
 				this._resolveIdleWaitIfIdle();
 			}
 			return;
@@ -1838,6 +1843,9 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
+		if (this.isCompacting) {
+			throw new Error("Cannot start an agent run while compaction or branch summarization is in progress.");
+		}
 		this._agentRunAbortRequested = false;
 		// Compaction before the prompt may have scheduled a retry; the new prompt replaces it.
 		this._failedResponse = undefined;
@@ -1993,6 +2001,15 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		this._pendingInputAdmissions++;
+		try {
+			await this._prompt(text, options);
+		} finally {
+			this._pendingInputAdmissions--;
+		}
+	}
+
+	private async _prompt(text: string, options?: PromptOptions): Promise<void> {
 		if (this._isEmittingAgentSettled) {
 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
 			return;
@@ -2200,6 +2217,20 @@ export class AgentSession {
 	}
 
 	private async _queueUserInput(
+		text: string,
+		images: ImageContent[] | undefined,
+		behavior: "steer" | "followUp",
+		source: InputSource,
+	): Promise<QueuedInputDisposition> {
+		this._pendingInputAdmissions++;
+		try {
+			return await this._processQueuedUserInput(text, images, behavior, source);
+		} finally {
+			this._pendingInputAdmissions--;
+		}
+	}
+
+	private async _processQueuedUserInput(
 		text: string,
 		images: ImageContent[] | undefined,
 		behavior: "steer" | "followUp",
@@ -2766,6 +2797,7 @@ export class AgentSession {
 		customInstructions: string | undefined,
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
+		singleRequest = false,
 	): Promise<CompactionResult> {
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
 		const request = await this._getSummarizationRequestAuth(model, signal);
@@ -2780,7 +2812,14 @@ export class AgentSession {
 		// level also keeps the cache-safe request's thinking settings identical to the turn that
 		// wrote the cached prefix.
 		return compact(
-			preparation,
+			// Idle summarizes history and any split-turn prefix in a single request.
+			singleRequest
+				? {
+						...preparation,
+						isSplitTurn: false,
+						messagesToSummarize: [...preparation.messagesToSummarize, ...preparation.turnPrefixMessages],
+					}
+				: preparation,
 			request.model,
 			request.apiKey,
 			request.headers,
@@ -2789,8 +2828,8 @@ export class AgentSession {
 			request.thinkingLevel,
 			this.agent.streamFunction,
 			request.env,
-			this.settingsManager.getRetrySettings(),
-			this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			singleRequest ? undefined : this.settingsManager.getRetrySettings(),
+			singleRequest ? undefined : this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			// Route the summary with the live routing session: the prefix above is only cached on
 			// the node that served this session's turns, and providers key cache affinity off this
 			// ID. This is the ID the main loop sends on every turn (`Agent.sessionId`).
@@ -2799,7 +2838,8 @@ export class AgentSession {
 		);
 	}
 
-	private _clearManualCompactionState(): void {
+	private _clearManualCompactionState(controller: AbortController): void {
+		if (this._compactionAbortController !== controller) return;
 		this._compactionAbortController = undefined;
 		this._resolveIdleWaitIfIdle();
 	}
@@ -2821,12 +2861,72 @@ export class AgentSession {
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		await this.abort();
-		this._compactionAbortController = new AbortController();
-		this._emit({ type: "compaction_start", reason: "manual" });
+		const controller = new AbortController();
+		this._compactionAbortController = controller;
+		return this._executeManualCompaction(controller, customInstructions);
+	}
+
+	/**
+	 * Atomically reserve manual compaction only when idle and current usage exceeds minTokens.
+	 * Rejected admission returns undefined; admitted cancellation or failure rejects the promise.
+	 * The caller owns idle timing and cancellation. This never aborts or waits for other work.
+	 * Built-in summarization makes at most one request, with no retry or fallback.
+	 */
+	async compactIfIdle({
+		minTokens,
+		signal,
+		customInstructions,
+	}: CompactIfIdleOptions): Promise<CompactionResult | undefined> {
+		if (!Number.isFinite(minTokens) || minTokens < 0) {
+			throw new RangeError("minTokens must be a finite, non-negative number");
+		}
+		if (
+			signal.aborted ||
+			this._isAgentRunActive ||
+			this.agent.state.isStreaming ||
+			this.isCompacting ||
+			this.isRetrying ||
+			this._retryAttempt > 0 ||
+			this._failedResponse !== undefined ||
+			this.pendingMessageCount > 0 ||
+			this.agent.hasQueuedMessages() ||
+			this._pendingInputAdmissions > 0 ||
+			this._isBeforeSettle ||
+			this._isEmittingAgentSettled ||
+			this._deferredSettledActions.length > 0 ||
+			this._pendingNextTurnMessages.length > 0 ||
+			this._pendingCustomMessages.length > 0 ||
+			this.hasPendingBashMessages ||
+			this.isBashRunning
+		) {
+			return undefined;
+		}
+		const tokens = this.getContextUsage()?.tokens;
+		if (tokens == null || !Number.isFinite(tokens) || tokens <= minTokens) return undefined;
+
+		// Reserve before the executor can yield or dispatch extension hooks.
+		const controller = new AbortController();
+		this._compactionAbortController = controller;
+		const onAbort = () => controller.abort(signal.reason);
+		signal.addEventListener("abort", onAbort, { once: true });
+		try {
+			return await this._executeManualCompaction(controller, customInstructions, true);
+		} finally {
+			signal.removeEventListener("abort", onAbort);
+		}
+	}
+
+	private async _executeManualCompaction(
+		controller: AbortController,
+		customInstructions?: string,
+		singleRequest = false,
+	): Promise<CompactionResult> {
 		let fromExtension = false;
 		let cancelledByExtension = false;
 
 		try {
+			this._emit({ type: "compaction_start", reason: "manual" });
+			controller.signal.throwIfAborted();
 			const model = this.model;
 			if (!model) {
 				throw new Error(formatNoModelSelectedMessage());
@@ -2855,7 +2955,7 @@ export class AgentSession {
 					customInstructions,
 					reason: "manual",
 					willRetry: false,
-					signal: this._compactionAbortController.signal,
+					signal: controller.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -2868,6 +2968,7 @@ export class AgentSession {
 					fromExtension = true;
 				}
 			}
+			controller.signal.throwIfAborted();
 
 			let summary: string;
 			let firstKeptEntryId: string;
@@ -2888,8 +2989,9 @@ export class AgentSession {
 					preparation,
 					model,
 					customInstructions,
-					this._compactionAbortController.signal,
+					controller.signal,
 					"manual",
+					singleRequest,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -2898,7 +3000,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (controller.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -2931,7 +3033,7 @@ export class AgentSession {
 				details,
 			};
 			// compaction_end listeners may submit queued prompts, so expose idle state before notifying them.
-			this._clearManualCompactionState();
+			this._clearManualCompactionState(controller);
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2942,9 +3044,9 @@ export class AgentSession {
 			return compactionResult;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			const aborted = this._compactionAbortController.signal.aborted || cancelledByExtension;
+			const aborted = controller.signal.aborted || cancelledByExtension;
 			const errorMessage = aborted ? undefined : `Compaction failed: ${message}`;
-			this._clearManualCompactionState();
+			this._clearManualCompactionState(controller);
 			this._emit({
 				type: "compaction_end",
 				reason: "manual",
@@ -2962,7 +3064,7 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._clearManualCompactionState();
+			this._clearManualCompactionState(controller);
 		}
 	}
 
@@ -3509,6 +3611,7 @@ export class AgentSession {
 					this._extensionShutdownHandler?.();
 				},
 				getContextUsage: () => this.getContextUsage(),
+				compactIfIdle: (options) => this.compactIfIdle(options),
 				compact: (options) => {
 					void (async () => {
 						try {

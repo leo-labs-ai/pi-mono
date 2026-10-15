@@ -311,6 +311,14 @@ export interface ContextUsage {
 	percent: number | null;
 }
 
+export interface CompactIfIdleOptions {
+	/** Compact only when current context tokens strictly exceed this finite, non-negative threshold. */
+	minTokens: number;
+	/** Cancels only this compaction. An already-aborted signal rejects admission. */
+	signal: AbortSignal;
+	customInstructions?: string;
+}
+
 export interface CompactOptions {
 	customInstructions?: string;
 	onComplete?: (result: CompactionResult) => void;
@@ -360,6 +368,12 @@ export interface ExtensionContext {
 	getContextUsage(): ContextUsage | undefined;
 	/** Trigger compaction without awaiting completion. */
 	compact(options?: CompactOptions): void;
+	/**
+	 * Reserve compaction without interrupting other work. Undefined means admission was rejected
+	 * (busy, unknown usage, threshold not exceeded, or already aborted). Once admitted, cancellation
+	 * and failure reject. Uses the manual compaction hooks; the caller owns idle timing.
+	 */
+	compactIfIdle(options: CompactIfIdleOptions): Promise<CompactionResult | undefined>;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
 }
@@ -2187,6 +2201,7 @@ export interface ExtensionContextActions {
 	shutdown: () => void;
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
+	compactIfIdle: (options: CompactIfIdleOptions) => Promise<CompactionResult | undefined>;
 	getSystemPrompt: () => string;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 	/** Backs `ExtensionToolContext.executeTool()`. Without it, nested calls fail. */

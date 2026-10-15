@@ -373,6 +373,7 @@ export class ExtensionRunner {
 	private hasPendingMessagesFn: () => boolean = () => false;
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
+	private compactIfIdleFn: ExtensionContextActions["compactIfIdle"] = async () => undefined;
 	private getSystemPromptFn: () => string = () => "";
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () =>
 		normalizeBuildSystemPromptOptions({ cwd: this.cwd });
@@ -447,6 +448,7 @@ export class ExtensionRunner {
 		this.shutdownHandler = contextActions.shutdown;
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
+		this.compactIfIdleFn = contextActions.compactIfIdle;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getSystemPromptOptionsFn =
 			contextActions.getSystemPromptOptions ?? (() => normalizeBuildSystemPromptOptions({ cwd: this.cwd }));
@@ -946,6 +948,10 @@ export class ExtensionRunner {
 			compact: (options) => {
 				runner.assertActive();
 				runner.compactFn(options);
+			},
+			compactIfIdle: (options) => {
+				runner.assertActive();
+				return runner.compactIfIdleFn(options);
 			},
 			getSystemPrompt: () => {
 				runner.assertActive();

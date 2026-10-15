@@ -101,6 +101,10 @@ export interface CompactionEntry<T = unknown> extends SessionEntryBase {
 	fromHook?: boolean;
 	/** Complete prompt and tool state at this compaction boundary. */
 	systemMessage?: SystemMessage;
+	/** Ordered declarations only, preserving the original head and subsequent patches.
+	 * Older readers use systemMessage; no summarized conversation is retained here.
+	 */
+	systemMessageHistory?: SystemMessage[];
 }
 
 export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
@@ -470,7 +474,7 @@ export function sessionEntryToContextMessages(entry: SessionEntry): AgentMessage
 	}
 	if (entry.type === "compaction") {
 		const summary = createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
-		return entry.systemMessage ? [entry.systemMessage, summary] : [summary];
+		return [...(entry.systemMessageHistory ?? (entry.systemMessage ? [entry.systemMessage] : [])), summary];
 	}
 	return [];
 }
@@ -1277,7 +1281,11 @@ export class SessionManager {
 		usage?: Usage,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const messages = this.buildSessionProjection().messages;
+		const systemMessage = getCurrentSystemMessage(messages);
+		// Read the active projection, not the raw branch: previous checkpoints already
+		// own their declarations and retained system entries must not be replayed twice.
+		const systemMessageHistory = messages.filter((message): message is SystemMessage => message.role === "system");
 		const id = generateId(this.byId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -1291,6 +1299,7 @@ export class SessionManager {
 			usage,
 			fromHook,
 			...(systemMessage ? { systemMessage: { ...systemMessage, timestamp: new Date(timestamp).getTime() } } : {}),
+			systemMessageHistory,
 		};
 		this._appendEntry(entry);
 		return entry.id;
