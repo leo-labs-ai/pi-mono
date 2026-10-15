@@ -33,6 +33,8 @@ An admitted attempt uses the native manual compaction path:
 3. A hook can return `{ cancel: true }` or provide a `compaction` result. Otherwise core runs its existing default summary generator, shared with automatic compaction.
 4. Core persists the checkpoint, rebuilds the projected context, emits `session_compact`, and finishes with `compaction_end`.
 
+For `compactIfIdle`, the built-in generator makes at most one summary request. It combines history and any split-turn prefix in that request and disables summary retries. Failure does not start a fallback request. Manual `compact()` and ordinary threshold/overflow compaction retain their configured retry behavior. Summary-producing hooks remain responsible for their own requests; do not load a retrying summary replacement for this idle path. This is an application-level summary budget, not a guarantee about provider or transport retries.
+
 Use this supported hook/summary flow rather than replacing session internals, constructing a second conversation-summary pipeline, or synthesizing a user prompt to request compaction. Admission does not guarantee a usable compaction boundary or a successful summary; callers must handle rejection.
 
 ## Checkpoint format and replay

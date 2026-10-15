@@ -167,6 +167,61 @@ describe("AgentSession compaction characterization", () => {
 		await expect(harness.session.compactIfIdle({ minTokens: 0, signal })).resolves.toBeUndefined();
 	});
 
+	it.each(["idle", "manual", "threshold"] as const)(
+		"%s compaction applies its own summary retry budget",
+		async (mode) => {
+			const harness = await createHarness({
+				settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } },
+			});
+			harnesses.push(harness);
+			seedCompactableSession(harness);
+			harness.setResponses([
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 overloaded" }),
+				fauxAssistantMessage("recovered summary"),
+			]);
+			if (mode === "idle") {
+				await expect(
+					harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+				).rejects.toThrow("503 overloaded");
+				expect(harness.faux.state.callCount).toBe(1);
+				expect(harness.eventsOfType("summarization_retry_scheduled")).toHaveLength(0);
+				expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
+			} else {
+				if (mode === "manual") await harness.session.compact();
+				else
+					await (harness.session as unknown as SessionWithCompactionInternals)._runAutoCompaction(
+						"threshold",
+						false,
+					);
+				expect(harness.faux.state.callCount).toBe(2);
+				expect(harness.eventsOfType("summarization_retry_scheduled")).toHaveLength(1);
+				expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(true);
+			}
+		},
+	);
+
+	it("idle combines history and a split-turn prefix into one successful summary request", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => {
+						expect(event.preparation.isSplitTurn).toBe(true);
+						expect(event.preparation.messagesToSummarize.length).toBeGreaterThan(0);
+						expect(event.preparation.turnPrefixMessages.length).toBeGreaterThan(0);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		seedCompactableSession(harness);
+		const calls = useSummaryStreamFn(harness, "combined checkpoint");
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+		).resolves.toMatchObject({ summary: expect.stringContaining("combined checkpoint") });
+		expect(calls()).toBe(1);
+	});
+
 	it("reserves synchronously, rejects competing runs, and cancels only its own operation", async () => {
 		const { harness, compactionStarted } = await createAbortableCompactionHarness();
 		harnesses.push(harness);

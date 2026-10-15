@@ -2797,6 +2797,7 @@ export class AgentSession {
 		customInstructions: string | undefined,
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
+		singleRequest = false,
 	): Promise<CompactionResult> {
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
 		const request = await this._getSummarizationRequestAuth(model, signal);
@@ -2811,7 +2812,14 @@ export class AgentSession {
 		// level also keeps the cache-safe request's thinking settings identical to the turn that
 		// wrote the cached prefix.
 		return compact(
-			preparation,
+			// Idle summarizes history and any split-turn prefix in a single request.
+			singleRequest
+				? {
+						...preparation,
+						isSplitTurn: false,
+						messagesToSummarize: [...preparation.messagesToSummarize, ...preparation.turnPrefixMessages],
+					}
+				: preparation,
 			request.model,
 			request.apiKey,
 			request.headers,
@@ -2820,8 +2828,8 @@ export class AgentSession {
 			request.thinkingLevel,
 			this.agent.streamFunction,
 			request.env,
-			this.settingsManager.getRetrySettings(),
-			this._summarizationRetryCallbacks({ source: "compaction", reason }),
+			singleRequest ? undefined : this.settingsManager.getRetrySettings(),
+			singleRequest ? undefined : this._summarizationRetryCallbacks({ source: "compaction", reason }),
 			// Route the summary with the live routing session: the prefix above is only cached on
 			// the node that served this session's turns, and providers key cache affinity off this
 			// ID. This is the ID the main loop sends on every turn (`Agent.sessionId`).
@@ -2862,6 +2870,7 @@ export class AgentSession {
 	 * Atomically reserve manual compaction only when idle and current usage exceeds minTokens.
 	 * Rejected admission returns undefined; admitted cancellation or failure rejects the promise.
 	 * The caller owns idle timing and cancellation. This never aborts or waits for other work.
+	 * Built-in summarization makes at most one request, with no retry or fallback.
 	 */
 	async compactIfIdle({
 		minTokens,
@@ -2901,7 +2910,7 @@ export class AgentSession {
 		const onAbort = () => controller.abort(signal.reason);
 		signal.addEventListener("abort", onAbort, { once: true });
 		try {
-			return await this._executeManualCompaction(controller, customInstructions);
+			return await this._executeManualCompaction(controller, customInstructions, true);
 		} finally {
 			signal.removeEventListener("abort", onAbort);
 		}
@@ -2910,6 +2919,7 @@ export class AgentSession {
 	private async _executeManualCompaction(
 		controller: AbortController,
 		customInstructions?: string,
+		singleRequest = false,
 	): Promise<CompactionResult> {
 		let fromExtension = false;
 		let cancelledByExtension = false;
@@ -2981,6 +2991,7 @@ export class AgentSession {
 					customInstructions,
 					controller.signal,
 					"manual",
+					singleRequest,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
