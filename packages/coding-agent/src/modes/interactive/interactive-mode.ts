@@ -2255,6 +2255,7 @@ export class InteractiveMode {
 				this.shutdownRequested = true;
 			},
 			getContextUsage: () => this.session.getContextUsage(),
+			compactIfIdle: (options) => this.session.compactIfIdle(options),
 			compact: (options) => {
 				void (async () => {
 					try {

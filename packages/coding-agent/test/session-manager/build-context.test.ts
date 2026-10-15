@@ -1,3 +1,5 @@
+import { getCurrentSystemPrompt, getCurrentTools, type SystemMessage } from "@leo-labs-ai/pi-ai";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import {
 	type BranchSummaryEntry,
@@ -7,6 +9,7 @@ import {
 	type CustomEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
+	SessionManager,
 	type SessionMessageEntry,
 	type ThinkingLevelChangeEntry,
 } from "../../src/core/session-manager.ts";
@@ -124,6 +127,80 @@ describe("buildSessionContext", () => {
 	});
 
 	describe("with compaction", () => {
+		it("roundtrips ordered declarations through repeated checkpoints without retaining old conversation", () => {
+			const manager = SessionManager.inMemory();
+			const tool = { name: "read", description: "Original", parameters: Type.Object({}) };
+			const head: SystemMessage = {
+				role: "system",
+				content: "Base",
+				sections: { policy: "Old", temporary: "Remove me" },
+				toolsAdded: [tool],
+				timestamp: 0,
+			};
+			const update: SystemMessage = {
+				role: "system",
+				content: "",
+				sections: { policy: "New", temporary: null },
+				toolsRemoved: [{ name: "read" }],
+				toolsAdded: [{ ...tool, description: "Updated" }],
+				timestamp: 2,
+			};
+			manager.appendMessage(head);
+			manager.appendMessage({ role: "user", content: "Discarded", timestamp: 1 });
+			const kept = manager.appendMessage({ role: "user", content: "Kept", timestamp: 2 });
+			manager.appendMessage(update);
+			manager.appendCompaction("First summary", kept, 1000);
+			const reopened = SessionManager.inMemory(
+				undefined,
+				undefined,
+				JSON.parse(JSON.stringify([manager.getHeader(), ...manager.getEntries()])),
+			);
+			const first = reopened.buildSessionContext().messages;
+			expect(first.slice(0, 2)).toEqual([head, update]);
+			expect(first.map((message) => message.role)).toEqual(["system", "system", "compactionSummary", "user"]);
+			expect(first[3]).toMatchObject({ content: "Kept" });
+			expect(getCurrentSystemPrompt(first)).toBe("Base\n\nNew");
+			expect(getCurrentTools(first)).toEqual([{ ...tool, description: "Updated" }]);
+
+			const removal: SystemMessage = {
+				role: "system",
+				content: "",
+				toolsRemoved: [{ name: "read" }],
+				timestamp: 3,
+			};
+			reopened.appendMessage(removal);
+			reopened.appendCompaction("Second summary", kept, 500);
+			const second = reopened.buildSessionContext().messages;
+			expect(second.slice(0, 3)).toEqual([head, update, removal]);
+			expect(second.map((message) => message.role)).toEqual([
+				"system",
+				"system",
+				"system",
+				"compactionSummary",
+				"user",
+			]);
+			expect(getCurrentTools(second)).toEqual([]);
+			expect(getCurrentSystemPrompt(second)).toBe("Base\n\nNew");
+
+			// An old reader ignores the optional history and sees the same final state.
+			const legacyEntries = reopened.getEntries().map((entry) => {
+				if (entry.type !== "compaction") return entry;
+				const { systemMessageHistory: _history, ...legacy } = entry;
+				return legacy;
+			});
+			const legacy = buildSessionContext(legacyEntries).messages;
+			expect(legacy.map((message) => message.role)).toEqual(["system", "compactionSummary", "user"]);
+			expect(getCurrentTools(legacy)).toEqual([]);
+			expect(getCurrentSystemPrompt(legacy)).toBe("Base\n\nNew");
+
+			const resumedLegacy = SessionManager.inMemory(undefined, undefined, [reopened.getHeader()!, ...legacyEntries]);
+			resumedLegacy.appendCompaction("Third summary", null, 100);
+			const upgraded = resumedLegacy.buildSessionContext().messages;
+			expect(upgraded.map((message) => message.role)).toEqual(["system", "compactionSummary"]);
+			expect(upgraded[0]).toEqual(legacy[0]);
+			expect(getCurrentTools(upgraded)).toEqual([]);
+		});
+
 		it("includes summary before kept messages", () => {
 			const entries: SessionEntry[] = [
 				msg("1", null, "user", "first"),

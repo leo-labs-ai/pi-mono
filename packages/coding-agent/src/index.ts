@@ -77,6 +77,7 @@ export type {
 	BuildSystemPromptOptions,
 	CacheWarmingDecisionEvent,
 	CacheWarmingDecisionEventResult,
+	CompactIfIdleOptions,
 	CompactionEntryDraft,
 	CompactOptions,
 	ContextEditEntryDraft,

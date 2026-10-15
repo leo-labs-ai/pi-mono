@@ -19,6 +19,14 @@ type SessionWithCompactionInternals = {
 	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
 };
 
+function deferred() {
+	let resolve = () => {};
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
 function createUsage(totalTokens: number) {
 	return {
 		input: totalTokens,
@@ -132,6 +140,278 @@ describe("AgentSession compaction characterization", () => {
 		}
 	});
 
+	it("conditionally compacts only above a valid threshold with known finite usage", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const calls = useSummaryStreamFn(harness, "conditional summary");
+		const signal = new AbortController().signal;
+		const usage = vi.spyOn(harness.session, "getContextUsage");
+		for (const minTokens of [-1, Number.NaN, Infinity]) {
+			await expect(harness.session.compactIfIdle({ minTokens, signal })).rejects.toThrow(RangeError);
+		}
+		for (const tokens of [null, Number.NaN, Infinity, -Infinity, 99, 100]) {
+			usage.mockReturnValue({ tokens, contextWindow: 1000, percent: null });
+			await expect(harness.session.compactIfIdle({ minTokens: 100, signal })).resolves.toBeUndefined();
+		}
+		usage.mockReturnValue(undefined);
+		await expect(harness.session.compactIfIdle({ minTokens: 0, signal })).resolves.toBeUndefined();
+		usage.mockRestore();
+		const tokens = harness.session.getContextUsage()?.tokens;
+		expect(tokens).toBe(100);
+		await expect(harness.session.compactIfIdle({ minTokens: 99, signal })).resolves.toMatchObject({
+			summary: expect.stringContaining("conditional summary"),
+		});
+		expect(calls()).toBe(1);
+		// Usage stays unknown after compaction; stale provider usage must not trigger another summary.
+		await expect(harness.session.compactIfIdle({ minTokens: 0, signal })).resolves.toBeUndefined();
+	});
+
+	it("reserves synchronously, rejects competing runs, and cancels only its own operation", async () => {
+		const { harness, compactionStarted } = await createAbortableCompactionHarness();
+		harnesses.push(harness);
+		const abort = vi.spyOn(harness.session, "abort");
+		const abortCompaction = vi.spyOn(harness.session, "abortCompaction");
+		const agentAbort = vi.spyOn(harness.session.agent, "abort");
+		const controller = new AbortController();
+		const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+		const alreadyAborted = new AbortController();
+		alreadyAborted.abort();
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: alreadyAborted.signal }),
+		).resolves.toBeUndefined();
+		const pending = harness.session.extensionRunner
+			.createContext()
+			.compactIfIdle({ minTokens: 0, signal: controller.signal });
+		const rejected = expect(pending).rejects.toThrow("Compaction cancelled");
+		expect(harness.session.isCompacting).toBe(true);
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+		).resolves.toBeUndefined();
+		await compactionStarted;
+		await expect(harness.session.prompt("competing prompt")).rejects.toThrow("compaction");
+		await expect(
+			harness.session.sendCustomMessage(
+				{ customType: "wake", content: "wake", display: false },
+				{ triggerTurn: true },
+			),
+		).rejects.toThrow("compaction");
+		controller.abort();
+		await rejected;
+		expect(abort).not.toHaveBeenCalled();
+		expect(abortCompaction).not.toHaveBeenCalled();
+		expect(agentAbort).not.toHaveBeenCalled();
+		expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
+		const ctx = harness.session.extensionRunner.createContext();
+		harness.session.extensionRunner.invalidate();
+		expect(() => ctx.compactIfIdle({ minTokens: 0, signal: controller.signal })).toThrow("stale");
+	});
+
+	it.each(["prompt", "steer", "followUp", "command"] as const)(
+		"rejects admission during %s asynchronous preflight and releases handled admissions",
+		async (method) => {
+			const entered = deferred();
+			const release = deferred();
+			const harness = await createHarness({
+				extensionFactories: [
+					(pi) => {
+						pi.on("input", async () => {
+							entered.resolve();
+							await release.promise;
+							return { action: "handled" };
+						});
+						pi.registerCommand("hold", {
+							handler: async () => {
+								entered.resolve();
+								await release.promise;
+							},
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			seedCompactableSession(harness);
+			useSummaryStreamFn(harness, "after preflight");
+			const input = method === "command" ? harness.session.prompt("/hold") : harness.session[method]("held");
+			await entered.promise;
+			await expect(
+				harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+			).resolves.toBeUndefined();
+			release.resolve();
+			await input;
+			await expect(
+				harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+			).resolves.toBeDefined();
+		},
+	);
+
+	it.each(["session", "agent", "nextTurn"] as const)("rejects admission with %s queued work", async (queue) => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		if (queue === "session") {
+			await harness.session.steer("queued");
+			harness.session.agent.clearAllQueues();
+		} else if (queue === "agent") {
+			harness.session.agent.followUp({ role: "user", content: "queued", timestamp: Date.now() });
+		} else {
+			await harness.session.sendCustomMessage(
+				{ customType: "aside", content: "queued", display: false },
+				{ deliverAs: "nextTurn" },
+			);
+		}
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+		).resolves.toBeUndefined();
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+	});
+
+	it("rejects admission during branch navigation without cancelling it", async () => {
+		const entered = deferred();
+		const release = deferred();
+		let branchSignal: AbortSignal | undefined;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_tree", async (event) => {
+						branchSignal = event.signal;
+						entered.resolve();
+						await release.promise;
+						return { cancel: true };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const target = harness.sessionManager.getBranch()[0]!.id;
+		const navigation = harness.session.navigateTree(target);
+		await entered.promise;
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+		).resolves.toBeUndefined();
+		expect(branchSignal?.aborted).toBe(false);
+		release.resolve();
+		await navigation;
+	});
+
+	it("checks cancellation before hooks and rejects admitted generation failures", async () => {
+		const hook = vi.fn();
+		const failed = vi.fn();
+		const harness = await createHarness({
+			settings: { retry: { enabled: false } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", hook);
+					pi.on("session_compact_failed", failed);
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const controller = new AbortController();
+		const unsubscribe = harness.session.subscribe((event) => {
+			if (event.type === "compaction_start") controller.abort();
+		});
+		await expect(harness.session.compactIfIdle({ minTokens: 0, signal: controller.signal })).rejects.toThrow();
+		expect(hook).not.toHaveBeenCalled();
+		unsubscribe();
+		harness.session.agent.streamFunction = () => {
+			throw new Error("summary failed");
+		};
+		await expect(
+			harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }),
+		).rejects.toThrow("summary failed");
+		expect(failed).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reason: "manual", aborted: false }),
+			expect.anything(),
+		);
+		expect(harness.session.isCompacting).toBe(false);
+	});
+
+	it("does not append a cancelled hook result or let its old finalizer clear a successor", async () => {
+		const firstGate = deferred();
+		const secondEntered = deferred();
+		const secondGate = deferred();
+		let hookCalls = 0;
+		const signals: AbortSignal[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						signals.push(event.signal);
+						if (++hookCalls === 1) await firstGate.promise;
+						else {
+							secondEntered.resolve();
+							await secondGate.promise;
+						}
+						return {
+							compaction: {
+								summary: "hook summary",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		const firstController = new AbortController();
+		const secondController = new AbortController();
+		let successor: ReturnType<typeof harness.session.compactIfIdle> | undefined;
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.aborted) {
+				successor = harness.session.compactIfIdle({ minTokens: 0, signal: secondController.signal });
+			}
+		});
+		const first = harness.session.compactIfIdle({ minTokens: 0, signal: firstController.signal });
+		const rejected = expect(first).rejects.toThrow();
+		firstController.abort();
+		firstGate.resolve();
+		await rejected;
+		await secondEntered.promise;
+		expect(harness.session.isCompacting).toBe(true);
+		expect(signals[1]?.aborted).toBe(false);
+		expect(harness.sessionManager.getEntries().some((entry) => entry.type === "compaction")).toBe(false);
+		secondGate.resolve();
+		await expect(successor).resolves.toMatchObject({ summary: "hook summary" });
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toHaveLength(1);
+	});
+
+	it("rejects admission during active runs and settlement, including deferred custom starts", async () => {
+		const outcomes: unknown[] = [];
+		let deferredWake = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("agent_start", async (_event, ctx) => {
+						outcomes.push(await ctx.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }));
+					});
+					pi.on("agent_before_settle", async (_event, ctx) => {
+						outcomes.push(await ctx.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }));
+					});
+					pi.on("agent_settled", async (_event, ctx) => {
+						if (!deferredWake) {
+							deferredWake = true;
+							pi.sendMessage({ customType: "wake", content: "wake", display: false }, { triggerTurn: true });
+						}
+						outcomes.push(await ctx.compactIfIdle({ minTokens: 0, signal: new AbortController().signal }));
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("wake response")]);
+		await harness.session.prompt("run");
+		expect(outcomes).toEqual(Array(6).fill(undefined));
+		expect(harness.session.getLastAssistantText()).toBe("wake response");
+		expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+	});
+
 	it("manually compacts using an extension-provided summary", async () => {
 		const summaryUsage = {
 			input: 10,
@@ -185,7 +465,7 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
 	});
 
-	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
+	it("checkpoints ordered system patches with a consolidated legacy fallback and correct removals", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
 		harness.setResponses([fauxAssistantMessage("declared")]);
@@ -220,21 +500,61 @@ describe("AgentSession compaction characterization", () => {
 		harness.sessionManager.appendCompaction("compacted", firstKeptEntryId, 100);
 
 		const messages = harness.sessionManager.buildSessionContext().messages;
-		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
-		const checkpoint = messages[0];
-		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(messages.map((message) => message.role)).toEqual([
+			"system",
+			"system",
+			"system",
+			"compactionSummary",
+			"user",
+			"user",
+		]);
+		expect(messages[0]).toEqual(declared);
+		expect(messages[1]).toMatchObject({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+		});
+		expect(messages[2]).toMatchObject({
+			role: "system",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
+			toolsRemoved: [{ name: "read" }],
+		});
+		expect(messages.slice(4).map((message) => ("content" in message ? message.content : undefined))).toEqual([
+			[{ type: "text", text: "kept before patch" }],
+			[{ type: "text", text: "kept after patch" }],
+		]);
+		const entry = harness.sessionManager.getLeafEntry();
+		if (entry?.type !== "compaction") throw new Error("expected compaction entry");
+		expect(entry.systemMessageHistory).toEqual(messages.slice(0, 3));
+		const checkpoint = entry.systemMessage;
+		if (!checkpoint) throw new Error("expected consolidated legacy checkpoint");
 		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
 		expect(checkpoint.sections).toEqual({
 			...declared.sections,
 			early: "<early>1</early>",
 			extra: "<extra>late</extra>",
 		});
-		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
-			harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash"),
-		);
+		const expectedTools = harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash");
+		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(expectedTools);
+		expect(getCurrentTools(messages).map((tool) => tool.name)).toEqual(expectedTools);
+
+		// Simulate a stored legacy checkpoint without the optional declaration history.
+		const history = entry.systemMessageHistory;
+		delete entry.systemMessageHistory;
+		try {
+			const legacy = harness.sessionManager.buildSessionContext().messages;
+			expect(legacy.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
+			expect(legacy[0]).toEqual(checkpoint);
+			expect(legacy.slice(1)).toEqual(messages.slice(3));
+			expect(getCurrentTools(legacy).map((tool) => tool.name)).toEqual(expectedTools);
+		} finally {
+			entry.systemMessageHistory = history;
+		}
 	});
 
-	it("allows a queued prompt to start when manual compaction ends", async () => {
+	it.each(["manual", "conditional"])("allows a queued prompt to start when %s compaction ends", async (mode) => {
 		const harness = await createHarness({
 			settings: { compaction: { keepRecentTokens: 1 } },
 			extensionFactories: [
@@ -262,7 +582,8 @@ describe("AgentSession compaction characterization", () => {
 			}
 		});
 
-		await harness.session.compact();
+		if (mode === "manual") await harness.session.compact();
+		else await harness.session.compactIfIdle({ minTokens: 0, signal: new AbortController().signal });
 		if (!queuedPrompt) throw new Error("compaction_end did not start the queued prompt");
 		await queuedPrompt;
 
