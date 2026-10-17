@@ -59,6 +59,21 @@ describe("Bm25Ranker", () => {
 		expect(names("read file")).not.toContain("mcp__cua_driver__get_browser_state");
 	});
 
+	it("stems generic words before ignoring them on MCP descriptions", () => {
+		const documents = [
+			tool("mcp__cua_driver__page", "Current status. Reading files from the page."),
+			tool("mcp__cua_driver__type_text", "Type text into the focused field."),
+			tool("mcp__cua_driver__get_window_state", "Window state for the focused window."),
+			tool("notes", "Show the current status of a file."),
+		].map((entry) => createToolSearchDocument(entry));
+		const names = (query: string) => new Bm25Ranker().rank(query, documents, 8).map((match) => match.name);
+		expect(names("status")).not.toContain("mcp__cua_driver__page");
+		expect(names("files")).not.toContain("mcp__cua_driver__page");
+		expect(names("status")).toContain("notes");
+		expect(names("type text")).toEqual(["mcp__cua_driver__type_text"]);
+		expect(names("window state")).toEqual(["mcp__cua_driver__get_window_state"]);
+	});
+
 	it("returns nothing for unknown or empty queries", () => {
 		const ranker = new Bm25Ranker();
 		expect(ranker.rank("kubernetes", documents, 8)).toEqual([]);

@@ -61,11 +61,10 @@ const STOP_WORDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Verbs and nouns that show up in almost every MCP description. On an `mcp__` tool they
- * contribute BM25 only when `tokenize(name)` contains them. Other tools keep full description
- * matching, so a query such as `read` can still find a non-MCP tool from its description.
+ * Surface forms of verbs and nouns that show up in almost every MCP description.
+ * {@link GENERIC_TERMS} is this list after {@link stem}, the same normalisation as the index.
  */
-const GENERIC_TERMS: ReadonlySet<string> = new Set([
+const GENERIC_WORDS: readonly string[] = [
 	"read",
 	"file",
 	"get",
@@ -133,7 +132,7 @@ const GENERIC_TERMS: ReadonlySet<string> = new Set([
 	"old",
 	"one",
 	"two",
-]);
+];
 
 /** Naive singular form, so `issues` matches `issue` and `searches` matches `search`. */
 function stem(term: string): string {
@@ -142,6 +141,13 @@ function stem(term: string): string {
 	if (term.length > 3 && term.endsWith("s") && !term.endsWith("ss")) return term.slice(0, -1);
 	return term;
 }
+
+/**
+ * Generic tokens after `stem`. On an `mcp__` tool they contribute BM25 only when
+ * `tokenize(name)` contains them. `status` is `statu` here, which is also what a query becomes.
+ * Other tools keep full description matching, so `read` can still find a non-MCP tool.
+ */
+const GENERIC_TERMS: ReadonlySet<string> = new Set(GENERIC_WORDS.map(stem));
 
 /** Lowercase terms, split at camelCase boundaries and non-alphanumerics, without stop words. */
 export function tokenize(text: string): string[] {
