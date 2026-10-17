@@ -53,6 +53,14 @@ function createAssistant(
 	};
 }
 
+function expectSharesCompactionMillisecond(harness: Harness, message: AssistantMessage): void {
+	const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
+	expect(compaction?.type).toBe("compaction");
+	if (compaction?.type === "compaction") {
+		expect(message.timestamp).toBe(new Date(compaction.timestamp).getTime());
+	}
+}
+
 function useSummaryStreamFn(
 	harness: Harness,
 	summary: string,
@@ -1065,11 +1073,7 @@ describe("AgentSession compaction characterization", () => {
 		harness.sessionManager.appendMessage(staleAssistant);
 		const firstKeptEntryId = harness.sessionManager.getEntries()[0]!.id;
 		harness.sessionManager.appendCompaction("summary", firstKeptEntryId, 190_000, undefined, false);
-		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
-		expect(compaction?.type).toBe("compaction");
-		if (compaction?.type === "compaction") {
-			expect(staleAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
-		}
+		expectSharesCompactionMillisecond(harness, staleAssistant);
 
 		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
@@ -1112,11 +1116,7 @@ describe("AgentSession compaction characterization", () => {
 			timestamp: boundaryMs,
 		});
 		harness.sessionManager.appendMessage(errorAssistant);
-		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
-		expect(compaction?.type).toBe("compaction");
-		if (compaction?.type === "compaction") {
-			expect(keptAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
-		}
+		expectSharesCompactionMillisecond(harness, keptAssistant);
 		harness.session.agent.state.messages = [
 			{ role: "user", content: [{ type: "text", text: "kept user" }], timestamp: boundaryMs },
 			keptAssistant,
@@ -1161,11 +1161,7 @@ describe("AgentSession compaction characterization", () => {
 			timestamp: boundaryMs,
 		});
 		harness.sessionManager.appendMessage(retryAssistant);
-		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
-		expect(compaction?.type).toBe("compaction");
-		if (compaction?.type === "compaction") {
-			expect(retryAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
-		}
+		expectSharesCompactionMillisecond(harness, retryAssistant);
 		sessionInternals._overflowRecoveryAttempted = true;
 		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
 		const errors: string[] = [];
