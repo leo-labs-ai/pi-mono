@@ -3025,9 +3025,13 @@ export class AgentSession {
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
+		// An equal millisecond is not older: appendCompaction stores
+		// new Date().toISOString() and the post-compaction retry uses Date.now(),
+		// so they can share a millisecond. Treating that retry as pre-compaction
+		// drops the recovery-failed event.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
 		const assistantIsFromBeforeCompaction =
-			compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
+			compactionEntry !== null && assistantMessage.timestamp < new Date(compactionEntry.timestamp).getTime();
 		if (assistantIsFromBeforeCompaction) {
 			return false;
 		}
@@ -3127,7 +3131,8 @@ export class AgentSession {
 				if (
 					compactionEntry &&
 					usageMsg.role === "assistant" &&
-					(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+					// Equal millisecond is not before the boundary (same rule as above).
+					(usageMsg as AssistantMessage).timestamp < new Date(compactionEntry.timestamp).getTime()
 				) {
 					return false;
 				}

@@ -1,5 +1,5 @@
 import { type AssistantMessage, fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
 function seedCompactableSession(harness: Harness): void {
@@ -27,11 +27,16 @@ describe("truncated response recovery for custom-message turns", () => {
 	afterEach(() => {
 		harness?.cleanup();
 		harness = undefined;
+		vi.useRealTimers();
 	});
 
 	// A custom message (for example an extension wake-up) that triggers a new turn must get its own
 	// compact-and-retry attempt. The one-shot guard from an earlier failed run must not carry over.
 	it("attempts compaction again when a custom message turn is truncated after an earlier failed recovery", async () => {
+		// Freeze Date so compaction (toISOString) and the retry (Date.now) share a millisecond.
+		// Real setTimeout stays so the prompt can await. Release run 39023832387 lost this race.
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-17T00:00:00.000Z"));
 		harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 100_000, maxTokens: 500 }],
 			settings: {
