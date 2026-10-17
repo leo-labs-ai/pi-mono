@@ -2982,6 +2982,19 @@ export class AgentSession {
 	}
 
 	/**
+	 * Whether a message timestamp falls before the latest compaction boundary.
+	 *
+	 * An equal millisecond is NOT before: `appendCompaction` stores
+	 * `new Date().toISOString()` and the post-compaction retry uses `Date.now()`,
+	 * so they can share a millisecond. Treating that retry as pre-compaction drops
+	 * the recovery-failed event. The comparison is strict (`<`) for that reason;
+	 * keep this the single source of the rule so the two call sites cannot drift.
+	 */
+	private static _isBeforeCompactionBoundary(timestamp: number, compactionEntry: CompactionEntry): boolean {
+		return timestamp < new Date(compactionEntry.timestamp).getTime();
+	}
+
+	/**
 	 * Dispatch automatic compaction after `agent_end` or before prompt submission.
 	 * Manual compaction does not call this method; it enters through `compact()`.
 	 *
@@ -3025,13 +3038,11 @@ export class AgentSession {
 		// Skip compaction checks if this assistant message is older than the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
-		// An equal millisecond is not older: appendCompaction stores
-		// new Date().toISOString() and the post-compaction retry uses Date.now(),
-		// so they can share a millisecond. Treating that retry as pre-compaction
-		// drops the recovery-failed event.
+		// The equal-millisecond rule lives in _isBeforeCompactionBoundary.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
 		const assistantIsFromBeforeCompaction =
-			compactionEntry !== null && assistantMessage.timestamp < new Date(compactionEntry.timestamp).getTime();
+			compactionEntry !== null &&
+			AgentSession._isBeforeCompactionBoundary(assistantMessage.timestamp, compactionEntry);
 		if (assistantIsFromBeforeCompaction) {
 			return false;
 		}
@@ -3131,8 +3142,7 @@ export class AgentSession {
 				if (
 					compactionEntry &&
 					usageMsg.role === "assistant" &&
-					// Equal millisecond is not before the boundary (same rule as above).
-					(usageMsg as AssistantMessage).timestamp < new Date(compactionEntry.timestamp).getTime()
+					AgentSession._isBeforeCompactionBoundary((usageMsg as AssistantMessage).timestamp, compactionEntry)
 				) {
 					return false;
 				}
