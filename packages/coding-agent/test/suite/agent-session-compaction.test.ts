@@ -1042,6 +1042,144 @@ describe("AgentSession compaction characterization", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
+	it("treats a same-millisecond retained assistant as stale on a pre-prompt check", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-17T00:00:00.000Z"));
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 200_000, maxTokens: 16_384 }],
+			settings: { compaction: { enabled: true, reserveTokens: 16_384 }, retry: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const boundaryMs = Date.now();
+		const staleAssistant = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 190_000,
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "before compaction" }],
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage(staleAssistant);
+		const firstKeptEntryId = harness.sessionManager.getEntries()[0]!.id;
+		harness.sessionManager.appendCompaction("summary", firstKeptEntryId, 190_000, undefined, false);
+		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
+		expect(compaction?.type).toBe("compaction");
+		if (compaction?.type === "compaction") {
+			expect(staleAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
+		}
+
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+
+		await sessionInternals._checkCompaction(staleAssistant, false);
+
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+	});
+
+	it("does not threshold-compact when kept usage shares the compaction millisecond", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-17T00:00:00.000Z"));
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 200_000, maxTokens: 16_384 }],
+			settings: { compaction: { enabled: true, reserveTokens: 16_384 }, retry: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const boundaryMs = Date.now();
+		const keptAssistant = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 190_000,
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "before compaction" }],
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage(keptAssistant);
+		const firstKeptEntryId = harness.sessionManager.getEntries()[0]!.id;
+		harness.sessionManager.appendCompaction("summary", firstKeptEntryId, 190_000, undefined, false);
+		const errorAssistant = createAssistant(harness, {
+			stopReason: "error",
+			errorMessage: "529 overloaded",
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "new prompt" }],
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage(errorAssistant);
+		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
+		expect(compaction?.type).toBe("compaction");
+		if (compaction?.type === "compaction") {
+			expect(keptAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
+		}
+		harness.session.agent.state.messages = [
+			{ role: "user", content: [{ type: "text", text: "kept user" }], timestamp: boundaryMs },
+			keptAssistant,
+			{ role: "user", content: [{ type: "text", text: "new prompt" }], timestamp: boundaryMs },
+			errorAssistant,
+		];
+
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+
+		await sessionInternals._checkCompaction(errorAssistant);
+
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+	});
+
+	it("emits recovery-failed for a same-millisecond retry persisted after the boundary", async () => {
+		vi.useFakeTimers({ toFake: ["Date"] });
+		vi.setSystemTime(new Date("2026-10-17T00:00:00.000Z"));
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 200_000, maxTokens: 500 }],
+			settings: { compaction: { enabled: true, reserveTokens: 16_384 }, retry: { enabled: false } },
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals & {
+			_overflowRecoveryAttempted: boolean;
+		};
+		const boundaryMs = Date.now();
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "before compaction" }],
+			timestamp: boundaryMs,
+		});
+		const firstKeptEntryId = harness.sessionManager.getEntries()[0]!.id;
+		harness.sessionManager.appendCompaction("summary", firstKeptEntryId, 1_000, undefined, false);
+		const retryAssistant = createAssistant(harness, {
+			stopReason: "length",
+			totalTokens: 10,
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "retry prompt" }],
+			timestamp: boundaryMs,
+		});
+		harness.sessionManager.appendMessage(retryAssistant);
+		const compaction = harness.sessionManager.getBranch().find((entry) => entry.type === "compaction");
+		expect(compaction?.type).toBe("compaction");
+		if (compaction?.type === "compaction") {
+			expect(retryAssistant.timestamp).toBe(new Date(compaction.timestamp).getTime());
+		}
+		sessionInternals._overflowRecoveryAttempted = true;
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+		const errors: string[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.errorMessage) errors.push(event.errorMessage);
+		});
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+
+		await sessionInternals._checkCompaction(retryAssistant);
+
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+		expect(errors).toContain("Truncated response recovery failed after one compact-and-retry attempt.");
+	});
+
 	it("does not trigger threshold compaction below the threshold or when disabled", async () => {
 		const belowThresholdHarness = await createHarness({
 			settings: { compaction: { enabled: true, reserveTokens: 1000 } },

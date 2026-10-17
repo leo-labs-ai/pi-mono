@@ -2982,16 +2982,23 @@ export class AgentSession {
 	}
 
 	/**
-	 * Whether a message timestamp falls before the latest compaction boundary.
+	 * Whether `message` was persisted before the latest compaction boundary.
 	 *
-	 * An equal millisecond is NOT before: `appendCompaction` stores
-	 * `new Date().toISOString()` and the post-compaction retry uses `Date.now()`,
-	 * so they can share a millisecond. Treating that retry as pre-compaction drops
-	 * the recovery-failed event. The comparison is strict (`<`) for that reason;
-	 * keep this the single source of the rule so the two call sites cannot drift.
+	 * Branch order, not the timestamp. `appendCompaction` stores
+	 * `new Date().toISOString()` and a message can use `Date.now()`, so a
+	 * post-compaction retry and a retained pre-compaction assistant can share
+	 * that millisecond. `<=` drops the retry's recovery-failed event. `<` keeps
+	 * the retry but treats the retained assistant as fresh usage. An entry
+	 * earlier in the branch than the compaction entry is stale; one after it
+	 * is not. A message with no persisted entry is not before the boundary.
 	 */
-	private static _isBeforeCompactionBoundary(timestamp: number, compactionEntry: CompactionEntry): boolean {
-		return timestamp < new Date(compactionEntry.timestamp).getTime();
+	private _isBeforeCompactionBoundary(message: AgentMessage, compactionEntry: CompactionEntry): boolean {
+		const messageEntryId = this._findPersistedMessageEntryId(message);
+		if (!messageEntryId) return false;
+		const branch = this.sessionManager.getBranch();
+		const messageIndex = branch.findIndex((entry) => entry.id === messageEntryId);
+		const boundaryIndex = branch.findIndex((entry) => entry.id === compactionEntry.id);
+		return messageIndex >= 0 && boundaryIndex >= 0 && messageIndex < boundaryIndex;
 	}
 
 	/**
@@ -3035,14 +3042,12 @@ export class AgentSession {
 		const sameModel = messageModel !== undefined;
 		const contextWindow = (messageModel ?? this.model)?.contextWindow ?? 0;
 
-		// Skip compaction checks if this assistant message is older than the latest
+		// Skip compaction checks when this assistant entry sits before the latest
 		// compaction boundary. This prevents a stale pre-compaction usage/error
 		// from retriggering compaction on the first prompt after compaction.
-		// The equal-millisecond rule lives in _isBeforeCompactionBoundary.
 		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
 		const assistantIsFromBeforeCompaction =
-			compactionEntry !== null &&
-			AgentSession._isBeforeCompactionBoundary(assistantMessage.timestamp, compactionEntry);
+			compactionEntry !== null && this._isBeforeCompactionBoundary(assistantMessage, compactionEntry);
 		if (assistantIsFromBeforeCompaction) {
 			return false;
 		}
@@ -3137,12 +3142,13 @@ export class AgentSession {
 			if (estimate.lastUsageIndex !== null) {
 				// Verify the usage source is post-compaction. Kept pre-compaction messages
 				// have stale usage reflecting the old (larger) context and would falsely
-				// trigger compaction right after one just finished.
+				// trigger compaction right after one just finished. Position in the
+				// branch decides, including when the timestamps are equal.
 				const usageMsg = messages[estimate.lastUsageIndex];
 				if (
 					compactionEntry &&
 					usageMsg.role === "assistant" &&
-					AgentSession._isBeforeCompactionBoundary((usageMsg as AssistantMessage).timestamp, compactionEntry)
+					this._isBeforeCompactionBoundary(usageMsg, compactionEntry)
 				) {
 					return false;
 				}
