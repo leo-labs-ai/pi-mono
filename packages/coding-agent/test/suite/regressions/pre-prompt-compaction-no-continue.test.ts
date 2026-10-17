@@ -25,7 +25,10 @@ describe("pre-prompt compaction regression", () => {
 
 	it("compacts length-stop overflow before a new prompt without continuing from an assistant message", async () => {
 		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+			// Recoverable length uses maxTokens, not the window. The window stays
+			// above the system prompt: a 100-token window makes the completed answer
+			// overflow, and that second compaction drops the new prompt from context.
+			models: [{ id: "faux-1", contextWindow: 200_000, maxTokens: 100 }],
 			settings: { compaction: { enabled: true, keepRecentTokens: 1, reserveTokens: 0 } },
 			extensionFactories: [
 				(pi) => {
@@ -64,11 +67,7 @@ describe("pre-prompt compaction regression", () => {
 		await expect(harness.session.prompt("next prompt")).resolves.toBeUndefined();
 
 		expect(continueSpy).not.toHaveBeenCalled();
-		// The scripted answer is stamped before prompt() and persisted after the
-		// pre-prompt compaction. Branch order treats it as post-boundary, and its
-		// estimated usage exceeds this 100-token window, so a later overflow
-		// compaction can follow with willRetry false. The recovery event is first.
-		expect(harness.eventsOfType("compaction_end")[0]).toMatchObject({
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
 			reason: "overflow",
 			aborted: false,
 			willRetry: true,
