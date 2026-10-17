@@ -14,6 +14,13 @@
       "lastSuggestedAt": "2026-10-17T13:13:37Z",
       "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/631",
       "outcome": "applied"
+    },
+    {
+      "kind": "dedupe-validation",
+      "area": "packages/coding-agent/test/suite/agent-session-compaction.test.ts",
+      "lastSuggestedAt": "2026-10-17T14:09:16Z",
+      "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/631",
+      "outcome": "applied"
     }
   ]
 }
