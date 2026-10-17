@@ -1,6 +1,16 @@
 import { type AssistantMessage, fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
+import { getLatestCompactionEntry } from "../../../src/core/session-manager.ts";
 import { createHarness, type Harness } from "../harness.ts";
+
+// `appendCompaction` stores `new Date().toISOString()`. A faux retry uses `Date.now()`.
+// Main treats `timestamp <=` that entry as already compacted, so the same millisecond
+// drops the recovery-failed event (Release run 39023832387). Stamp the retry strictly after.
+function lengthStopAfterBoundary(harness: Harness): AssistantMessage {
+	const boundary = getLatestCompactionEntry(harness.sessionManager.getBranch());
+	const timestamp = boundary ? new Date(boundary.timestamp).getTime() + 1 : Date.now();
+	return fauxAssistantMessage("partial", { stopReason: "length", timestamp });
+}
 
 function seedCompactableSession(harness: Harness): void {
 	const model = harness.getModel();
@@ -39,15 +49,12 @@ describe("truncated response recovery for custom-message turns", () => {
 				retry: { enabled: false },
 			},
 		});
-		const session = harness.session;
-		seedCompactableSession(harness);
-		harness.setResponses(
-			Array.from(
-				{ length: 8 },
-				() => () =>
-					session.isCompacting
-						? fauxAssistantMessage("summary")
-						: fauxAssistantMessage("partial", { stopReason: "length" }),
+		const active = harness;
+		const session = active.session;
+		seedCompactableSession(active);
+		active.setResponses(
+			Array.from({ length: 8 }, () => () =>
+				session.isCompacting ? fauxAssistantMessage("summary") : lengthStopAfterBoundary(active),
 			),
 		);
 
