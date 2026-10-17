@@ -64,7 +64,11 @@ describe("pre-prompt compaction regression", () => {
 		await expect(harness.session.prompt("next prompt")).resolves.toBeUndefined();
 
 		expect(continueSpy).not.toHaveBeenCalled();
-		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+		// The scripted answer is stamped before prompt() and persisted after the
+		// pre-prompt compaction. Branch order treats it as post-boundary, and its
+		// estimated usage exceeds this 100-token window, so a later overflow
+		// compaction can follow with willRetry false. The recovery event is first.
+		expect(harness.eventsOfType("compaction_end")[0]).toMatchObject({
 			reason: "overflow",
 			aborted: false,
 			willRetry: true,
