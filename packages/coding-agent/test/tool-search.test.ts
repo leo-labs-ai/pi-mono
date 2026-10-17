@@ -45,6 +45,20 @@ describe("Bm25Ranker", () => {
 		expect(ranker.rank("closed", documents, 8).map((match) => match.name)).toEqual(["mcp__github__list_issues"]);
 	});
 
+	it("ignores generic MCP description words that are not in the tool name", () => {
+		const boilerplate = [
+			tool("mcp__cua_driver__page", "Read-only page text. Get the current state of a file."),
+			tool("mcp__cua_driver__clipboard_read", "Read the clipboard."),
+			tool("notes", "Read a file with bash."),
+			tool("mcp__cua_driver__get_browser_state", "Read-only snapshot of the browser."),
+		].map((entry) => createToolSearchDocument(entry));
+		const names = (query: string) => new Bm25Ranker().rank(query, boilerplate, 8).map((match) => match.name);
+		expect(names("read file bash").sort()).toEqual(["mcp__cua_driver__clipboard_read", "notes"]);
+		expect(names("browser")).toEqual(["mcp__cua_driver__get_browser_state"]);
+		expect(names("read file")).not.toContain("mcp__cua_driver__page");
+		expect(names("read file")).not.toContain("mcp__cua_driver__get_browser_state");
+	});
+
 	it("returns nothing for unknown or empty queries", () => {
 		const ranker = new Bm25Ranker();
 		expect(ranker.rank("kubernetes", documents, 8)).toEqual([]);

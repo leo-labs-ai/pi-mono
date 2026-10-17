@@ -60,6 +60,81 @@ const STOP_WORDS: ReadonlySet<string> = new Set([
 	"with",
 ]);
 
+/**
+ * Verbs and nouns that show up in almost every MCP description. On an `mcp__` tool they
+ * contribute BM25 only when `tokenize(name)` contains them. Other tools keep full description
+ * matching, so a query such as `read` can still find a non-MCP tool from its description.
+ */
+const GENERIC_TERMS: ReadonlySet<string> = new Set([
+	"read",
+	"file",
+	"get",
+	"set",
+	"list",
+	"run",
+	"open",
+	"write",
+	"start",
+	"stop",
+	"check",
+	"type",
+	"text",
+	"state",
+	"name",
+	"input",
+	"data",
+	"value",
+	"app",
+	"session",
+	"command",
+	"execute",
+	"shell",
+	"bash",
+	"edit",
+	"find",
+	"grep",
+	"cat",
+	"ls",
+	"pwd",
+	"content",
+	"current",
+	"status",
+	"info",
+	"report",
+	"monitor",
+	"select",
+	"tool",
+	"search",
+	"code",
+	"local",
+	"project",
+	"directory",
+	"path",
+	"string",
+	"number",
+	"true",
+	"false",
+	"default",
+	"optional",
+	"result",
+	"message",
+	"user",
+	"agent",
+	"call",
+	"make",
+	"use",
+	"using",
+	"via",
+	"into",
+	"out",
+	"all",
+	"any",
+	"new",
+	"old",
+	"one",
+	"two",
+]);
+
 /** Naive singular form, so `issues` matches `issue` and `searches` matches `search`. */
 function stem(term: string): string {
 	if (term.length > 4 && term.endsWith("ies")) return `${term.slice(0, -3)}y`;
@@ -133,6 +208,7 @@ export class Bm25Ranker implements ToolRanker {
 			for (const term of tokenize(document.text)) counts.set(term, (counts.get(term) ?? 0) + 1);
 			return counts;
 		});
+		const nameTerms = documents.map((document) => new Set(tokenize(document.name)));
 		const lengths = termCounts.map((counts) => [...counts.values()].reduce((sum, count) => sum + count, 0));
 		const averageLength = lengths.reduce((sum, length) => sum + length, 0) / documents.length || 1;
 		const idf = new Map(
@@ -147,6 +223,8 @@ export class Bm25Ranker implements ToolRanker {
 			for (const term of queryTerms) {
 				const count = termCounts[index].get(term);
 				if (!count) continue;
+				// Generic description boilerplate must not load an MCP tool the query did not name.
+				if (document.name.startsWith("mcp__") && GENERIC_TERMS.has(term) && !nameTerms[index].has(term)) continue;
 				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
 				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
 			}
