@@ -36,14 +36,8 @@ function execute(command: string, spawnHook?: BashSpawnHook) {
 
 const blocked: Array<[string, string]> = [
 	[
-		"quoted heredoc body (2026-10-13 agent-relay #89)",
-		[
-			"gh pr create --draft --title \"ci: run the check\" --body \"$(cat <<'EOF'",
-			"## What",
-			`Add a second CI job, ${tick}check-linux${tick}, on ubuntu-latest.`,
-			"EOF",
-			")\"",
-		].join("\n"),
+		"unquoted heredoc body",
+		["gh pr create --title t --body-file - <<EOF", `see ${tick}code${tick}`, "EOF"].join("\n"),
 	],
 	[
 		"double-quoted backtick (2026-10-01)",
@@ -69,10 +63,6 @@ const blocked: Array<[string, string]> = [
 		"gh pr review comment body",
 		`gh pr review 12 --comment --body "see ${tick}gh${tick} docs"`,
 	],
-	[
-		"stdin heredoc on --body-file",
-		["gh pr edit 12 --body-file - <<'EOF'", "hello", "EOF"].join("\n"),
-	],
 ];
 
 const allowed: Array<[string, string]> = [
@@ -85,6 +75,29 @@ const allowed: Array<[string, string]> = [
 	[
 		"escaped backtick is a bash literal",
 		`gh pr create --title "t" --body "one-line \\${tick}harbor pending\\${tick} stub"`,
+	],
+	[
+		"quoted heredoc body (2026-10-13 agent-relay #89)",
+		[
+			"gh pr create --draft --title \"ci: run the check\" --body \"$(cat <<'EOF'",
+			"## What",
+			`Add a second CI job, ${tick}check-linux${tick}, on ubuntu-latest.`,
+			"EOF",
+			")\"",
+		].join("\n"),
+	],
+	[
+		"quoted stdin heredoc on --body-file",
+		["gh pr comment 5 --body-file - <<'EOF'", `see ${tick}code${tick}`, "EOF"].join("\n"),
+	],
+	["file read through command substitution", 'gh pr create --title t --body "$(cat body.md)"'],
+	[
+		"quoted example printed, not executed",
+		`printf '%s\\n' 'gh pr create --body "$(cat body.md)"'`,
+	],
+	[
+		"gh api payload quoting an example",
+		`gh api repos/o/r/issues -f body='gh pr create --body "$(cat body.md)"'`,
 	],
 ];
 

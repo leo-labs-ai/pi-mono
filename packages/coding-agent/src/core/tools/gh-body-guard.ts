@@ -1,95 +1,223 @@
-const GH_BODY_MUTATION = /\bgh\s+(?:pr|issue)\s+(?:create|edit|comment|review)\b/;
-const GH_HEREDOC = /<<-?\s*['"]?[A-Za-z_]\w*/;
-const GH_INLINE_BODY_FLAG = /(?:--body(?!-)|--notes(?!-)|(?<![\w-])-b)(?:=|\s+)/;
+const MUTATION_GROUP = new Set(["pr", "issue"]);
+const MUTATION_SUB = new Set(["create", "edit", "comment", "review"]);
 
 const FRAGILE_GH_BODY =
-	"Blocked: this gh pr/issue command builds the body in the shell, which expands backticks and $(...) " +
-	"before gh reads them (mangled body, or the text runs as a command). Write the body with the Write tool " +
-	"and pass --body-file. A plain one-line --body with no backticks is unchanged.";
+	"Blocked: this gh pr/issue command builds the body in the shell, which expands backticks or an " +
+	"unquoted heredoc before gh reads them (mangled body, or the text runs as a command). Write the body " +
+	"with the Write tool and pass --body-file. A plain one-line --body, a single-quoted heredoc, and " +
+	'--body "$(cat file)" are unchanged.';
+
+interface ShellScan {
+	mutation: boolean;
+	expands: boolean;
+}
+
+interface PendingHeredoc {
+	word: string;
+	literal: boolean;
+	dash: boolean;
+}
 
 /**
- * Shell-expanded PR and issue bodies. A doc line does not stop the model from
- * passing Markdown through `gh --body`, and bash expands backticks before `gh`
- * starts. Refuse that command before spawn. `--body-file` and a one-line
- * literal with no backticks stay allowed.
+ * Refuse an executed `gh pr|issue create|edit|comment|review` when bash would
+ * expand the body: a bare or double-quoted backtick, or a heredoc whose
+ * delimiter is not single-quoted. A quoted heredoc, `$(cat file)`, and the
+ * same text inside another command's quotes stay allowed.
  */
 export function fragileGhBodyReason(command: string): string | undefined {
-	if (!GH_BODY_MUTATION.test(command)) return undefined;
-	if (GH_HEREDOC.test(command) || ghInlineBodyIsExpanded(command) || doubleQuotedBacktick(command)) {
-		return FRAGILE_GH_BODY;
-	}
+	const scan: ShellScan = { mutation: false, expands: false };
+	scanShell(command, 0, false, scan);
+	if (scan.mutation && scan.expands) return FRAGILE_GH_BODY;
 	return undefined;
 }
 
-function ghInlineBodyIsExpanded(command: string): boolean {
-	const flags = new RegExp(GH_INLINE_BODY_FLAG.source, "g");
-	let match: RegExpExecArray | null;
-	while ((match = flags.exec(command))) {
-		let valueAt = match.index + match[0].length;
-		while (command[valueAt] === " " || command[valueAt] === "\t") valueAt++;
-		if (bodyValueStartsExpanded(command, valueAt)) return true;
-		const wordEnd = endOfShellWord(command, valueAt);
-		if (wordEnd <= flags.lastIndex) break;
-		flags.lastIndex = wordEnd;
+function noteCommand(words: string[], scan: ShellScan) {
+	let index = 0;
+	while (index < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[index])) index++;
+	const command = words[index];
+	const group = words[index + 1];
+	const sub = words[index + 2];
+	if (command !== "gh" || group === undefined || sub === undefined) return;
+	if (MUTATION_GROUP.has(group) && MUTATION_SUB.has(sub)) scan.mutation = true;
+}
+
+function consumeHeredocs(command: string, start: number, pending: PendingHeredoc[], scan: ShellScan): number {
+	let cursor = start;
+	for (const heredoc of pending) {
+		if (!heredoc.literal) scan.expands = true;
+		while (cursor < command.length) {
+			const newline = command.indexOf("\n", cursor);
+			const lineEnd = newline === -1 ? command.length : newline;
+			const line = command.slice(cursor, lineEnd);
+			const text = heredoc.dash ? line.replace(/^\t+/, "") : line;
+			cursor = newline === -1 ? command.length : newline + 1;
+			if (text === heredoc.word) break;
+		}
 	}
-	return false;
+	pending.length = 0;
+	return cursor;
 }
 
-/** True when an inline body value starts with bash command substitution. Single quotes do not. */
-function bodyValueStartsExpanded(command: string, i: number): boolean {
-	if (i >= command.length || command[i] === "'") return false;
-	if (command[i] === '"') i++;
-	return command.startsWith("$(", i) || command[i] === "`";
-}
-
-/** End index of one shell word, so a later flag scan does not read inside this argument. */
-function endOfShellWord(command: string, i: number): number {
-	if (i >= command.length) return i;
-	const quote = command[i];
+function readHeredoc(command: string, start: number): { heredoc: PendingHeredoc; next: number } | undefined {
+	if (command[start + 2] === "<") return undefined;
+	let cursor = start + 2;
+	let dash = false;
+	if (command[cursor] === "-") {
+		dash = true;
+		cursor++;
+	}
+	while (command[cursor] === " " || command[cursor] === "\t") cursor++;
+	let literal = false;
+	const quote = command[cursor];
 	if (quote === "'" || quote === '"') {
-		i++;
-		while (i < command.length) {
-			if (quote === '"' && command[i] === "\\") {
-				i += 2;
-				continue;
-			}
-			if (command[i] === quote) return i + 1;
-			i++;
-		}
-		return i;
+		literal = quote === "'";
+		cursor++;
 	}
-	while (i < command.length && command[i] !== " " && command[i] !== "\t" && command[i] !== "\n") i++;
-	return i;
+	let word = "";
+	while (cursor < command.length && /[A-Za-z0-9_]/.test(command[cursor])) {
+		word += command[cursor];
+		cursor++;
+	}
+	if (word.length === 0) return undefined;
+	if ((quote === "'" || quote === '"') && command[cursor] === quote) cursor++;
+	return { heredoc: { word, literal, dash }, next: cursor };
 }
 
-/** A backtick inside double quotes is command substitution, including after a newline or an escaped quote. */
-function doubleQuotedBacktick(command: string): boolean {
-	let i = 0;
-	while (i < command.length) {
-		const c = command[i];
-		if (c === "\\") {
-			i += 2;
+function readWord(command: string, start: number, scan: ShellScan): { value: string; next: number } {
+	let value = "";
+	let cursor = start;
+	while (cursor < command.length) {
+		const current = command[cursor];
+		if (
+			current === " " ||
+			current === "\t" ||
+			current === "\n" ||
+			current === ";" ||
+			current === "|" ||
+			current === "&" ||
+			current === "<" ||
+			current === ">" ||
+			current === "(" ||
+			current === ")" ||
+			current === "`"
+		) {
+			break;
+		}
+		if (current === "\\") {
+			value += command[cursor + 1] ?? "";
+			cursor += 2;
 			continue;
 		}
-		if (c === "'") {
-			i++;
-			while (i < command.length && command[i] !== "'") i++;
-			i++;
+		if (current === "'") {
+			cursor++;
+			while (cursor < command.length && command[cursor] !== "'") {
+				value += command[cursor];
+				cursor++;
+			}
+			if (command[cursor] === "'") cursor++;
 			continue;
 		}
-		if (c === '"') {
-			i++;
-			while (i < command.length) {
-				if (command[i] === "\\") {
-					i += 2;
+		if (current === '"') {
+			cursor++;
+			while (cursor < command.length) {
+				const quoted = command[cursor];
+				if (quoted === "\\") {
+					const escaped = command[cursor + 1];
+					if (escaped !== "`") value += escaped ?? "";
+					cursor += 2;
 					continue;
 				}
-				if (command[i] === "`") return true;
-				if (command[i] === '"') break;
-				i++;
+				if (quoted === '"') {
+					cursor++;
+					break;
+				}
+				if (quoted === "`") {
+					scan.expands = true;
+					value += "`";
+					cursor++;
+					continue;
+				}
+				if (quoted === "$" && command[cursor + 1] === "(") {
+					cursor = scanShell(command, cursor + 2, true, scan);
+					continue;
+				}
+				value += quoted;
+				cursor++;
+			}
+			continue;
+		}
+		if (current === "$" && command[cursor + 1] === "(") {
+			cursor = scanShell(command, cursor + 2, true, scan);
+			continue;
+		}
+		value += current;
+		cursor++;
+	}
+	return { value, next: cursor };
+}
+
+function scanShell(command: string, start: number, stopOnCloseParen: boolean, scan: ShellScan): number {
+	const words: string[] = [];
+	const pending: PendingHeredoc[] = [];
+	let cursor = start;
+	while (cursor < command.length) {
+		const current = command[cursor];
+		if (current === " " || current === "\t") {
+			cursor++;
+			continue;
+		}
+		if (current === "\\") {
+			cursor += 2;
+			continue;
+		}
+		if (current === "`") {
+			scan.expands = true;
+			cursor++;
+			continue;
+		}
+		if (current === "\n") {
+			cursor = consumeHeredocs(command, cursor + 1, pending, scan);
+			noteCommand(words, scan);
+			words.length = 0;
+			continue;
+		}
+		if (current === ";" || current === "|" || current === "&") {
+			cursor++;
+			if ((current === "|" || current === "&") && command[cursor] === current) cursor++;
+			noteCommand(words, scan);
+			words.length = 0;
+			continue;
+		}
+		if (current === "(") {
+			noteCommand(words, scan);
+			words.length = 0;
+			cursor++;
+			continue;
+		}
+		if (current === ")") {
+			noteCommand(words, scan);
+			words.length = 0;
+			if (stopOnCloseParen) return cursor + 1;
+			cursor++;
+			continue;
+		}
+		if (current === "<" && command[cursor + 1] === "<") {
+			const heredoc = readHeredoc(command, cursor);
+			if (heredoc) {
+				pending.push(heredoc.heredoc);
+				cursor = heredoc.next;
+				continue;
 			}
 		}
-		i++;
+		const word = readWord(command, cursor, scan);
+		if (word.next === cursor) {
+			cursor++;
+			continue;
+		}
+		words.push(word.value);
+		cursor = word.next;
 	}
-	return false;
+	cursor = consumeHeredocs(command, cursor, pending, scan);
+	noteCommand(words, scan);
+	return cursor;
 }
