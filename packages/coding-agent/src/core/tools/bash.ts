@@ -14,6 +14,7 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition } from "../extensions/types.ts";
+import { fragileGhBodyReason } from "./gh-body-guard.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { BASH_UPDATE_THROTTLE_MS, createShellRenderers } from "./renderers/bash.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -273,6 +274,11 @@ export function createShellToolDefinition(
 				exposeSessionEnvironment,
 				ctx,
 			);
+			// Bash expands backticks before gh starts. PowerShell uses them as escapes, so this stays on bash.
+			if (config.shellName === "bash") {
+				const fragileBody = fragileGhBodyReason(spawnContext.command);
+				if (fragileBody) throw new Error(fragileBody);
+			}
 			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
