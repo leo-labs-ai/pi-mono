@@ -7,6 +7,10 @@ import { type BashOperations, type BashSpawnHook, createBashToolDefinition } fro
 // R003: no runtime fixture (the assignment-in-expression loop is gone)
 // R004: R004 quoted END-DOC then expanding gh body
 // agentic P2 5560980350: --body-file after an unrelated backtick command
+// P1-1: case statement without gh; gh pr view inside a case pattern; case pattern hiding a gh pr comment
+// P1-2: short -b with backticks; attached -b with backticks; review -b with backticks
+// P1-3: unquoted heredoc piped to a stdin body; echo backticks piped to a stdin body
+// P2: body-file path with a parameter; whole --body= command substitution; double-quoted --body mixing text and $(date)
 
 const tick = "`";
 
@@ -91,6 +95,15 @@ const blocked: Array<[string, string]> = [
 	],
 	["gh mutation inside $( )", `echo $(gh pr comment 5 --body "see ${tick}code${tick}")`],
 	["gh mutation inside a subshell", `(gh pr comment 5 --body "see ${tick}code${tick}")`],
+	["short -b with backticks", `gh pr comment 5 -b "see ${tick}code${tick}"`],
+	["attached -b with backticks", `gh pr comment 5 -b"see ${tick}code${tick}"`],
+	["review -b with backticks", `gh pr review 12 --comment -b "see ${tick}code${tick}"`],
+	[
+		"unquoted heredoc piped to a stdin body",
+		["cat <<EOF | gh pr comment 5 -F -", `see ${tick}code${tick}`, "EOF"].join("\n"),
+	],
+	["echo backticks piped to a stdin body", `echo "see ${tick}code${tick}" | gh pr comment 5 --body-file -`],
+	["double-quoted --body mixing text and $(date)", 'gh pr comment 5 --body "see $(date)"'],
 ];
 
 const unparsed: Array<[string, string]> = [
@@ -99,6 +112,7 @@ const unparsed: Array<[string, string]> = [
 		["cat <<'END-DOC'", "hello", `gh pr comment 5 --body "see ${tick}code${tick}"`].join("\n"),
 	],
 	["unterminated quote", 'gh pr comment 5 --body "see code'],
+	["case pattern hiding a gh pr comment", "case $x in a) gh pr comment 5 --body-file body.md;; esac"],
 ];
 
 const allowed: Array<[string, string]> = [
@@ -149,6 +163,22 @@ const allowed: Array<[string, string]> = [
 	["cat file", 'gh pr create --title t --body "$(cat body.md)"'],
 	["printed example", `printf '%s\\n' 'gh pr create --body "$(cat body.md)"'`],
 	["gh api quoted payload", `gh api repos/o/r/issues -f body='gh pr create --body "$(cat body.md)"'`],
+	["case statement without gh", "case $x in a) echo 1;; esac"],
+	["function body without gh", "f() { echo hi; }"],
+	["array assignment without gh", "a=(1 2)"],
+	["if arithmetic without gh", "if (( $# == 0 )); then echo none; fi"],
+	["for arithmetic without gh", "for ((i=0;i<2;i++)); do echo $i; done"],
+	["regex conditional without gh", "[[ $x =~ ^(a|b)$ ]]"],
+	["time subshell without gh", "time (make)"],
+	["gh pr view inside a case pattern", "case $x in a) gh pr view 5;; esac"],
+	["body-file path with a parameter", 'gh pr create --title t --body-file "$tmp"'],
+	["short -F path", "gh pr comment 5 -F body.md"],
+	["cat file piped to a stdin body", "cat body.md | gh pr comment 5 --body-file -"],
+	[
+		"quoted heredoc piped to a stdin body",
+		["cat <<'EOF' | gh pr comment 5 -F -", `see ${tick}code${tick}`, "EOF"].join("\n"),
+	],
+	["whole --body= command substitution", 'gh pr create --title t --body="$(cat body.md)"'],
 ];
 
 test.each(blocked)("refuses %s before spawn", async (_name, command) => {

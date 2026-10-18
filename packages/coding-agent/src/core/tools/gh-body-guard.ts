@@ -1,21 +1,31 @@
 const MUTATION_GROUP = new Set(["pr", "issue"]);
 const MUTATION_SUB = new Set(["create", "edit", "comment", "review"]);
+const RESERVED = ["if", "then", "elif", "else", "do", "while", "until", "time"];
 
 const CANNOT_PARSE =
-	"Blocked: cannot parse this bash command (unterminated quote, heredoc, or $( )). It was not run.";
+	"Blocked: cannot parse this bash command. It contains a gh pr/issue mutation that the guard cannot read. " +
+	"Run that gh call as its own plain command with --body-file.";
+
+const GH_WORD = /\bgh\b/;
+const GH_MUTATION = /\bgh\b[\s\S]*?\b(pr|issue)\b[\s\S]*?\b(create|edit|comment|review)\b/;
 
 /**
  * Refuse one simple command at a time. A heredoc is literal when any part of
  * its delimiter is quoted, quote removal keeps punctuation such as END-DOC,
  * and the commands after that terminator are still judged. An earlier
- * backtick does not affect a later gh command. A script that does not parse
- * is refused.
+ * backtick does not affect a later gh command. A script with no gh word is
+ * left alone. A script that does not parse is refused only when it still
+ * looks like a gh pr/issue mutation.
  */
 export function fragileGhBodyReason(command: string): string | undefined {
+	if (!GH_WORD.test(command)) return undefined;
 	const parsed = parseScript(command);
-	if (!parsed.ok) return CANNOT_PARSE;
-	for (const simpleCommand of parsed.commands) {
-		if (ghBodyExpands(simpleCommand)) return refusal(simpleCommand);
+	if (!parsed.ok) return GH_MUTATION.test(command) ? CANNOT_PARSE : undefined;
+	let index = 0;
+	while (index < parsed.commands.length) {
+		const simpleCommand = parsed.commands[index];
+		if (ghBodyExpands(simpleCommand, parsed.commands, index)) return refusal(simpleCommand);
+		index++;
 	}
 	return undefined;
 }
@@ -26,6 +36,7 @@ interface Word {
 	param: boolean;
 	arith: boolean;
 	substExpands: boolean;
+	substCount: number;
 }
 
 interface PendingHeredoc {
@@ -39,6 +50,7 @@ interface SimpleCommand {
 	text: string;
 	words: Word[];
 	heredocs: PendingHeredoc[];
+	pipe: boolean;
 }
 
 interface Ctx {
@@ -63,8 +75,9 @@ function parseScript(source: string): { ok: true; commands: SimpleCommand[] } | 
 	return { ok: true, commands: ctx.commands };
 }
 
-function parseList(ctx: Ctx, end: ")" | "}" | null): boolean {
+function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): boolean {
 	let expands = false;
+	let pipeNext = inheritedPipe;
 	const pending: PendingHeredoc[] = [];
 	let command: SimpleCommand | undefined;
 	let commandStart = ctx.index;
@@ -72,6 +85,8 @@ function parseList(ctx: Ctx, end: ")" | "}" | null): boolean {
 	const finish = (endIndex: number): SimpleCommand | undefined => {
 		if (!command) return undefined;
 		command.text = ctx.source.slice(commandStart, endIndex).trim();
+		command.pipe = pipeNext;
+		pipeNext = false;
 		const finished = command;
 		command = undefined;
 		if (finished.words.length === 0 && finished.heredocs.length === 0) return undefined;
@@ -83,7 +98,7 @@ function parseList(ctx: Ctx, end: ")" | "}" | null): boolean {
 	const ensure = (): SimpleCommand => {
 		if (!command) {
 			commandStart = ctx.index;
-			command = { text: "", words: [], heredocs: [] };
+			command = { text: "", words: [], heredocs: [], pipe: false };
 		}
 		return command;
 	};
@@ -133,8 +148,9 @@ function parseList(ctx: Ctx, end: ")" | "}" | null): boolean {
 		}
 		if (isSeparator(ctx)) {
 			const endIndex = ctx.index;
-			consumeSeparator(ctx);
+			const pipe = consumeSeparator(ctx);
 			finish(endIndex);
+			pipeNext = pipe;
 			continue;
 		}
 		if (current === "(") {
@@ -142,17 +158,22 @@ function parseList(ctx: Ctx, end: ")" | "}" | null): boolean {
 				ctx.error = true;
 				break;
 			}
+			const inherited = pipeNext;
 			finish(ctx.index);
+			pipeNext = false;
 			ctx.index++;
-			if (parseList(ctx, ")")) expands = true;
+			if (parseList(ctx, ")", inherited)) expands = true;
 			continue;
 		}
 		if (bareWord(ctx, "{") && (!command || command.words.length === 0)) {
+			const inherited = pipeNext;
 			finish(ctx.index);
+			pipeNext = false;
 			ctx.index++;
-			if (parseList(ctx, "}")) expands = true;
+			if (parseList(ctx, "}", inherited)) expands = true;
 			continue;
 		}
+		if (skipReserved(ctx, command)) continue;
 		const simple = ensure();
 		if (startsRedirect(ctx)) {
 			readRedirect(ctx, simple, pending);
@@ -321,7 +342,9 @@ function readRedirect(ctx: Ctx, command: SimpleCommand, pending: PendingHeredoc[
 			ctx.error = true;
 			return;
 		}
-		if (bodyUnsafe(word)) command.heredocs.push({ literal: false, expands: true, terminator: "", dash: false });
+		if (bodyOperandUnsafe(word, "")) {
+			command.heredocs.push({ literal: false, expands: true, terminator: "", dash: false });
+		}
 		return;
 	}
 	if (source[ctx.index] === "<" && source[ctx.index + 1] === "<") {
@@ -337,7 +360,14 @@ function readRedirect(ctx: Ctx, command: SimpleCommand, pending: PendingHeredoc[
 	if (source[ctx.index] === "<" && source[ctx.index + 1] === "(") {
 		ctx.index += 2;
 		const innerExpands = parseList(ctx, ")");
-		command.words.push({ value: "", backtick: false, param: false, arith: false, substExpands: innerExpands });
+		command.words.push({
+			value: "",
+			backtick: false,
+			param: false,
+			arith: false,
+			substExpands: innerExpands,
+			substCount: 1,
+		});
 		return;
 	}
 	if (source[ctx.index] === ">") {
@@ -359,7 +389,7 @@ function readRedirect(ctx: Ctx, command: SimpleCommand, pending: PendingHeredoc[
 function readWord(ctx: Ctx): Word | undefined {
 	const source = ctx.source;
 	if (ctx.index >= source.length || isWordEnd(source[ctx.index])) return undefined;
-	const word: Word = { value: "", backtick: false, param: false, arith: false, substExpands: false };
+	const word: Word = { value: "", backtick: false, param: false, arith: false, substExpands: false, substCount: 0 };
 	while (ctx.index < source.length && !ctx.error) {
 		const current = source[ctx.index];
 		if (isWordEnd(current)) break;
@@ -472,6 +502,7 @@ function readDollarParen(ctx: Ctx, word: Word): boolean {
 		return readArithmetic(ctx);
 	}
 	ctx.index += 2;
+	word.substCount++;
 	if (parseList(ctx, ")")) word.substExpands = true;
 	return !ctx.error;
 }
@@ -611,7 +642,15 @@ function parseNested(source: string, commands: SimpleCommand[]): { expands: bool
 	return { expands, error: ctx.error };
 }
 
-function ghBodyExpands(command: SimpleCommand): boolean {
+interface BodyFlag {
+	kind: "body" | "file";
+	word: Word;
+	prefix: string;
+	stdin: boolean;
+	next: number;
+}
+
+function ghBodyExpands(command: SimpleCommand, commands: SimpleCommand[], commandIndex: number): boolean {
 	const words = command.words;
 	let index = 0;
 	while (index < words.length && isAssignment(words[index].value)) index++;
@@ -620,21 +659,103 @@ function ghBodyExpands(command: SimpleCommand): boolean {
 	const group = words[index + 1];
 	const sub = words[index + 2];
 	if (!name || name.value !== "gh" || !group || !sub) return false;
-	if (bodyUnsafe(group) || bodyUnsafe(sub)) return true;
+	if (bodyOperandUnsafe(group, "") || bodyOperandUnsafe(sub, "")) return true;
 	if (!MUTATION_GROUP.has(group.value) || !MUTATION_SUB.has(sub.value)) return false;
+	let stdin = false;
 	let cursor = index + 3;
 	while (cursor < words.length) {
-		const word = words[cursor];
-		if (word.value === "--body" || word.value === "--body-file") {
-			const value = words[cursor + 1];
-			if (value && bodyUnsafe(value)) return true;
-			cursor += 2;
+		const flag = readBodyFlag(words, cursor);
+		if (!flag) {
+			cursor++;
 			continue;
 		}
-		if (word.value.startsWith("--body=") || word.value.startsWith("--body-file=")) {
-			if (bodyUnsafe(word)) return true;
-		}
+		if (flag.kind === "file") {
+			if (flag.stdin) stdin = true;
+		} else if (bodyOperandUnsafe(flag.word, flag.prefix)) return true;
+		cursor = flag.next;
+	}
+	if (stdin && pipelineExpands(commands, commandIndex)) return true;
+	for (const heredoc of command.heredocs) {
+		if (heredoc.expands) return true;
+	}
+	return false;
+}
+
+function readBodyFlag(words: Word[], cursor: number): BodyFlag | undefined {
+	return fileFlag(words, cursor) ?? bodyFlag(words, cursor);
+}
+
+function fileFlag(words: Word[], cursor: number): BodyFlag | undefined {
+	const word = words[cursor];
+	const value = word.value;
+	if (value === "--body-file" || value === "-F") {
+		if (!wordHasSyntax(word)) return separateFile(words, cursor);
+		const prefix = value === "--body-file" ? "--body-file" : "-F";
+		return { kind: "file", word, prefix, stdin: isPlainDash(word, value.slice(prefix.length)), next: cursor + 1 };
+	}
+	const prefix = longPrefix(value, "--body-file=") ?? shortPrefix(value, "F");
+	if (!prefix) return undefined;
+	const path = value.slice(prefix.length);
+	return { kind: "file", word, prefix, stdin: isPlainDash(word, path), next: cursor + 1 };
+}
+
+function bodyFlag(words: Word[], cursor: number): BodyFlag | undefined {
+	const word = words[cursor];
+	const value = word.value;
+	if (value === "--body" || value === "-b") {
+		if (!wordHasSyntax(word)) return separateBody(words, cursor);
+		const prefix = value === "--body" ? "--body" : "-b";
+		return { kind: "body", word, prefix, stdin: false, next: cursor + 1 };
+	}
+	if (value.startsWith("--body=")) return { kind: "body", word, prefix: "--body=", stdin: false, next: cursor + 1 };
+	const prefix = shortPrefix(value, "b");
+	if (!prefix) return undefined;
+	return { kind: "body", word, prefix, stdin: false, next: cursor + 1 };
+}
+
+function separateFile(words: Word[], cursor: number): BodyFlag {
+	const operand = words[cursor + 1];
+	if (!operand) return { kind: "file", word: words[cursor], prefix: "", stdin: false, next: cursor + 1 };
+	return { kind: "file", word: operand, prefix: "", stdin: isPlainDash(operand, operand.value), next: cursor + 2 };
+}
+
+function separateBody(words: Word[], cursor: number): BodyFlag {
+	const operand = words[cursor + 1];
+	if (!operand) return { kind: "body", word: words[cursor], prefix: "", stdin: false, next: cursor + 1 };
+	return { kind: "body", word: operand, prefix: "", stdin: false, next: cursor + 2 };
+}
+
+function longPrefix(value: string, prefix: string): string | undefined {
+	return value.startsWith(prefix) ? prefix : undefined;
+}
+
+function shortPrefix(value: string, letter: string): string | undefined {
+	if (value.startsWith("--") || !value.startsWith(`-${letter}`) || value.length <= 2) return undefined;
+	return value[2] === "=" ? `-${letter}=` : `-${letter}`;
+}
+
+function wordHasSyntax(word: Word): boolean {
+	return word.backtick || word.param || word.arith || word.substExpands || word.substCount > 0;
+}
+
+function isPlainDash(word: Word, path: string): boolean {
+	return path === "-" && !word.backtick && !word.param && !word.arith && !word.substExpands && word.substCount === 0;
+}
+
+function pipelineExpands(commands: SimpleCommand[], index: number): boolean {
+	let start = index;
+	while (start > 0 && commands[start].pipe) start--;
+	let cursor = start;
+	while (cursor < index) {
+		if (commandFeedsBody(commands[cursor])) return true;
 		cursor++;
+	}
+	return false;
+}
+
+function commandFeedsBody(command: SimpleCommand): boolean {
+	for (const word of command.words) {
+		if (bodyOperandUnsafe(word, "")) return true;
 	}
 	for (const heredoc of command.heredocs) {
 		if (heredoc.expands) return true;
@@ -642,8 +763,11 @@ function ghBodyExpands(command: SimpleCommand): boolean {
 	return false;
 }
 
-function bodyUnsafe(word: Word): boolean {
-	return word.backtick || word.param || word.arith || word.substExpands;
+function bodyOperandUnsafe(word: Word, prefix: string): boolean {
+	if (word.backtick || word.param || word.arith || word.substExpands) return true;
+	if (word.substCount !== 1) return word.substCount > 1;
+	const literal = prefix.length > 0 && word.value.startsWith(prefix) ? word.value.slice(prefix.length) : word.value;
+	return literal.length !== 0;
 }
 
 function isAssignment(value: string): boolean {
@@ -664,11 +788,41 @@ function isSeparator(ctx: Ctx): boolean {
 	return current === ";" || current === "&" || current === "|";
 }
 
-function consumeSeparator(ctx: Ctx) {
+function consumeSeparator(ctx: Ctx): boolean {
 	const current = ctx.source[ctx.index];
 	const next = ctx.source[ctx.index + 1];
-	if ((current === "&" && next === "&") || (current === "|" && next === "|")) ctx.index += 2;
-	else ctx.index++;
+	if (current === "&" && next === "&") {
+		ctx.index += 2;
+		return false;
+	}
+	if (current === "|" && next === "|") {
+		ctx.index += 2;
+		return false;
+	}
+	if (current === "|" && next === "&") {
+		ctx.index += 2;
+		return true;
+	}
+	if (current === "|") {
+		ctx.index++;
+		return true;
+	}
+	ctx.index++;
+	return false;
+}
+
+function skipReserved(ctx: Ctx, command: SimpleCommand | undefined): boolean {
+	if (command && (command.words.length > 0 || command.heredocs.length > 0)) return false;
+	if (bareWord(ctx, "!")) {
+		ctx.index++;
+		return true;
+	}
+	for (const word of RESERVED) {
+		if (!bareWord(ctx, word)) continue;
+		ctx.index += word.length;
+		return true;
+	}
+	return false;
 }
 
 function bareWord(ctx: Ctx, word: string): boolean {
