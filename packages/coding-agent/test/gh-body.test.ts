@@ -11,6 +11,10 @@ import { type BashOperations, type BashSpawnHook, createBashToolDefinition } fro
 // P1-2: short -b with backticks; attached -b with backticks; review -b with backticks
 // P1-3: unquoted heredoc piped to a stdin body; echo backticks piped to a stdin body
 // P2: body-file path with a parameter; whole --body= command substitution; double-quoted --body mixing text and $(date)
+// P3-1: no runtime fixture (three linear scans replace the lazy GH_MUTATION regex)
+// P3-2: if gh body-file; if backtick body; time subshell with a backtick body
+// P3-3: computed gh group
+// P3-4: brace group piped to a stdin body
 
 const tick = "`";
 
@@ -104,6 +108,13 @@ const blocked: Array<[string, string]> = [
 	],
 	["echo backticks piped to a stdin body", `echo "see ${tick}code${tick}" | gh pr comment 5 --body-file -`],
 	["double-quoted --body mixing text and $(date)", 'gh pr comment 5 --body "see $(date)"'],
+	["if backtick body", `if true; then gh pr comment 5 --body "see ${tick}code${tick}"; fi`],
+	["time subshell with a backtick body", `time (gh pr comment 5 --body "see ${tick}code${tick}")`],
+	["computed gh group", `gh "$(echo pr)" comment 5 --body "see ${tick}code${tick}"`],
+	[
+		"brace group piped to a stdin body",
+		`{ echo "see ${tick}code${tick}"; echo ok; } | gh pr comment 5 -F -`,
+	],
 ];
 
 const unparsed: Array<[string, string]> = [
@@ -179,6 +190,7 @@ const allowed: Array<[string, string]> = [
 		["cat <<'EOF' | gh pr comment 5 -F -", `see ${tick}code${tick}`, "EOF"].join("\n"),
 	],
 	["whole --body= command substitution", 'gh pr create --title t --body="$(cat body.md)"'],
+	["if gh body-file", "if (( n > 0 )); then gh pr comment 5 --body-file body.md; fi"],
 ];
 
 test.each(blocked)("refuses %s before spawn", async (_name, command) => {
@@ -191,7 +203,8 @@ test.each(blocked)("refuses %s before spawn", async (_name, command) => {
 	);
 	const message = error instanceof Error ? error.message : String(error);
 	expect(message).toMatch(/--body-file/);
-	expect(message).toMatch(/gh (pr|issue)/);
+	// $(echo pr) is the computed-group fixture: its command text has no "gh pr" substring.
+	expect(message).toMatch(/gh (pr|issue)|\$\(echo pr\)/);
 	expect(calls).toEqual([]);
 	expect(updates()).toBe(0);
 });

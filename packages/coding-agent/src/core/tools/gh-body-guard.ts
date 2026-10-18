@@ -7,7 +7,7 @@ const CANNOT_PARSE =
 	"Run that gh call as its own plain command with --body-file.";
 
 const GH_WORD = /\bgh\b/;
-const GH_MUTATION = /\bgh\b[\s\S]*?\b(pr|issue)\b[\s\S]*?\b(create|edit|comment|review)\b/;
+const GH_NAMES = ["gh"];
 
 /**
  * Refuse one simple command at a time. A heredoc is literal when any part of
@@ -20,7 +20,7 @@ const GH_MUTATION = /\bgh\b[\s\S]*?\b(pr|issue)\b[\s\S]*?\b(create|edit|comment|
 export function fragileGhBodyReason(command: string): string | undefined {
 	if (!GH_WORD.test(command)) return undefined;
 	const parsed = parseScript(command);
-	if (!parsed.ok) return GH_MUTATION.test(command) ? CANNOT_PARSE : undefined;
+	if (!parsed.ok) return looksLikeGhMutation(command) ? CANNOT_PARSE : undefined;
 	let index = 0;
 	while (index < parsed.commands.length) {
 		const simpleCommand = parsed.commands[index];
@@ -28,6 +28,42 @@ export function fragileGhBodyReason(command: string): string | undefined {
 		index++;
 	}
 	return undefined;
+}
+
+// Forward scans only. A lazy gh/pr/verb regex backtracks across a long script that never names a mutation.
+function looksLikeGhMutation(source: string): boolean {
+	const afterGh = findBoundedWord(source, 0, GH_NAMES);
+	if (afterGh < 0) return false;
+	const afterGroup = findBoundedWord(source, afterGh, MUTATION_GROUP);
+	if (afterGroup < 0) return false;
+	return findBoundedWord(source, afterGroup, MUTATION_SUB) >= 0;
+}
+
+function findBoundedWord(source: string, from: number, words: Iterable<string>): number {
+	let index = from;
+	const length = source.length;
+	while (index < length) {
+		if (!isNameOrDigit(source[index])) {
+			index++;
+			continue;
+		}
+		if (index > 0 && isNameOrDigit(source[index - 1])) {
+			index = skipName(source, index);
+			continue;
+		}
+		for (const word of words) {
+			const next = index + word.length;
+			if (source.startsWith(word, index) && !isNameOrDigit(source[next])) return next;
+		}
+		index = skipName(source, index);
+	}
+	return -1;
+}
+
+function skipName(source: string, index: number): number {
+	let cursor = index;
+	while (cursor < source.length && isNameOrDigit(source[cursor])) cursor++;
+	return cursor;
 }
 
 interface Word {
@@ -78,6 +114,7 @@ function parseScript(source: string): { ok: true; commands: SimpleCommand[] } | 
 function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): boolean {
 	let expands = false;
 	let pipeNext = inheritedPipe;
+	let groupFrom: number | undefined;
 	const pending: PendingHeredoc[] = [];
 	let command: SimpleCommand | undefined;
 	let commandStart = ctx.index;
@@ -101,6 +138,27 @@ function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): bool
 			command = { text: "", words: [], heredocs: [], pipe: false };
 		}
 		return command;
+	};
+
+	// Leave the group's first command unmarked so a preceding command stays outside the pipeline.
+	const markOpenedGroup = (): void => {
+		if (groupFrom === undefined) return;
+		let cursor = groupFrom + 1;
+		while (cursor < ctx.commands.length) {
+			ctx.commands[cursor].pipe = true;
+			cursor++;
+		}
+		groupFrom = undefined;
+	};
+
+	const openGroup = (closer: ")" | "}"): void => {
+		const inherited = pipeNext;
+		finish(ctx.index);
+		pipeNext = false;
+		const started = ctx.commands.length;
+		ctx.index++;
+		if (parseList(ctx, closer, inherited)) expands = true;
+		groupFrom = started;
 	};
 
 	while (ctx.index < ctx.source.length && !ctx.error) {
@@ -135,6 +193,7 @@ function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): bool
 			finish(endIndex);
 			fillHeredocs(ctx, pending);
 			if (finished) expands = noteHeredocs(finished, expands);
+			groupFrom = undefined;
 			continue;
 		}
 		if (current === ")") {
@@ -143,12 +202,15 @@ function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): bool
 		}
 		if (current === "&" && ctx.source[ctx.index + 1] === ">") {
 			ctx.index++;
+			groupFrom = undefined;
 			readRedirect(ctx, ensure(), pending);
 			continue;
 		}
 		if (isSeparator(ctx)) {
 			const endIndex = ctx.index;
 			const pipe = consumeSeparator(ctx);
+			if (pipe) markOpenedGroup();
+			else groupFrom = undefined;
 			finish(endIndex);
 			pipeNext = pipe;
 			continue;
@@ -158,21 +220,14 @@ function parseList(ctx: Ctx, end: ")" | "}" | null, inheritedPipe = false): bool
 				ctx.error = true;
 				break;
 			}
-			const inherited = pipeNext;
-			finish(ctx.index);
-			pipeNext = false;
-			ctx.index++;
-			if (parseList(ctx, ")", inherited)) expands = true;
+			openGroup(")");
 			continue;
 		}
 		if (bareWord(ctx, "{") && (!command || command.words.length === 0)) {
-			const inherited = pipeNext;
-			finish(ctx.index);
-			pipeNext = false;
-			ctx.index++;
-			if (parseList(ctx, "}", inherited)) expands = true;
+			openGroup("}");
 			continue;
 		}
+		groupFrom = undefined;
 		if (skipReserved(ctx, command)) continue;
 		const simple = ensure();
 		if (startsRedirect(ctx)) {
@@ -659,7 +714,7 @@ function ghBodyExpands(command: SimpleCommand, commands: SimpleCommand[], comman
 	const group = words[index + 1];
 	const sub = words[index + 2];
 	if (!name || name.value !== "gh" || !group || !sub) return false;
-	if (bodyOperandUnsafe(group, "") || bodyOperandUnsafe(sub, "")) return true;
+	if (wordHasSyntax(group) || wordHasSyntax(sub)) return true;
 	if (!MUTATION_GROUP.has(group.value) || !MUTATION_SUB.has(sub.value)) return false;
 	let stdin = false;
 	let cursor = index + 3;
