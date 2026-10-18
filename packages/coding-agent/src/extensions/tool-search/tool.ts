@@ -115,14 +115,25 @@ export function createToolSearchDocument(
 	return { name: tool.name, text: parts.filter((part) => part.trim()).join(" ") };
 }
 
-/** Okapi BM25 with the usual parameters. Ties keep document order. */
+/**
+ * Okapi BM25 with the usual parameters. Ties keep document order.
+ *
+ * A query term is generic for one search when more than `genericShare` of the documents, and at
+ * least `genericMinDocuments` of them, contain it. MCP servers repeat boilerplate ("read", "file",
+ * "state", their own instructions) in every tool, so on an `mcp__` tool a generic term counts only
+ * when `tokenize(name)` contains it. Other tools keep full description matching.
+ */
 export class Bm25Ranker implements ToolRanker {
 	private readonly k1: number;
 	private readonly b: number;
+	private readonly genericShare: number;
+	private readonly genericMinDocuments: number;
 
-	constructor(options: { k1?: number; b?: number } = {}) {
+	constructor(options: { k1?: number; b?: number; genericShare?: number; genericMinDocuments?: number } = {}) {
 		this.k1 = options.k1 ?? 1.2;
 		this.b = options.b ?? 0.75;
+		this.genericShare = options.genericShare ?? 0.05;
+		this.genericMinDocuments = options.genericMinDocuments ?? 3;
 	}
 
 	rank(query: string, documents: readonly ToolSearchDocument[], limit: number): ToolSearchMatch[] {
@@ -135,18 +146,24 @@ export class Bm25Ranker implements ToolRanker {
 		});
 		const lengths = termCounts.map((counts) => [...counts.values()].reduce((sum, count) => sum + count, 0));
 		const averageLength = lengths.reduce((sum, length) => sum + length, 0) / documents.length || 1;
+		const generic = new Set<string>();
 		const idf = new Map(
 			queryTerms.map((term) => {
 				const frequency = termCounts.filter((counts) => counts.has(term)).length;
+				if (frequency > this.genericShare * documents.length && frequency >= this.genericMinDocuments) {
+					generic.add(term);
+				}
 				return [term, Math.log(1 + (documents.length - frequency + 0.5) / (frequency + 0.5))] as const;
 			}),
 		);
+		const nameTerms = documents.map((document) => new Set(tokenize(document.name)));
 		const matches: ToolSearchMatch[] = [];
 		documents.forEach((document, index) => {
 			let score = 0;
 			for (const term of queryTerms) {
 				const count = termCounts[index].get(term);
 				if (!count) continue;
+				if (generic.has(term) && document.name.startsWith("mcp__") && !nameTerms[index].has(term)) continue;
 				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
 				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
 			}
