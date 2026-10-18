@@ -1,6 +1,13 @@
 import { expect, test } from "vitest";
 import { type BashOperations, type BashSpawnHook, createBashToolDefinition } from "../src/core/tools/bash.ts";
 
+// Finding → test:
+// R001: <<"EOF" body with backticks and $( )
+// R002: printed example; gh api quoted payload
+// R003: no runtime fixture (the assignment-in-expression loop is gone)
+// R004: R004 quoted END-DOC then expanding gh body
+// agentic P2 5560980350: --body-file after an unrelated backtick command
+
 const tick = "`";
 
 function bashTool(spawnHook?: BashSpawnHook) {
@@ -36,18 +43,28 @@ function execute(command: string, spawnHook?: BashSpawnHook) {
 
 const blocked: Array<[string, string]> = [
 	[
-		"unquoted heredoc body",
+		"unquoted <<EOF body with backticks",
 		["gh pr create --title t --body-file - <<EOF", `see ${tick}code${tick}`, "EOF"].join("\n"),
 	],
 	[
-		"double-quoted backtick (2026-10-01)",
+		"unquoted <<EOF body with $( )",
+		["gh pr comment 5 --body-file - <<EOF", "see $(date)", "EOF"].join("\n"),
+	],
+	[
+		"double-quoted --body with backticks",
 		[
 			'gh pr create --title "bump"',
 			`--body "Bumps the PR-review model to ${tick}claude-sonnet-5-5-200k${tick} per the brief."`,
 		].join(" "),
 	],
 	[
-		"backtick after a newline (2026-10-02 issue comment)",
+		"double-quoted --body with $( )",
+		'gh pr comment 5 --body "see $(echo $V)"',
+	],
+	["double-quoted --body with $VAR", 'gh pr comment 5 --body "see $VAR"'],
+	["bare backticks", `gh pr create --title t --body ${tick}date${tick}`],
+	[
+		"backtick after a newline",
 		`gh issue comment 18 --body "Evidence from the diagnosis.\n` +
 			`The file is ${tick}docs/diagnosis/relay-2026-10.md${tick}."`,
 	],
@@ -56,13 +73,32 @@ const blocked: Array<[string, string]> = [
 		`gh issue create --title "t" --body "Say \\"hello\\" then ${tick}gh${tick} docs"`,
 	],
 	[
-		"backtick assigned in the same command",
+		"backtick assigned then expanded as $VAR",
 		[`body="see ${tick}gh${tick} docs"`, 'gh pr create --title t --body "$body"'].join("\n"),
 	],
+	["gh pr review comment body", `gh pr review 12 --comment --body "see ${tick}gh${tick} docs"`],
 	[
-		"gh pr review comment body",
-		`gh pr review 12 --comment --body "see ${tick}gh${tick} docs"`,
+		"R004 quoted END-DOC then expanding gh body",
+		["cat <<'END-DOC'", "hello", "END-DOC", `gh pr comment 5 --body "see ${tick}code${tick}"`].join("\n"),
 	],
+	["gh mutation after semicolon", `echo ok; gh pr comment 5 --body "see ${tick}code${tick}"`],
+	["gh mutation after &&", `echo ok && gh pr comment 5 --body "see ${tick}code${tick}"`],
+	["gh mutation after ||", `false || gh pr comment 5 --body "see ${tick}code${tick}"`],
+	["gh mutation after pipe", `echo ok | gh pr comment 5 --body "see ${tick}code${tick}"`],
+	[
+		"gh mutation after newline",
+		["echo ok", `gh pr comment 5 --body "see ${tick}code${tick}"`].join("\n"),
+	],
+	["gh mutation inside $( )", `echo $(gh pr comment 5 --body "see ${tick}code${tick}")`],
+	["gh mutation inside a subshell", `(gh pr comment 5 --body "see ${tick}code${tick}")`],
+];
+
+const unparsed: Array<[string, string]> = [
+	[
+		"unterminated heredoc hiding a later gh mutation",
+		["cat <<'END-DOC'", "hello", `gh pr comment 5 --body "see ${tick}code${tick}"`].join("\n"),
+	],
+	["unterminated quote", 'gh pr comment 5 --body "see code'],
 ];
 
 const allowed: Array<[string, string]> = [
@@ -71,13 +107,13 @@ const allowed: Array<[string, string]> = [
 	["command substitution on the title only", 'gh pr create --title "$(date)" --body-file f.md'],
 	["read-only gh pr diff", "gh pr diff 89"],
 	["unrelated command", "echo ok"],
-	["single-quoted backticks", `gh pr comment 5 --body 'see ${tick}gh${tick} docs'`],
+	["single-quoted --body with backticks", `gh pr comment 5 --body 'see ${tick}gh${tick} docs'`],
 	[
 		"escaped backtick is a bash literal",
 		`gh pr create --title "t" --body "one-line \\${tick}harbor pending\\${tick} stub"`,
 	],
 	[
-		"quoted heredoc body (2026-10-13 agent-relay #89)",
+		"nested quoted heredoc",
 		[
 			"gh pr create --draft --title \"ci: run the check\" --body \"$(cat <<'EOF'",
 			"## What",
@@ -87,23 +123,52 @@ const allowed: Array<[string, string]> = [
 		].join("\n"),
 	],
 	[
-		"quoted stdin heredoc on --body-file",
-		["gh pr comment 5 --body-file - <<'EOF'", `see ${tick}code${tick}`, "EOF"].join("\n"),
-	],
-	["file read through command substitution", 'gh pr create --title t --body "$(cat body.md)"'],
-	[
-		"quoted example printed, not executed",
-		`printf '%s\\n' 'gh pr create --body "$(cat body.md)"'`,
+		"<<'EOF' quoted stdin body with backticks and $( )",
+		["gh pr comment 5 --body-file - <<'EOF'", `see ${tick}code${tick} and $(date)`, "EOF"].join("\n"),
 	],
 	[
-		"gh api payload quoting an example",
-		`gh api repos/o/r/issues -f body='gh pr create --body "$(cat body.md)"'`,
+		'<<"EOF" body with backticks and $( )',
+		["gh pr comment 5 --body-file - <<\"EOF\"", `see ${tick}code${tick} and $(date)`, "EOF"].join("\n"),
 	],
+	[
+		"<<\\EOF body with backticks and $( )",
+		["gh pr comment 5 --body-file - <<\\EOF", `see ${tick}code${tick} and $(date)`, "EOF"].join("\n"),
+	],
+	[
+		"<<-'EOF' with a tab-indented terminator",
+		["gh pr comment 5 --body-file - <<-'EOF'", `see ${tick}code${tick} and $(date)`, "\tEOF"].join("\n"),
+	],
+	[
+		"quoted END-DOC heredoc then a safe gh call",
+		["cat <<'END-DOC'", `hello ${tick}code${tick}`, "END-DOC", "gh pr comment 5 --body-file body.md"].join("\n"),
+	],
+	[
+		"--body-file after an unrelated backtick command",
+		[`echo ${tick}date${tick}`, "gh pr comment 5 --body-file body.md"].join("\n"),
+	],
+	["cat file", 'gh pr create --title t --body "$(cat body.md)"'],
+	["printed example", `printf '%s\\n' 'gh pr create --body "$(cat body.md)"'`],
+	["gh api quoted payload", `gh api repos/o/r/issues -f body='gh pr create --body "$(cat body.md)"'`],
 ];
 
 test.each(blocked)("refuses %s before spawn", async (_name, command) => {
 	const { pending, calls, updates } = execute(command);
-	await expect(pending).rejects.toThrow(/--body-file/);
+	const error = await pending.then(
+		() => {
+			throw new Error("expected a refusal");
+		},
+		(caught: unknown) => caught,
+	);
+	const message = error instanceof Error ? error.message : String(error);
+	expect(message).toMatch(/--body-file/);
+	expect(message).toMatch(/gh (pr|issue)/);
+	expect(calls).toEqual([]);
+	expect(updates()).toBe(0);
+});
+
+test.each(unparsed)("refuses %s because it cannot parse", async (_name, command) => {
+	const { pending, calls, updates } = execute(command);
+	await expect(pending).rejects.toThrow(/cannot parse/);
 	expect(calls).toEqual([]);
 	expect(updates()).toBe(0);
 });
