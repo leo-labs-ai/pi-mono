@@ -555,4 +555,51 @@ describe("generateSummary reasoning options", () => {
 		expect(result.summary).toContain("## Early Progress");
 		expect(result.summary).toContain("## Context for Suffix");
 	});
+
+	it("tells the model to continue after an automatic split turn, but not after a manual one", async () => {
+		// An automatic compaction can cut the running turn. The model then resumes from a checkpoint
+		// where its own work was and tends to answer with a status report and end the turn.
+		const splitTurn: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 20000, keepRecentTokens: 20000 },
+		};
+		const wholeTurns: CompactionPreparation = { ...splitTurn, turnPrefixMessages: [], isSplitTurn: false };
+		const compactFor = (preparation: CompactionPreparation, reason?: "manual" | "threshold" | "overflow") =>
+			compact(
+				preparation,
+				createModel(false),
+				"test-key",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				reason,
+			);
+		const instruction = "The task is not finished. Continue it now from Next Steps";
+
+		for (const reason of ["threshold", "overflow"] as const) {
+			const { summary } = await compactFor(splitTurn, reason);
+			expect(summary).toContain("**Turn Context (split turn):**");
+			expect(summary).toContain(instruction);
+			expect(summary.indexOf(instruction)).toBeGreaterThan(summary.indexOf("**Turn Context (split turn):**"));
+		}
+
+		const manual = await compactFor(splitTurn, "manual");
+		expect(manual.summary).toContain("**Turn Context (split turn):**");
+		expect(manual.summary).not.toContain(instruction);
+		// Direct callers that pass no reason, and automatic cuts at a turn boundary, keep the plain summary.
+		expect((await compactFor(splitTurn)).summary).not.toContain(instruction);
+		expect((await compactFor(wholeTurns, "threshold")).summary).not.toContain(instruction);
+	});
 });

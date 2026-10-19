@@ -2796,6 +2796,7 @@ export class AgentSession {
 			// ID. This is the ID the main loop sends on every turn (`Agent.sessionId`).
 			this.agent.sessionId,
 			cacheSafeContext,
+			reason,
 		);
 	}
 
