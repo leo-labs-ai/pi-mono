@@ -8,6 +8,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Changed
 
+- **Dependency bumps: `shell-quote` 1.12.0 and `undici` 8.12.2 (6.29.1 under `@earendil-works/gondolin`).** `@leo-labs-ai/pi-coding-agent` pins `undici` 8.12.2. Root `overrides` set `shell-quote` to 1.12.0 and gondolin's nested `undici` to 6.29.1. Lockfile and `packages/coding-agent/install-lock` regenerated.
 - **`pi-env` publishes as `@leo-labs-ai/pi-env` on GitHub Packages** (was `@earendil-works/pi-env`, which the Release workflow tried to publish to npmjs and failed with ENEEDAUTH in the 1.1.1 run). Package name, publishConfig, imports, tsconfig paths and release scripts updated.
 
 ### Added
