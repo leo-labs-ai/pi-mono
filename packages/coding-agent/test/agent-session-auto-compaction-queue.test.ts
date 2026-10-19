@@ -300,7 +300,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						willRetry: boolean,
+						continuesTurn: boolean,
+					) => Promise<void>;
 				},
 				"_runAutoCompaction",
 			)
@@ -314,7 +318,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		await checkCompaction(errorAssistant);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false, false);
 	});
 
 	it("should not trigger threshold compaction for error messages when no prior usage exists", async () => {
