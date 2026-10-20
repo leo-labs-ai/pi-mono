@@ -1131,6 +1131,14 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
 /**
+ * Closes the summary of a split turn that the agent loop resumes right after compaction. The
+ * model resumes mid-turn with a checkpoint where its own earlier work was; without an explicit
+ * instruction it often answers with a status report and ends the turn instead of continuing.
+ */
+const SPLIT_TURN_CONTINUE_INSTRUCTION =
+	"This compaction ran automatically in the middle of your turn. The task is not finished. Continue it now from this summary and the messages after it; do not stop to report progress.";
+
+/**
  * Generate summaries for compaction using prepared data.
  * Returns CompactionResult - SessionManager adds uuid/parentUuid when saving.
  *
@@ -1141,6 +1149,10 @@ Only summarize information explicitly present above. Do not infer or recreate la
  *   the node holding the cached prefix.
  * @param cacheSafeContext - The live model-facing transcript. When present, summary requests
  *   replay it instead of serializing the conversation into a standalone prompt.
+ * @param continuesTurn - Whether the agent loop sends the next request for the same turn right
+ *   after this compaction (after tool results, or an overflow retry). A split turn then ends
+ *   with an instruction to continue; manual compaction and compaction that waits for a new user
+ *   message keep the plain summary.
  */
 export async function compact(
 	preparation: CompactionPreparation,
@@ -1156,6 +1168,7 @@ export async function compact(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
+	continuesTurn?: boolean,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -1240,6 +1253,9 @@ export async function compact(
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
+	if (continuesTurn && isSplitTurn && turnPrefixMessages.length > 0) {
+		summary += `\n\n${SPLIT_TURN_CONTINUE_INSTRUCTION}`;
+	}
 
 	if (!firstKeptEntryId) {
 		throw new Error("First kept entry has no UUID - session may need migration");

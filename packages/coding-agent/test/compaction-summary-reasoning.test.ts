@@ -555,4 +555,57 @@ describe("generateSummary reasoning options", () => {
 		expect(result.summary).toContain("## Early Progress");
 		expect(result.summary).toContain("## Context for Suffix");
 	});
+
+	it("ends a split turn's summary with an instruction to continue only when the loop resumes the turn", async () => {
+		// An automatic compaction can cut the running turn. The model then resumes from a checkpoint
+		// where its own work was and tends to answer with a status report and end the turn.
+		const splitTurn: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100000,
+			fileOps: { read: new Set(["src/a.ts"]), written: new Set(), edited: new Set(["src/b.ts"]) },
+			settings: { enabled: true, reserveTokens: 20000, keepRecentTokens: 20000 },
+		};
+		const wholeTurns: CompactionPreparation = { ...splitTurn, turnPrefixMessages: [], isSplitTurn: false };
+		const compactFor = (preparation: CompactionPreparation, continuesTurn?: boolean) =>
+			compact(
+				preparation,
+				createModel(false),
+				"test-key",
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				continuesTurn,
+			);
+		const instruction =
+			"This compaction ran automatically in the middle of your turn. The task is not finished. " +
+			"Continue it now from this summary and the messages after it; do not stop to report progress.";
+
+		const resumed = await compactFor(splitTurn, true);
+		expect(resumed.summary).toContain("**Turn Context (split turn):**");
+		// The instruction is the last thing the model reads, after the file lists.
+		expect(resumed.summary.endsWith(`</modified-files>\n\n${instruction}`)).toBe(true);
+		// It must not depend on a "Next Steps" section: a split turn without prior history has none.
+		expect(instruction).not.toContain("Next Steps");
+
+		// Manual compaction, callers that pass no flag, and automatic compaction that waits for a new
+		// user message (continuesTurn false) keep the plain summary; so does a cut at a turn boundary.
+		for (const summary of [
+			(await compactFor(splitTurn, false)).summary,
+			(await compactFor(splitTurn)).summary,
+			(await compactFor(wholeTurns, true)).summary,
+		]) {
+			expect(summary).not.toContain(instruction);
+			expect(summary.endsWith("</modified-files>")).toBe(true);
+		}
+	});
 });
