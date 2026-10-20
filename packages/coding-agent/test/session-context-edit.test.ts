@@ -145,6 +145,32 @@ describe("session context edits", () => {
 		).toEqual(["exact handoff", "after"]);
 	});
 
+	it("compaction replaces earlier tool deltas with the current system state", () => {
+		const session = SessionManager.inMemory();
+		const tool = {
+			name: "init_experiment",
+			description: "Experiment tool",
+			parameters: { type: "object", properties: {} },
+		};
+		session.appendMessage({ role: "system", content: "prompt", toolsAdded: [tool], timestamp: 1 });
+		const firstKeptEntryId = session.appendMessage({ role: "user", content: "kept request", timestamp: 2 });
+		session.appendMessage({
+			role: "system",
+			content: "",
+			toolsRemoved: [{ name: tool.name }],
+			timestamp: 3,
+		});
+		session.appendMessage({ role: "user", content: "next request", timestamp: 4 });
+
+		session.appendCompaction("summary", firstKeptEntryId, 100);
+
+		const messages = session.buildSessionProjection().messages;
+		expect(messages[0]).toMatchObject({ role: "system" });
+		if (messages[0]?.role !== "system") throw new Error("expected compaction system message");
+		expect(messages[0].toolsAdded).toBeUndefined();
+		expect(messages.some((message) => message.role === "system" && message.toolsRemoved?.length)).toBe(false);
+	});
+
 	it("applies post-compaction edits to retained pre-compaction entries", () => {
 		const session = SessionManager.inMemory();
 		session.appendMessage({ role: "user", content: "summarized", timestamp: Date.now() });
