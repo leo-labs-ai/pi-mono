@@ -1,6 +1,6 @@
 {
 	"name": "@leo-labs-ai/pi-env",
-	"version": "1.0.7",
+	"version": "1.0.8",
 	"description": "Remote execution environments for Pi Durable: a small daemon deployed over SSH and its ExecutionEnv client",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -46,7 +46,7 @@
 	},
 	"dependencies": {
 		"@earendil-works/chord": "^1.0.4",
-		"@leo-labs-ai/pi-durable": "1.1.1"
+		"@leo-labs-ai/pi-durable": "1.1.2"
 	},
 	"devDependencies": {
 		"shx": "0.4.0",
