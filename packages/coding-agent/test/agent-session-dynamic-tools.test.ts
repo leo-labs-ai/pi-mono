@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@leo-labs-ai/pi-ai/compat";
+import { getModel, streamSimple, type Model } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
@@ -9,6 +9,16 @@ import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createBashTool } from "../src/core/tools/bash.ts";
+
+class PayloadCaptured extends Error {}
+
+interface CapturedAnthropicPayload {
+	tools?: Array<{ name: string }>;
+	messages: Array<{
+		role: string;
+		content: Array<{ type: string; tool?: { type: string; name?: string } }>;
+	}>;
+}
 
 describe("AgentSession dynamic tool registration", () => {
 	let tempDir: string;
@@ -252,5 +262,114 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(session.systemPrompt).not.toContain("Description should not appear in available tools");
 
 		session.dispose();
+	});
+
+	it("preserves a dynamic tool checkpoint across reload and sends a valid Anthropic removal", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
+		const sessionManager = SessionManager.inMemory();
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		if (!model || model.api !== "anthropic-messages") throw new Error("expected Anthropic model");
+		const anthropicModel: Model<"anthropic-messages"> = {
+			...model,
+			compat: {
+				...model.compat,
+				supportsMidConvoSystemMessages: true,
+				supportsMidConvoToolChanges: true,
+			},
+		};
+		const now = Date.now();
+		sessionManager.appendMessage({ role: "system", content: "starting prompt", timestamp: now - 4_000 });
+		sessionManager.appendMessage({ role: "user", content: "message to compact", timestamp: now - 3_000 });
+		sessionManager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "response to compact" }],
+			api: anthropicModel.api,
+			provider: anthropicModel.provider,
+			model: anthropicModel.id,
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 110,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: now - 2_000,
+		});
+		sessionManager.appendMessage({ role: "user", content: "retained request", timestamp: now - 1_000 });
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "init_experiment",
+						label: "Init Experiment",
+						description: "Initialize an experiment session",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					});
+					pi.on("session_start", (event) => {
+						const activeTools = new Set(pi.getActiveTools().map((tool) => tool.name));
+						if (event.reason === "reload") activeTools.delete("init_experiment");
+						else activeTools.add("init_experiment");
+						pi.setActiveTools([...activeTools]);
+					});
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "compaction summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: anthropicModel,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+		try {
+			await session.bindExtensions({ onError: () => {} });
+			expect(session.getActiveToolNames()).toContain("init_experiment");
+
+			await session.compact();
+			const compaction = sessionManager.getBranch().filter((entry) => entry.type === "compaction").at(-1);
+			if (compaction?.type !== "compaction") throw new Error("expected compaction entry");
+			expect(compaction.systemMessage?.toolsAdded?.map((tool) => tool.name)).toContain("init_experiment");
+
+			await session.reload();
+			expect(session.getActiveToolNames()).not.toContain("init_experiment");
+			session.agent.streamFunction = streamSimple;
+			session.agent.getApiKey = () => "test-key";
+			let capturedPayload: CapturedAnthropicPayload | undefined;
+			session.agent.onPayload = (payload) => {
+				capturedPayload = payload as CapturedAnthropicPayload;
+				throw new PayloadCaptured();
+			};
+
+			await session.prompt("continue after reload");
+
+			if (!capturedPayload) throw new Error("expected Anthropic payload capture");
+			expect(capturedPayload.tools?.map((tool) => tool.name)).toContain("init_experiment");
+			const removals = capturedPayload.messages.flatMap((message) =>
+				message.content.flatMap((block) =>
+					block.type === "tool_removal" && block.tool?.name ? [block.tool.name] : [],
+				),
+			);
+			expect(removals).toEqual(["init_experiment"]);
+		} finally {
+			session.dispose();
+		}
 	});
 });

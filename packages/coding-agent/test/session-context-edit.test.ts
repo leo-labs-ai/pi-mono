@@ -145,6 +145,33 @@ describe("session context edits", () => {
 		).toEqual(["exact handoff", "after"]);
 	});
 
+	it("recovers a tool checkpoint from legacy compactions before replaying later deltas", () => {
+		const session = SessionManager.inMemory();
+		const tool = {
+			name: "init_experiment",
+			description: "Experiment tool",
+			parameters: { type: "object", properties: {} },
+		};
+		session.appendMessage({ role: "system", content: "prompt", toolsAdded: [tool], timestamp: 1 });
+		const firstKeptEntryId = session.appendMessage({ role: "user", content: "kept request", timestamp: 2 });
+		const compactionId = session.appendCompaction("legacy summary", firstKeptEntryId, 100);
+		const compaction = session.getEntry(compactionId);
+		if (compaction?.type !== "compaction") throw new Error("expected compaction entry");
+		delete compaction.systemMessage;
+		session.appendMessage({
+			role: "system",
+			content: "",
+			toolsRemoved: [{ name: tool.name }],
+			timestamp: 3,
+		});
+
+		const messages = session.buildSessionProjection().messages;
+		expect(messages[0]).toMatchObject({ role: "system", toolsAdded: [tool] });
+		expect(
+			messages.some((message) => message.role === "system" && message.toolsRemoved?.[0]?.name === tool.name),
+		).toBe(true);
+	});
+
 	it("compaction replaces earlier tool deltas with the current system state", () => {
 		const session = SessionManager.inMemory();
 		const tool = {
