@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai";
+import { getCurrentTools, type AssistantMessage, type ToolResultMessage } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_COMPACTION_SETTINGS,
@@ -170,6 +170,7 @@ describe("session context edits", () => {
 		expect(
 			messages.some((message) => message.role === "system" && message.toolsRemoved?.[0]?.name === tool.name),
 		).toBe(true);
+		expect(getCurrentTools(messages)).toEqual([]);
 	});
 
 	it("compaction replaces earlier tool deltas with the current system state", () => {

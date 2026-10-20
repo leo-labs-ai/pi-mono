@@ -555,9 +555,10 @@ export function buildSessionProjection(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionProjection {
-	const path = buildSessionPath(entries, leafId, byId);
+	const entryIndex = buildEntryIndex(entries, byId);
+	const path = buildSessionPath(entries, leafId, entryIndex);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
-	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const contextEntries = buildContextEntries(entries, leafId, entryIndex);
 	const edits = new Map<string, ContextEditEntry>();
 	for (const entry of contextEntries) {
 		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
@@ -572,7 +573,7 @@ export function buildSessionProjection(
 		// Older session files predate compaction system checkpoints. Recover the tool/prompt
 		// state at that boundary so later deltas remain valid after reload.
 		if (sourceEntry.type === "compaction" && index === 0 && !sourceEntry.systemMessage && sourceEntry.parentId) {
-			const previousMessages = buildSessionProjection(entries, sourceEntry.parentId, byId).messages;
+			const previousMessages = buildSessionProjection(entries, sourceEntry.parentId, entryIndex).messages;
 			const systemMessage = getCurrentSystemMessage(previousMessages);
 			if (systemMessage) {
 				const timestamp = Date.parse(sourceEntry.timestamp);

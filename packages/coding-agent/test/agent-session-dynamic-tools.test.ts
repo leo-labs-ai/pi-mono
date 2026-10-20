@@ -16,7 +16,10 @@ interface CapturedAnthropicPayload {
 	tools?: Array<{ name: string }>;
 	messages: Array<{
 		role: string;
-		content: Array<{ type: string; tool?: { type: string; name?: string } }>;
+		content: Array<{
+		type: string;
+		tool?: { type: string; name?: string; definition?: { name: string } };
+	}>;
 	}>;
 }
 
@@ -361,13 +364,25 @@ describe("AgentSession dynamic tool registration", () => {
 			await session.prompt("continue after reload");
 
 			if (!capturedPayload) throw new Error("expected Anthropic payload capture");
-			expect(capturedPayload.tools?.map((tool) => tool.name)).toContain("init_experiment");
-			const removals = capturedPayload.messages.flatMap((message) =>
-				message.content.flatMap((block) =>
-					block.type === "tool_removal" && block.tool?.name ? [block.tool.name] : [],
-				),
-			);
+			const declaredToolNames = new Set(capturedPayload.tools?.map((tool) => tool.name) ?? []);
+			expect(declaredToolNames.has("init_experiment")).toBe(true);
+			const removals: string[] = [];
+			for (const message of capturedPayload.messages) {
+				for (const block of message.content) {
+					if (block.type === "tool_addition") {
+						const name = block.tool?.definition?.name;
+						if (name) declaredToolNames.add(name);
+					} else if (block.type === "tool_removal") {
+						const name = block.tool?.name;
+						if (!name) throw new Error("expected tool_removal reference");
+						expect(declaredToolNames.has(name)).toBe(true);
+						removals.push(name);
+						declaredToolNames.delete(name);
+					}
+				}
+			}
 			expect(removals).toEqual(["init_experiment"]);
+			expect([...declaredToolNames].sort()).toEqual([...session.getActiveToolNames()].sort());
 		} finally {
 			session.dispose();
 		}

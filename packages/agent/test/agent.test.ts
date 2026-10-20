@@ -223,7 +223,7 @@ describe("Agent", () => {
 		expect(initial.toolsAdded?.[0]).not.toHaveProperty("execute");
 	});
 
-	it("serializes tool activation and removal deltas for a resumed transcript", async () => {
+	it("replays removed tool declarations after a transcript reload", async () => {
 		const tool = createTool("init_experiment");
 		const original = new Agent({
 			initialState: { tools: [tool] },
