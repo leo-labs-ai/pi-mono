@@ -110,17 +110,19 @@ jobs:
         run: |
           # Mirror the root `npm run build` dependency order, with chord first.
           # chord ships no committed dist/ and has only prepublishOnly (no
-          # prepare), so `npm ci` never builds it; packages/agent and
-          # coding-agent import its type declarations.
-          npm --prefix packages/chord run build
-          npm --prefix packages/tui run build
-          npm --prefix packages/telemetry run build
-          npm --prefix packages/codemode run build
-          npm --prefix packages/mcp run build
-          npm --prefix packages/ai run build
-          npm --prefix packages/durable run build
-          npm --prefix packages/env run build
-          npm --prefix packages/agent run build
+          # prepare), so `npm ci` never builds it; packages/agent, protocol,
+          # client, server and coding-agent all import its type declarations.
+          # coding-agent additionally imports protocol/client/server, which
+          # `npm ci --ignore-scripts` leaves without a dist/ as well.
+          # Tolerant: skip packages absent from the PR head tree (e.g. protocol/
+          # client/server removed by the v1.3.0 sync).
+          for p in chord tui telemetry codemode mcp ai durable env agent protocol client server; do
+            if [ -f "packages/$p/package.json" ]; then
+              npm --prefix "packages/$p" run build
+            else
+              echo "skip packages/$p (not present)"
+            fi
+          done
           npm --prefix packages/coding-agent run build:ts
       # rusty-review --engine pi execs `pi` by name; CI only built the fork as a
       # node entrypoint. Expose a `pi` shim on PATH so the Correctness stage runs
