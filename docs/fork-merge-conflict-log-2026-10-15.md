@@ -19,10 +19,11 @@ Worktree: `pii-sync-130`, branch `lue/pii-sync-130`. Status: merge committed 202
 | adapt (behaviour) | Per-model opt-in `supportsMidConvoEffort` mapped onto `configurationUpdateEffort`, request effort fixed to `medium`; ported to `openai-codex-responses` |
 | adapt (schema) | Fork-only compat fields added to `compat-schema.ts` |
 | preserve | slash-means-provider (re-grafted onto the new resolver), cwd omission, cache-safe compaction, `modelVisible`, `_projectedHiddenDeclarations`, fork-only `model-api-support.ts` drift check, Codex gateway guards, realpath dedupe of context files |
+| supersede (tests) | Fork-only `packages/ai/test/anthropic-error-tool-result-image.test.ts` deleted with #584. `packages/coding-agent/schemas/models.schema.json` regenerated (`npm run generate:schemas`). |
 | supersede | #584 omit images in errored tool results (replaced by upstream #10794); fork `midConvoEffort` machinery |
 | reject | `build-binaries.yml` `publish-npm`/`env-daemons` jobs (remote mutation the fork does not run) |
 | adapt (lockfiles) | Root `package-lock.json` regenerated with `npm install --package-lock-only --ignore-scripts`; install lock regenerated with `scripts/generate-coding-agent-install-lock.mjs` (184 packages) |
-| adapt (model snapshot) | Fork-only `packages/ai/model-catalog.snapshot.json` (#621) still listed `kimi-coding` models as `anthropic-messages`, so upstream's Chat Completions switch (`a3f265b1c`) failed `tsc`. Only the four `kimi-coding` entries were replaced from a live refresh; every other provider entry is unchanged (a full live refresh dropped models such as `mimo-v2.5-pro` that upstream 1.3.0 tests reference). |
+| adapt (model snapshot) | Fork-only `packages/ai/model-catalog.snapshot.json` (#621) now holds upstream's pinned v1.3.0 catalog revision `sha256-ffa3e986…` (`nix/model-catalog.json`, hash verified), plus the fork's Kimi K3 `cacheWrite: 3` override on `moonshotai`, `moonshotai-cn` and `kimi-coding` (`KIMI_K3_COST` in `scripts/generate-models.ts`). The old snapshot predated 1.3.0 and failed 17 upstream `pi-ai` tests (kimi-coding API, GPT-6 Luna, Jev, Xiaomi, xhigh). |
 
 ## Decisions that change behaviour
 
@@ -42,3 +43,5 @@ Worktree: `pii-sync-130`, branch `lue/pii-sync-130`. Status: merge committed 202
 - `test:e2e`: 476/476 with `PI_CODING_AGENT_DIR` pointed at an empty temp dir. With Luke's real agent dir, `6999-models-json-hot-reload` fails because real provider auth is visible to the selector (environment leak, not a merge defect).
 - `truncated-recovery-custom-message-turn` (fork-only) is intermittent: 1 of 3 isolated reruns failed, and it failed once in the full suite. Not yet determined whether this predates the merge.
 - `test:my-pi-extensions` against a clean `my-pi` `origin/main` worktree: 89/92; `test:otel-exporter` passes on rerun (timeout under load); `test:pi-memory:cache` and `test:psyche-cli:smoke` fail only because the temp worktree was installed with `--ignore-scripts` (no `better-sqlite3` native binding).
+- CI `unit-tests` on the first push failed: `pi-ai` tests ran against the stale snapshot. After the snapshot fix, local `./test.sh` versus a clean `origin/main` baseline (`/tmp` worktree, same machine): remaining local failures are environment-only — `env` daemon not built (`terminal`, `conformance`, `differential`, `remote`, `ssh*`; base fails the same way), `footer-data-provider` (base fails too), Bun 1.4.2 `worker-lifetime` (worker exit takes ~16 s locally), and load timeouts (`state-fuzz`, durable `codemode`, `tools-images`, codemode linear-time) that pass when rerun alone.
+- `.github/workflows/agentic-review.yml` no longer builds the removed `protocol`/`client`/`server` packages.

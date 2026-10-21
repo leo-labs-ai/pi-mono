@@ -1005,13 +1005,27 @@
         },
         "supportsMidConvoEffort": {
           "type": "boolean",
-          "description": "Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages and openai-responses APIs.",
+          "description": "Whether thinking level changes are sent inside the conversation instead of changing the request's effort, so a change keeps the prompt cache. Used by the anthropic-messages, openai-responses and openai-codex-responses APIs.",
           "default": false
         },
         "supportsMaxOutputTokens": {
           "type": "boolean",
           "description": "Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it.",
           "default": true
+        },
+        "sendChatgptAccountId": {
+          "type": "boolean",
+          "description": "Whether to derive and send the ChatGPT account header (Codex Responses only). Opaque gateway credentials carry no account claim.",
+          "default": true
+        },
+        "supportsWebSocketTransport": {
+          "type": "boolean",
+          "description": "Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only).",
+          "default": true
+        },
+        "supportsZstdRequestCompression": {
+          "type": "boolean",
+          "description": "Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Defaults to true on the official ChatGPT Codex backend and false for any other base URL."
         },
         "supportsEagerToolInputStreaming": {
           "type": "boolean",
