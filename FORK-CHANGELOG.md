@@ -6,6 +6,15 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Upstream sync 1.3.0
+
+- **Merges upstream Pi `v1.3.0`** (from the integrated `v1.0.4`). Upstream removed the `client`, `server`, `protocol` and inherited `experimental` code; the fork follows. `durable` stays. Fork-owned packages keep `@leo-labs-ai/pi-*` names and now use upstream's exact-version pinning in `sync-versions` (#10865); vendored `@earendil-works/*` packages keep their pins. Details: `docs/fork-merge-conflict-log-2026-10-15.md`.
+- **Per-model mid-conversation effort now uses upstream's `configurationUpdateEffort`.** `compat.supportsMidConvoEffort: true` still opts a model in, on both `openai-responses` (upstream path) and the fork-only `openai-codex-responses`. Behaviour change from the fork's old design: the request-level effort is fixed at `"medium"` and each effort change travels as a `configuration_update` item, instead of replaying the first effective effort. Models without the opt-in keep request-level effort.
+- **Compat fields live in `providers/compat-schema.ts`.** Upstream derives the compat types from the schema, so the fork-only `sendChatgptAccountId`, `supportsWebSocketTransport`, `supportsZstdRequestCompression` and `sendSessionAffinityHeaders` were added there.
+- **Failed codemode scripts keep their image blocks.** Upstream (#10794) moves images out of error tool results per provider (Anthropic, Bedrock Claude), so the fork's "omit images from errored results" patch (#584) is retired and `codemode` no longer replaces images with an "omitted" note.
+- **Slash still means provider on top of upstream's reference resolver.** Upstream's `resolveModelReference` lets `provider/rest` fall back to a raw id on another provider (#10160, #5643, #5823). The fork keeps #162: without an explicit `--provider`, a reference with `/` only matches inside the named provider, never fuzzy-matches whole-text, and never sheds an invalid `:suffix`. Bare gateway ids such as `anthropic/claude-opus-5.5` must be written `vercel-ai-gateway/anthropic/claude-opus-5.5`.
+- **`usesDefaultTools` stays overridable in the test harness**, and the resume path uses upstream's `defaultToolModifiers` flow (the fork's #619 transcript-loadout rule is now upstream behaviour).
+
 ### Changed
 
 - **`pi-env` publishes as `@leo-labs-ai/pi-env` on GitHub Packages** (was `@earendil-works/pi-env`, which the Release workflow tried to publish to npmjs and failed with ENEEDAUTH in the 1.1.1 run). Package name, publishConfig, imports, tsconfig paths and release scripts updated.

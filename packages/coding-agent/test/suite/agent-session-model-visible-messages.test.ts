@@ -98,4 +98,49 @@ describe("AgentSession model-visible custom messages", () => {
 		const rebuiltProviderMessages = convertToLlm(harness.sessionManager.buildSessionContext().messages);
 		expect(JSON.stringify(rebuiltProviderMessages)).not.toContain("mon_volatile status running wake 1/20");
 	});
+
+	it("preserves modelVisible from before_agent_start messages", async () => {
+		const requests: string[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", (event) => {
+						const hidden = event.messageType === "user" && event.prompt === "hidden";
+						return {
+							message: {
+								customType: hidden ? "ui-status" : "visible-status",
+								content: hidden ? "UI_ONLY_SENTINEL" : "VISIBLE_SENTINEL",
+								display: true,
+								...(hidden ? { modelVisible: false } : {}),
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const respond = (context: unknown) => {
+			requests.push(JSON.stringify(context, (_key, value) => (typeof value === "function" ? undefined : value)));
+			return fauxAssistantMessage("ok");
+		};
+		harness.setResponses([respond, respond]);
+
+		await harness.session.prompt("hidden");
+		await harness.session.prompt("visible");
+
+		expect(requests[0]).not.toContain("UI_ONLY_SENTINEL");
+		expect(requests[1]).not.toContain("UI_ONLY_SENTINEL");
+		expect(requests[1]).toContain("VISIBLE_SENTINEL");
+		const entries = harness.sessionManager.getEntries().filter((entry) => entry.type === "custom_message");
+		const hidden = entries.find((entry) => entry.customType === "ui-status");
+		const visible = entries.find((entry) => entry.customType === "visible-status");
+		if (!hidden || hidden.type !== "custom_message" || !visible || visible.type !== "custom_message")
+			throw new Error("missing persisted hook messages");
+		expect(hidden.modelVisible).toBe(false);
+		expect(hidden.display).toBe(true);
+		expect(visible.modelVisible).not.toBe(false);
+		const rebuilt = JSON.stringify(convertToLlm(harness.sessionManager.buildSessionContext().messages));
+		expect(rebuilt).not.toContain("UI_ONLY_SENTINEL");
+		expect(rebuilt).toContain("VISIBLE_SENTINEL");
+	});
 });

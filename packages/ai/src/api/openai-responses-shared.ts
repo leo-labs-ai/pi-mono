@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
+	ResponseConfigurationUpdateItemParam,
 	ResponseCreateParamsStreaming,
 	ResponseInput,
 	ResponseInputContent,
@@ -32,7 +33,7 @@ import type {
 } from "../types.ts";
 import type { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { shortHash } from "../utils/hash.ts";
-import { parseStreamingJson } from "../utils/json-parse.ts";
+import { parseStreamingJson, parseToolCallArguments } from "../utils/json-parse.ts";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { getSystemMessageText, renderSystemMessageUpdate } from "../utils/text.ts";
 import { resolveTranscript, resolveTranscriptTools } from "../utils/transcript.ts";
@@ -45,6 +46,9 @@ import {
 	resolveJsonSchemaStrictSampling,
 } from "./constrained-sampling.ts";
 import { transformMessages } from "./transform-messages.ts";
+
+/** Fixed `reasoning.effort` while `configuration_update` items carry the thinking level, so a level change keeps the cached prefix. */
+export const CONFIGURATION_UPDATE_REQUEST_EFFORT = "medium";
 
 // =============================================================================
 // Utilities
@@ -129,63 +133,16 @@ export interface ConvertResponsesMessagesOptions {
 	supportsAdditionalTools?: boolean;
 	supportsToolSearch?: boolean;
 	toolOptions?: ConvertResponsesToolsOptions;
-	/** Effort levels to express as positional `configuration_update` items. See {@link resolveMidConvoEffort}. */
-	midConvoEffort?: MidConvoEffort;
-}
-
-/**
- * Mid-conversation reasoning effort for GPT-6 Responses models. The request-level
- * `reasoning.effort` stays at `baseline` for the whole conversation, and every change
- * is replayed as a `configuration_update` input item in its original position, so a
- * thinking-level change keeps the cached prompt prefix. Changing the request-level
- * value instead invalidates the whole prefix.
- * https://developers.openai.com/api/docs/guides/reasoning#change-reasoning-mid-conversation
- *
- * Opt-in per model through `compat.supportsMidConvoEffort`. Turning reasoning off
- * (`none`) is not managed: OpenAI does not document `none` in `configuration_update`,
- * so that switch still changes the request-level effort.
- */
-export interface MidConvoEffort {
-	/** Request-level effort: the level of the first replayed managed response from this model. */
-	baseline: string;
-	/** Provider-native effort for the next response. */
-	active: string;
-}
-
-/** Returns undefined when the model is not opted in or the requested effort is not managed. */
-export function resolveMidConvoEffort(
-	enabled: boolean,
-	model: Model<Api>,
-	messages: TranscriptContext["messages"],
-	activeEffort: string | undefined,
-): MidConvoEffort | undefined {
-	if (!enabled || activeEffort === undefined || activeEffort === "none") return undefined;
-	for (const message of messages) {
-		if (
-			message.role === "assistant" &&
-			// transformMessages drops these, so they never reach the replayed input.
-			message.stopReason !== "error" &&
-			message.stopReason !== "aborted" &&
-			message.provider === model.provider &&
-			message.api === model.api &&
-			message.model === model.id &&
-			typeof message.providerThinkingLevel === "string"
-		) {
-			return { baseline: message.providerThinkingLevel, active: activeEffort };
-		}
-	}
-	return { baseline: activeEffort, active: activeEffort };
-}
-
-/** Appends an update, merging into a directly preceding one: the API rejects adjacent updates. */
-function pushConfigurationUpdate(messages: ResponseInput, effort: string): void {
-	const last = messages.at(-1) as { type?: string; reasoning?: { effort?: string } } | undefined;
-	if (last?.type === "configuration_update" && last.reasoning) {
-		last.reasoning.effort = effort;
-		return;
-	}
-	// Not yet in the OpenAI SDK types.
-	messages.push({ type: "configuration_update", reasoning: { effort } } as unknown as ResponseInputItem);
+	/**
+	 * Effort for the reply being generated. When set, the thinking level is sent as
+	 * configuration_update items instead of a changing reasoning.effort, which would invalidate the
+	 * prompt cache. Each item sets the effort from that point on: one goes before every earlier
+	 * reply with the level recorded on it (`providerThinkingLevel`), and one with this effort goes
+	 * at the end. Earlier input therefore never changes. OpenAI documents the item before user
+	 * messages only. After tool results it was verified on gpt-6-luna (October 2026) to be accepted
+	 * and to apply to the next reply.
+	 */
+	configurationUpdateEffort?: string;
 }
 
 export interface ConvertResponsesToolsOptions {
@@ -268,10 +225,14 @@ export function convertResponsesMessages<TApi extends Api>(
 		} satisfies ResponseToolSearchOutputItemParam);
 	};
 	const includeInitialSystemMessage = options?.includeSystemPrompt ?? true;
+	const pushConfigurationUpdate = (effort: string): void => {
+		messages.push({
+			type: "configuration_update",
+			reasoning: { effort: effort as NonNullable<ResponseConfigurationUpdateItemParam.Reasoning["effort"]> },
+		} satisfies ResponseConfigurationUpdateItemParam);
+	};
 	const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 	const instructionRole = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
-
-	let effectiveEffort = options?.midConvoEffort?.baseline;
 
 	let msgIndex = 0;
 	let sourceIndex = 0;
@@ -386,14 +347,14 @@ export function convertResponsesMessages<TApi extends Api>(
 					}
 				}
 			}
-			const level = assistantMsg.providerThinkingLevel;
-			if (effectiveEffort !== undefined && isSameModel && typeof level === "string" && level !== effectiveEffort) {
-				// Replay the update where it was sent: right before the response it configured.
-				// Emit it even when the response converts to nothing, so later items keep their positions.
-				pushConfigurationUpdate(messages, level);
-				effectiveEffort = level;
-			}
 			if (output.length === 0) continue;
+			if (
+				options?.configurationUpdateEffort !== undefined &&
+				isSameModel &&
+				msg.providerThinkingLevel !== undefined
+			) {
+				pushConfigurationUpdate(msg.providerThinkingLevel);
+			}
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
 			const [callId] = msg.toolCallId.split("|");
@@ -415,11 +376,7 @@ export function convertResponsesMessages<TApi extends Api>(
 		}
 		if (!isLeadingSystemMessage) msgIndex++;
 	}
-
-	const activeEffort = options?.midConvoEffort?.active;
-	if (activeEffort !== undefined && activeEffort !== effectiveEffort) {
-		pushConfigurationUpdate(messages, activeEffort);
-	}
+	if (options?.configurationUpdateEffort !== undefined) pushConfigurationUpdate(options.configurationUpdateEffort);
 
 	return messages;
 }
@@ -784,7 +741,7 @@ export async function processResponsesStream<TApi extends Api>(
 				slot?.type === "toolCall" &&
 				slot.block.partialJson !== undefined
 			) {
-				slot.block.arguments = parseStreamingJson(item.arguments || slot.block.partialJson || "{}");
+				Object.assign(slot.block, parseToolCallArguments(item.arguments || slot.block.partialJson));
 				if (item.namespace !== undefined) slot.block.namespace = item.namespace;
 				// Finalize in-place and strip the scratch buffer so replay only
 				// carries parsed arguments.

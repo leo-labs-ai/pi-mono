@@ -2,7 +2,7 @@
 
 /**
  * Validates lockstep versions for published packages, then synchronizes
- * internal dependency versions in all workspace packages, including private ones.
+ * exact internal dependency versions in all workspace packages, including private ones.
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -10,26 +10,6 @@ import { join } from "node:path";
 import { findPackageDirectories, isVendoredUpstreamPackage } from "./package-workspaces.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
-
-/**
- * Point a specifier at `version` without changing how wide it is.
- *
- * The two paths that bump this repo disagree otherwise. Changesets — the path
- * releases actually take — maintains exact pins on the fork-owned packages,
- * while rewriting everything to `^` here widens them behind its back, so
- * running `npm run version:*` produces a diff that reverses the last release
- * commit. Widening is also not free: `^` on a package whose version is not the
- * fork's resolves to whatever gets published next, which is the same failure
- * `isVendoredUpstreamPackage` already exists to prevent.
- *
- * Returns null for anything that is not a plain `[^~]?<semver>` range —
- * `workspace:*`, `npm:` aliases, `>=`/`||` unions — because there is no
- * single version those can be retargeted to without changing their meaning.
- */
-function retargetSpecifier(currentSpecifier, version) {
-	const match = /^([\^~]?)\d+\.\d+\.\d+(?:[-+][-0-9A-Za-z.]+)?$/.exec(currentSpecifier);
-	return match ? `${match[1]}${version}` : null;
-}
 
 const packageRoot = process.argv[2] ?? "packages";
 const workspacePackages = findPackageDirectories(packageRoot)
@@ -64,7 +44,7 @@ console.log("\nAll non-private packages are at the same version (lockstep).");
 let totalUpdates = 0;
 const updatedPackages = new Set();
 for (const pkg of workspacePackages) {
-	for (const dependencyType of ["dependencies", "devDependencies"]) {
+	for (const dependencyType of ["dependencies", "devDependencies", "optionalDependencies"]) {
 		const dependencies = pkg.data[dependencyType];
 		if (!dependencies) {
 			continue;
@@ -73,15 +53,14 @@ for (const pkg of workspacePackages) {
 		for (const [dependencyName, currentSpecifier] of Object.entries(dependencies)) {
 			// Registry aliases such as `npm:@earendil-works/pi-ai@0.1.2` are never workspace-linked,
 			// so lockstep bumping them would point at a version that is not published yet.
-			const version = versionMap.get(dependencyName);
-			const newSpecifier = version ? retargetSpecifier(currentSpecifier, version) : null;
+			const newSpecifier = versionMap.get(dependencyName);
 			if (!newSpecifier || currentSpecifier === newSpecifier) {
 				continue;
 			}
 
 			console.log(`\n${pkg.data.name}:`);
 			console.log(
-				`  ${dependencyName}: ${currentSpecifier} → ${newSpecifier}${dependencyType === "devDependencies" ? " (devDependencies)" : ""}`,
+				`  ${dependencyName}: ${currentSpecifier} → ${newSpecifier}${dependencyType === "dependencies" ? "" : ` (${dependencyType})`}`,
 			);
 			dependencies[dependencyName] = newSpecifier;
 			updatedPackages.add(pkg);
