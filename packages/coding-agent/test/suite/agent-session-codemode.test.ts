@@ -561,26 +561,38 @@ describe("codemode options and store", () => {
 
 	// #10678: joining the text items was quadratic, about 10 s for the 100000-item limit. A fixed
 	// wall-clock bound on the whole tool call flaked on loaded machines, so time only the join and
-	// compare how it grows: 4x the items takes about 4x the time when linear, and at least 16x when
-	// quadratic (the old join measured 50x or more here because each copy also churns the heap). The
-	// bound of 16x leaves room for timer and GC noise on small timings. Each size keeps its fastest
-	// of five runs, which filters out one-off stalls without retrying the assertion.
+	// compare how it grows. For 4x the items a linear join takes about 4x the time. A quadratic one
+	// approaches 16x as the size grows; with fixed overhead it stays below 16x, so the bound sits
+	// at 12x. The old join measured 128x or more here because each copy also churns the heap.
+	// The two sizes are timed in alternation so a slow period affects both. Each small sample times
+	// four joins so it is not dominated by timer resolution. Each size keeps its fastest of seven
+	// samples, which filters out one-off stalls without retrying the assertion. A large sample
+	// over one second already shows the regression, so sampling stops there to stay inside the
+	// test timeout.
 	it("joins text items in linear time", () => {
-		const fastestJoin = (count: number): number => {
-			const items = Array.from({ length: count }, (_, index) => ({ type: "text" as const, text: `item ${index}` }));
-			let fastest = Number.POSITIVE_INFINITY;
-			for (let attempt = 0; attempt < 5; attempt++) {
-				const startedAt = performance.now();
-				const joined = joinAdjacentText(items);
-				fastest = Math.min(fastest, performance.now() - startedAt);
-				expect(joined).toHaveLength(1);
-			}
-			return fastest;
+		const textItems = (count: number) =>
+			Array.from({ length: count }, (_, index) => ({ type: "text" as const, text: `item ${index}` }));
+		const timeJoin = (items: ReturnType<typeof textItems>): number => {
+			const startedAt = performance.now();
+			const joined = joinAdjacentText(items);
+			const elapsed = performance.now() - startedAt;
+			expect(joined).toHaveLength(1);
+			return elapsed;
 		};
-		fastestJoin(1_000); // warm up the JIT so the first measured size is not penalized
-		const small = fastestJoin(10_000);
-		const large = fastestJoin(40_000);
-		expect(large / small).toBeLessThan(16);
+		const smallItems = textItems(10_000);
+		const largeItems = textItems(40_000);
+		timeJoin(textItems(1_000)); // warm up the JIT so the first measured size is not penalized
+		let small = Number.POSITIVE_INFINITY;
+		let large = Number.POSITIVE_INFINITY;
+		for (let attempt = 0; attempt < 7; attempt++) {
+			let smallSample = 0;
+			for (let repeat = 0; repeat < 4; repeat++) smallSample += timeJoin(smallItems);
+			small = Math.min(small, smallSample / 4);
+			const largeSample = timeJoin(largeItems);
+			large = Math.min(large, largeSample);
+			if (largeSample > 1000) break;
+		}
+		expect(large / small).toBeLessThan(12);
 	});
 
 	it("resolves bash calls to structured results, also for non-zero exit codes", async () => {
