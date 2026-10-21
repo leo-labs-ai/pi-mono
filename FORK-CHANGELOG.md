@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Fixed
+
+- **Moonshot Kimi K3 pricing is pinned to the official rates** (input 3, output 15, cache read 0.3, cache write 0). models.dev started reporting `cache_write: 3`, which broke the Kimi K3 pricing test on every branch.
+
 ### Changed
 
 - **Dependency bumps: `shell-quote` 1.12.0 and `undici` 8.12.2 (6.29.1 under `@earendil-works/gondolin`).** `@leo-labs-ai/pi-coding-agent` pins `undici` 8.12.2. Root `overrides` set `shell-quote` to 1.12.0 and gondolin's nested `undici` to 6.29.1. Lockfile and `packages/coding-agent/install-lock` regenerated.
