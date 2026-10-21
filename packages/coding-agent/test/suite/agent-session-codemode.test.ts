@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
 import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
-import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
+import { joinAdjacentText, readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
 	CODEMODE_DOCS_PATH,
@@ -551,16 +551,36 @@ describe("codemode options and store", () => {
 		expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
 	});
 
-	// #10678: joining the text items was quadratic, about 10 s here for the item limit.
-	it("formats output at the item limit in linear time", async () => {
+	it("formats output at the item limit", async () => {
 		const harness = await setup();
-		const startedAt = performance.now();
 		const result = await run(harness, 'for (let i = 0; i < 100000; i++) text("");');
-		const elapsed = performance.now() - startedAt;
 		rmSync((result.details as unknown as CodemodeToolDetails).fullOutputPath ?? "", { force: true });
 		expect(result.isError).toBe(false);
 		expect(resultText(result)).toContain("==> text 100000/100000 <==");
-		expect(elapsed).toBeLessThan(5000);
+	});
+
+	// #10678: joining the text items was quadratic, about 10 s for the 100000-item limit. A fixed
+	// wall-clock bound on the whole tool call flaked on loaded machines, so time only the join and
+	// compare how it grows: 4x the items takes about 4x the time when linear, and at least 16x when
+	// quadratic (the old join measured 50x or more here because each copy also churns the heap). The
+	// bound of 16x leaves room for timer and GC noise on small timings. Each size keeps its fastest
+	// of five runs, which filters out one-off stalls without retrying the assertion.
+	it("joins text items in linear time", () => {
+		const fastestJoin = (count: number): number => {
+			const items = Array.from({ length: count }, (_, index) => ({ type: "text" as const, text: `item ${index}` }));
+			let fastest = Number.POSITIVE_INFINITY;
+			for (let attempt = 0; attempt < 5; attempt++) {
+				const startedAt = performance.now();
+				const joined = joinAdjacentText(items);
+				fastest = Math.min(fastest, performance.now() - startedAt);
+				expect(joined).toHaveLength(1);
+			}
+			return fastest;
+		};
+		fastestJoin(1_000); // warm up the JIT so the first measured size is not penalized
+		const small = fastestJoin(10_000);
+		const large = fastestJoin(40_000);
+		expect(large / small).toBeLessThan(16);
 	});
 
 	it("resolves bash calls to structured results, also for non-zero exit codes", async () => {
