@@ -19,7 +19,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
 import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
-import { readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
+import { joinAdjacentText, readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
 	CODEMODE_DOCS_PATH,
@@ -551,16 +551,48 @@ describe("codemode options and store", () => {
 		expect((small.details as unknown as CodemodeToolDetails).fullOutputPath).toBeUndefined();
 	});
 
-	// #10678: joining the text items was quadratic, about 10 s here for the item limit.
-	it("formats output at the item limit in linear time", async () => {
+	it("formats output at the item limit", async () => {
 		const harness = await setup();
-		const startedAt = performance.now();
 		const result = await run(harness, 'for (let i = 0; i < 100000; i++) text("");');
-		const elapsed = performance.now() - startedAt;
 		rmSync((result.details as unknown as CodemodeToolDetails).fullOutputPath ?? "", { force: true });
 		expect(result.isError).toBe(false);
 		expect(resultText(result)).toContain("==> text 100000/100000 <==");
-		expect(elapsed).toBeLessThan(5000);
+	});
+
+	// #10678: joining the text items was quadratic, about 10 s for the 100000-item limit. A fixed
+	// wall-clock bound on the whole tool call flaked on loaded machines, so time only the join and
+	// compare how it grows. For 4x the items a linear join takes about 4x the time. A quadratic one
+	// approaches 16x as the size grows; with fixed overhead it stays below 16x, so the bound sits
+	// at 12x. The old join measured 128x or more here because each copy also churns the heap.
+	// The two sizes are timed in alternation so a slow period affects both. Each small sample times
+	// four joins so it is not dominated by timer resolution. Each size keeps its fastest of seven
+	// samples, which filters out one-off stalls without retrying the assertion. A large sample
+	// over one second already shows the regression, so sampling stops there to stay inside the
+	// test timeout.
+	it("joins text items in linear time", () => {
+		const textItems = (count: number) =>
+			Array.from({ length: count }, (_, index) => ({ type: "text" as const, text: `item ${index}` }));
+		const timeJoin = (items: ReturnType<typeof textItems>): number => {
+			const startedAt = performance.now();
+			const joined = joinAdjacentText(items);
+			const elapsed = performance.now() - startedAt;
+			expect(joined).toHaveLength(1);
+			return elapsed;
+		};
+		const smallItems = textItems(10_000);
+		const largeItems = textItems(40_000);
+		timeJoin(textItems(1_000)); // warm up the JIT so the first measured size is not penalized
+		let small = Number.POSITIVE_INFINITY;
+		let large = Number.POSITIVE_INFINITY;
+		for (let attempt = 0; attempt < 7; attempt++) {
+			let smallSample = 0;
+			for (let repeat = 0; repeat < 4; repeat++) smallSample += timeJoin(smallItems);
+			small = Math.min(small, smallSample / 4);
+			const largeSample = timeJoin(largeItems);
+			large = Math.min(large, largeSample);
+			if (largeSample > 1000) break;
+		}
+		expect(large / small).toBeLessThan(12);
 	});
 
 	it("resolves bash calls to structured results, also for non-zero exit codes", async () => {

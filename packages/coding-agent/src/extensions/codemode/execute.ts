@@ -293,7 +293,7 @@ function formatOutput(output: readonly CodemodeOutputItem[]): (TextContent | Ima
  * at the last non-empty part, not the joined text: reading the end of a growing concatenation makes
  * V8 copy it on every item, which is quadratic (#10678).
  */
-function joinAdjacentText(items: (TextContent | ImageContent)[]): (TextContent | ImageContent)[] {
+export function joinAdjacentText(items: (TextContent | ImageContent)[]): (TextContent | ImageContent)[] {
 	const joined: (TextContent | ImageContent)[] = [];
 	let parts: string[] = [];
 	let lastPart = "";
