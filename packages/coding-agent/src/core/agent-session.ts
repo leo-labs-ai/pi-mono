@@ -789,7 +789,11 @@ export class AgentSession {
 		const tools = this.agent.state.tools.map(toToolDeclaration);
 		if (!current && tools.length === 0) return null;
 
-		const { toolsAdded: _previousTools, toolsRemoved: _previousRemovals, ...system } = current ?? {
+		const {
+			toolsAdded: _previousTools,
+			toolsRemoved: _previousRemovals,
+			...system
+		} = current ?? {
 			role: "system" as const,
 			content: "",
 			timestamp: Date.now(),

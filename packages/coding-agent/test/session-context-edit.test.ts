@@ -1,4 +1,4 @@
-import { getCurrentTools, type AssistantMessage, type ToolResultMessage } from "@leo-labs-ai/pi-ai";
+import { type AssistantMessage, getCurrentTools, type ToolResultMessage } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_COMPACTION_SETTINGS,

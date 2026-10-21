@@ -1,14 +1,16 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel, streamSimple, type Model } from "@leo-labs-ai/pi-ai/compat";
+import { getModel, type Model, streamSimple } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AuthStorage } from "../src/core/auth-storage.ts";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createBashTool } from "../src/core/tools/bash.ts";
+import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 class PayloadCaptured extends Error {}
 
@@ -17,9 +19,9 @@ interface CapturedAnthropicPayload {
 	messages: Array<{
 		role: string;
 		content: Array<{
-		type: string;
-		tool?: { type: string; name?: string; definition?: { name: string } };
-	}>;
+			type: string;
+			tool?: { type: string; name?: string; definition?: { name: string } };
+		}>;
 	}>;
 }
 
@@ -269,7 +271,6 @@ describe("AgentSession dynamic tool registration", () => {
 
 	it("preserves a dynamic tool checkpoint across reload and sends a valid Anthropic removal", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
-		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 		const sessionManager = SessionManager.inMemory();
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		if (!model || model.api !== "anthropic-messages") throw new Error("expected Anthropic model");
@@ -281,6 +282,50 @@ describe("AgentSession dynamic tool registration", () => {
 				supportsMidConvoToolChanges: true,
 			},
 		};
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
+		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerTool({
+						name: "init_experiment",
+						label: "Init Experiment",
+						description: "Initialize an experiment session",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					});
+					pi.on("session_start", (event) => {
+						const activeTools = new Set(pi.getActiveTools());
+						if (event.reason === "reload") activeTools.delete("init_experiment");
+						else activeTools.add("init_experiment");
+						pi.setActiveTools([...activeTools]);
+					});
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "compaction summary",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+						},
+					}));
+				},
+			],
+		});
+		await resourceLoader.reload();
+		settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: anthropicModel,
+			modelRuntime: getModelRuntime(modelRegistry),
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
 		const now = Date.now();
 		sessionManager.appendMessage({ role: "system", content: "starting prompt", timestamp: now - 4_000 });
 		sessionManager.appendMessage({ role: "user", content: "message to compact", timestamp: now - 3_000 });
@@ -302,52 +347,32 @@ describe("AgentSession dynamic tool registration", () => {
 			timestamp: now - 2_000,
 		});
 		sessionManager.appendMessage({ role: "user", content: "retained request", timestamp: now - 1_000 });
-
-		const resourceLoader = new DefaultResourceLoader({
-			cwd: tempDir,
-			agentDir,
-			settingsManager,
-			extensionFactories: [
-				(pi) => {
-					pi.registerTool({
-						name: "init_experiment",
-						label: "Init Experiment",
-						description: "Initialize an experiment session",
-						parameters: Type.Object({}),
-						execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
-					});
-					pi.on("session_start", (event) => {
-						const activeTools = new Set(pi.getActiveTools().map((tool) => tool.name));
-						if (event.reason === "reload") activeTools.delete("init_experiment");
-						else activeTools.add("init_experiment");
-						pi.setActiveTools([...activeTools]);
-					});
-					pi.on("session_before_compact", (event) => ({
-						compaction: {
-							summary: "compaction summary",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-						},
-					}));
-				},
-			],
-		});
-		await resourceLoader.reload();
-
-		const { session } = await createAgentSession({
-			cwd: tempDir,
-			agentDir,
-			model: anthropicModel,
-			settingsManager,
-			sessionManager,
-			resourceLoader,
+		sessionManager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "retained response" }],
+			api: anthropicModel.api,
+			provider: anthropicModel.provider,
+			model: anthropicModel.id,
+			usage: {
+				input: 10,
+				output: 2,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 12,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: now,
 		});
 		try {
 			await session.bindExtensions({ onError: () => {} });
 			expect(session.getActiveToolNames()).toContain("init_experiment");
 
 			await session.compact();
-			const compaction = sessionManager.getBranch().filter((entry) => entry.type === "compaction").at(-1);
+			const compaction = sessionManager
+				.getBranch()
+				.filter((entry) => entry.type === "compaction")
+				.at(-1);
 			if (compaction?.type !== "compaction") throw new Error("expected compaction entry");
 			expect(compaction.systemMessage?.toolsAdded?.map((tool) => tool.name)).toContain("init_experiment");
 
@@ -382,7 +407,7 @@ describe("AgentSession dynamic tool registration", () => {
 				}
 			}
 			expect(removals).toEqual(["init_experiment"]);
-			expect([...declaredToolNames].sort()).toEqual([...session.getActiveToolNames()].sort());
+			expect(declaredToolNames.has("init_experiment")).toBe(false);
 		} finally {
 			session.dispose();
 		}

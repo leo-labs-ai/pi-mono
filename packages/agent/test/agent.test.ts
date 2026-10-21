@@ -249,11 +249,11 @@ describe("Agent", () => {
 					...context.messages.flatMap((message) =>
 						message.role === "system"
 							? [
-								{
-									added: (message.toolsAdded ?? []).map((entry) => entry.name),
-									removed: (message.toolsRemoved ?? []).map((entry) => entry.name),
-								},
-							]
+									{
+										added: (message.toolsAdded ?? []).map((entry) => entry.name),
+										removed: (message.toolsRemoved ?? []).map((entry) => entry.name),
+									},
+								]
 							: [],
 					),
 				);
