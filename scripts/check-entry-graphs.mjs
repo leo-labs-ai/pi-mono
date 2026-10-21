@@ -21,12 +21,17 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE = {
 	"@earendil-works/chord": "packages/chord/src",
 	"@earendil-works/pi-ai": "packages/ai/src",
+	"@leo-labs-ai/pi-ai": "packages/ai/src",
 	"@earendil-works/pi-durable": "packages/durable/src",
+	"@leo-labs-ai/pi-durable": "packages/durable/src",
 	"@earendil-works/pi-agent-core": "packages/agent/src",
+	"@leo-labs-ai/pi-agent-core": "packages/agent/src",
 	"@earendil-works/pi-codemode": "packages/codemode/src",
 	"@earendil-works/pi-telemetry": "packages/telemetry/src",
+	"@leo-labs-ai/pi-telemetry": "packages/telemetry/src",
 	"@earendil-works/pi-mcp": "packages/mcp/src",
 	"@earendil-works/pi-tui": "packages/tui/src",
+	"@leo-labs-ai/pi-tui": "packages/tui/src",
 };
 
 /**
@@ -41,12 +46,35 @@ const BUDGETS = {
 		},
 		"./utils/*": { maxFiles: 3, forbid: ["providers/", "api/", "index.ts"] },
 	},
+	"packages/codemode": {
+		// Node and Bun users never load the Cloudflare entry, which imports the `cloudflare:workers` built-in.
+		".": { maxFiles: 12, forbid: ["codemode/src/cloudflare.ts"] },
+		// Runtimes without Node built-ins (Workers, browsers) import these; neither may reach the worker-thread host
+		// or the file-based wasm loader.
+		"./portable": {
+			maxFiles: 8,
+			forbid: ["codemode/src/index.ts", "runtime/host.ts", "runtime/worker.ts", "codemode/src/wasm.ts"],
+		},
+		"./cloudflare": {
+			maxFiles: 9,
+			forbid: ["codemode/src/index.ts", "runtime/host.ts", "runtime/worker.ts", "codemode/src/wasm.ts"],
+		},
+	},
 	"packages/durable": {
 		".": {
-			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility.
-			maxFiles: 62,
-			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts"],
+			// Tool argument validation reaches TypeBox; provider-session creation reaches pi-ai's lean UUID utility; the
+			// memory and SQLite storages share scan order and cursor handling. Values from Chord's root (copyJson,
+			// replicatedState) reach its host runtime through the root barrel.
+			maxFiles: 66,
+			forbid: [
+				"packages/ai/src/index.ts",
+				"packages/ai/src/utils/typebox-helpers.ts",
+				// Photon (WebAssembly) loads only through `./images`.
+				"packages/durable/src/images/",
+			],
 		},
+		// The file tools reach their environment helpers and the Harness definitions they need, not the Harness itself.
+		"./tools": { maxFiles: 17, forbid: ["packages/durable/src/images/"] },
 	},
 };
 

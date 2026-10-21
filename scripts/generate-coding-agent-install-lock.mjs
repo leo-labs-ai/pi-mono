@@ -16,7 +16,6 @@ const internalPackageNames = new Set(["@earendil-works/chord", "@earendil-works/
 const installPackageName = "@leo-labs-ai/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
-	["esbuild@0.28.2", "postinstall selects and verifies the platform-specific esbuild binary"],
 	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
 	["koffi@2.16.2", "fork keeps koffi optionalDependency for Windows VT input (Shift+Tab); install scripts build the native addon"],
 ]);
@@ -360,12 +359,6 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 				);
 			}
 		}
-	}
-
-	const platformPackageCount = Object.values(installLock.packages).filter((entry) => entry.os || entry.cpu || entry.libc)
-		.length;
-	if (platformPackageCount === 0) {
-		errors.push("no platform-specific optional dependency entries found");
 	}
 
 	if (errors.length > 0) {
