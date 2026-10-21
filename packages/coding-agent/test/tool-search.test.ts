@@ -45,6 +45,33 @@ describe("Bm25Ranker", () => {
 		expect(ranker.rank("closed", documents, 8).map((match) => match.name)).toEqual(["mcp__github__list_issues"]);
 	});
 
+	it("scores terms most MCP tools share only from the tool name", () => {
+		const cua = { name: "mcp__cua_driver", instructions: "Read results back. No shell; read files elsewhere." };
+		const documents = [
+			createToolSearchDocument(tool("mcp__cua_driver__page", "Page text, with consent."), cua),
+			createToolSearchDocument(tool("mcp__cua_driver__clipboard_read", "Clipboard contents."), cua),
+			createToolSearchDocument(tool("mcp__cua_driver__get_window_state", "Window state."), cua),
+			createToolSearchDocument(tool("mcp__cua_driver__launch_app", "Launch an app."), cua),
+			createToolSearchDocument(tool("mcp__cua_driver__set_value", "Set a value."), cua),
+			createToolSearchDocument(tool("notes", "Read a file from the shell.")),
+		];
+		const names = (query: string) => new Bm25Ranker().rank(query, documents, 8).map((match) => match.name);
+		// "read", "file" and "shell" are in every document: only names and non-MCP tools match them.
+		expect(names("read file shell").sort()).toEqual(["mcp__cua_driver__clipboard_read", "notes"]);
+		expect(names("window state")).toEqual(["mcp__cua_driver__get_window_state"]);
+		// A rare description word still loads the MCP tool.
+		expect(names("consent")).toEqual(["mcp__cua_driver__page"]);
+	});
+
+	it("keeps description matches in small catalogs", () => {
+		const documents = [
+			tool("mcp__x__capture", "Take a screenshot of the window."),
+			tool("mcp__x__snap", "Screenshot one region."),
+		].map((entry) => createToolSearchDocument(entry));
+		const names = new Bm25Ranker().rank("screenshot", documents, 8).map((match) => match.name);
+		expect(names.sort()).toEqual(["mcp__x__capture", "mcp__x__snap"]);
+	});
+
 	it("returns nothing for unknown or empty queries", () => {
 		const ranker = new Bm25Ranker();
 		expect(ranker.rank("kubernetes", documents, 8)).toEqual([]);

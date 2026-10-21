@@ -4,7 +4,7 @@ import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import type { SystemMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionFactory } from "../../src/core/extensions/types.ts";
 import type { SessionManager } from "../../src/core/session-manager.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
@@ -120,6 +120,12 @@ function createFakeServer(
 describe("AgentSession MCP integration", () => {
 	const harnesses: Harness[] = [];
 
+	// Release run 38889114702 lost the first dynamic import of runtime.ts against
+	// vi.waitFor's 1s default. Load it once so later waits hit the module cache.
+	beforeAll(async () => {
+		await import("../../src/extensions/mcp/runtime.ts");
+	}, 30_000);
+
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
@@ -200,8 +206,9 @@ describe("AgentSession MCP integration", () => {
 		});
 		// The first prompt waits only for servers with direct tools; wait for the others here.
 		if (waitForTools) {
-			await vi.waitFor(() =>
-				expect(harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+			await vi.waitFor(
+				() => expect(harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+				{ timeout: 15_000 },
 			);
 		}
 		return { harness, calls, servers, notifications };
