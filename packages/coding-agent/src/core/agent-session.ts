@@ -31,7 +31,7 @@ import {
 	runToolCall,
 	type ThinkingLevel,
 } from "@leo-labs-ai/pi-agent-core";
-import { contentText, getCurrentSystemMessage, retryDelayMs } from "@leo-labs-ai/pi-ai";
+import { contentText, getCurrentSystemMessage, retryDelayMs, toToolDeclaration } from "@leo-labs-ai/pi-ai";
 import type {
 	AssistantMessage,
 	AuthResult,
@@ -783,6 +783,24 @@ export class AgentSession {
 		);
 	}
 
+	// Active tools can change before their transcript delta is written; checkpoint the live loadout.
+	private _getCompactionSystemMessage(manager: SessionManager): SystemMessage | null {
+		const current = getCurrentSystemMessage(manager.buildSessionProjection().messages);
+		const tools = this.agent.state.tools.map(toToolDeclaration);
+		if (!current && tools.length === 0) return null;
+
+		const {
+			toolsAdded: _previousTools,
+			toolsRemoved: _previousRemovals,
+			...system
+		} = current ?? {
+			role: "system" as const,
+			content: "",
+			timestamp: Date.now(),
+		};
+		return { ...system, ...(tools.length > 0 ? { toolsAdded: tools } : {}) };
+	}
+
 	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
 		const projection = this.sessionManager.buildSessionProjection();
 		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
@@ -986,6 +1004,7 @@ export class AgentSession {
 						draft.details,
 						true,
 						draft.usage,
+						this._getCompactionSystemMessage(manager),
 					);
 					break;
 				}
@@ -2902,7 +2921,15 @@ export class AgentSession {
 				throw new Error("Compaction cancelled");
 			}
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				usage,
+				this._getCompactionSystemMessage(this.sessionManager),
+			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);
@@ -3232,7 +3259,15 @@ export class AgentSession {
 			}
 			abortController.signal.throwIfAborted();
 
-			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this.sessionManager.appendCompaction(
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+				fromExtension,
+				usage,
+				this._getCompactionSystemMessage(this.sessionManager),
+			);
 			const newEntries = this.sessionManager.getEntries();
 			this._refreshFinalizedContext();
 			const estimatedTokensAfter = estimateMessagesTokens(this.sessionManager.buildSessionProjection().messages);

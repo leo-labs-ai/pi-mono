@@ -223,6 +223,57 @@ describe("Agent", () => {
 		expect(initial.toolsAdded?.[0]).not.toHaveProperty("execute");
 	});
 
+	it("replays removed tool declarations after a transcript reload", async () => {
+		const tool = createTool("init_experiment");
+		const original = new Agent({
+			initialState: { tools: [tool] },
+			streamFn: () => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+
+		await original.prompt("activate tool");
+		original.state.tools = [];
+		await original.prompt("remove tool");
+
+		const persistedMessages = JSON.parse(JSON.stringify(original.state.messages)) as typeof original.state.messages;
+		const requests: Array<{ added: string[]; removed: string[] }> = [];
+		const resumed = new Agent({
+			initialState: { messages: persistedMessages },
+			streamFn: (_model, context) => {
+				requests.push(
+					...context.messages.flatMap((message) =>
+						message.role === "system"
+							? [
+									{
+										added: (message.toolsAdded ?? []).map((entry) => entry.name),
+										removed: (message.toolsRemoved ?? []).map((entry) => entry.name),
+									},
+								]
+							: [],
+					),
+				);
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+				});
+				return stream;
+			},
+		});
+
+		await resumed.prompt("after reload");
+
+		expect(requests).toEqual([
+			{ added: ["init_experiment"], removed: [] },
+			{ added: [], removed: ["init_experiment"] },
+		]);
+		expect(getCurrentSystemMessage(resumed.state.messages)?.toolsAdded).toBeUndefined();
+	});
+
 	it("merges tool changes into a pending system message", async () => {
 		const tool: AgentTool = {
 			name: "echo",
