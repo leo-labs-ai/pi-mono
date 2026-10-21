@@ -360,8 +360,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		// (later lines submitted mid-turn) and is not a supported driving pattern.
 		// This matches Claude Code's paste handling.
 		if (!this.pasteMode && this.buffer.length === 0 && !str.includes(ESC)) {
-			const core = str.replace(/^[\r\n]+|[\r\n]+$/g, "");
-			if (/[\r\n]/.test(core)) {
+			// Require at least two lines with printable text, so typed text plus
+			// Enter and control keys ("y\r\x03") stays keyboard input.
+			const textLines = str.split(/[\r\n]+/).filter((line) => /[^\x00-\x1f\x7f]/.test(line));
+			if (textLines.length >= 2) {
 				this.pendingKittyPrintableCodepoint = undefined;
 				this.emit("paste", str);
 				return;

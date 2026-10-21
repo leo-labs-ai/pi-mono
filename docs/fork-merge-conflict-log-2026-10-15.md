@@ -19,6 +19,7 @@ Worktree: `pii-sync-130`, branch `lue/pii-sync-130`. Status: merge committed 202
 | adapt (behaviour) | Per-model opt-in `supportsMidConvoEffort` mapped onto `configurationUpdateEffort`, request effort fixed to `medium`; ported to `openai-codex-responses` |
 | adapt (schema) | Fork-only compat fields added to `compat-schema.ts` |
 | preserve | slash-means-provider (re-grafted onto the new resolver), cwd omission, cache-safe compaction, `modelVisible`, `_projectedHiddenDeclarations`, fork-only `model-api-support.ts` drift check, Codex gateway guards, realpath dedupe of context files |
+| adapt (tui) | Upstream's legacy Alt recovery (`stdin-buffer.ts`) re-feeds the tail of a timed-out control string, e.g. `x\r\x03\x04`. The fork's unbracketed-paste heuristic treated any chunk with an inner newline as a paste and swallowed it. The heuristic now requires at least two lines containing printable text, so text plus Enter plus control keys stays keystrokes while multi-line pastes still paste. Fork test `editor-highlighter.test.ts` now asserts upstream's fake-cursor APC markers (`renderFakeCursor`) instead of `\x1b[7m`. |
 | supersede (tests) | Fork-only `packages/ai/test/anthropic-error-tool-result-image.test.ts` deleted with #584. `packages/coding-agent/schemas/models.schema.json` regenerated (`npm run generate:schemas`). |
 | supersede | #584 omit images in errored tool results (replaced by upstream #10794); fork `midConvoEffort` machinery |
 | reject | `build-binaries.yml` `publish-npm`/`env-daemons` jobs (remote mutation the fork does not run) |
