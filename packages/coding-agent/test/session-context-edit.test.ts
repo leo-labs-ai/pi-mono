@@ -1,4 +1,4 @@
-import type { AssistantMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai";
+import { type AssistantMessage, getCurrentTools, type ToolResultMessage } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import {
 	DEFAULT_COMPACTION_SETTINGS,
@@ -143,6 +143,60 @@ describe("session context edits", () => {
 				.buildSessionProjection()
 				.messages.map((message) => ("summary" in message ? message.summary : text(message as { content: string }))),
 		).toEqual(["exact handoff", "after"]);
+	});
+
+	it("recovers a tool checkpoint from legacy compactions before replaying later deltas", () => {
+		const session = SessionManager.inMemory();
+		const tool = {
+			name: "init_experiment",
+			description: "Experiment tool",
+			parameters: { type: "object", properties: {} },
+		};
+		session.appendMessage({ role: "system", content: "prompt", toolsAdded: [tool], timestamp: 1 });
+		const firstKeptEntryId = session.appendMessage({ role: "user", content: "kept request", timestamp: 2 });
+		const compactionId = session.appendCompaction("legacy summary", firstKeptEntryId, 100);
+		const compaction = session.getEntry(compactionId);
+		if (compaction?.type !== "compaction") throw new Error("expected compaction entry");
+		delete compaction.systemMessage;
+		session.appendMessage({
+			role: "system",
+			content: "",
+			toolsRemoved: [{ name: tool.name }],
+			timestamp: 3,
+		});
+
+		const messages = session.buildSessionProjection().messages;
+		expect(messages[0]).toMatchObject({ role: "system", toolsAdded: [tool] });
+		expect(
+			messages.some((message) => message.role === "system" && message.toolsRemoved?.[0]?.name === tool.name),
+		).toBe(true);
+		expect(getCurrentTools(messages)).toEqual([]);
+	});
+
+	it("compaction replaces earlier tool deltas with the current system state", () => {
+		const session = SessionManager.inMemory();
+		const tool = {
+			name: "init_experiment",
+			description: "Experiment tool",
+			parameters: { type: "object", properties: {} },
+		};
+		session.appendMessage({ role: "system", content: "prompt", toolsAdded: [tool], timestamp: 1 });
+		const firstKeptEntryId = session.appendMessage({ role: "user", content: "kept request", timestamp: 2 });
+		session.appendMessage({
+			role: "system",
+			content: "",
+			toolsRemoved: [{ name: tool.name }],
+			timestamp: 3,
+		});
+		session.appendMessage({ role: "user", content: "next request", timestamp: 4 });
+
+		session.appendCompaction("summary", firstKeptEntryId, 100);
+
+		const messages = session.buildSessionProjection().messages;
+		expect(messages[0]).toMatchObject({ role: "system" });
+		if (messages[0]?.role !== "system") throw new Error("expected compaction system message");
+		expect(messages[0].toolsAdded).toBeUndefined();
+		expect(messages.some((message) => message.role === "system" && message.toolsRemoved?.length)).toBe(false);
 	});
 
 	it("applies post-compaction edits to retained pre-compaction entries", () => {

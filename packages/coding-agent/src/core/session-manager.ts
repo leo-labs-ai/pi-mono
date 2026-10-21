@@ -555,25 +555,36 @@ export function buildSessionProjection(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionProjection {
-	const path = buildSessionPath(entries, leafId, byId);
+	const entryIndex = buildEntryIndex(entries, byId);
+	const path = buildSessionPath(entries, leafId, entryIndex);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
-	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const contextEntries = buildContextEntries(entries, leafId, entryIndex);
 	const edits = new Map<string, ContextEditEntry>();
 	for (const entry of contextEntries) {
 		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
 	}
-	const projectedEntries = contextEntries.map(
-		(sourceEntry, index): ProjectedSessionEntry => ({
-			sourceEntry,
-			// buildContextEntries() may retain an older compaction entry because its
-			// raw ID lies inside the newest retained range. Only the newest compaction
-			// at index zero contributes a checkpoint and summary.
-			messages:
-				sourceEntry.type === "compaction" && index > 0
-					? []
-					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
-		}),
-	);
+	const projectedEntries = contextEntries.map((sourceEntry, index): ProjectedSessionEntry => {
+		// buildContextEntries() may retain an older compaction entry because its
+		// raw ID lies inside the newest retained range. Only the newest compaction
+		// at index zero contributes a checkpoint and summary.
+		if (sourceEntry.type === "compaction" && index > 0) return { sourceEntry, messages: [] };
+
+		const messages = projectContextEntry(sourceEntry, edits.get(sourceEntry.id));
+		// Older session files predate compaction system checkpoints. Recover the tool/prompt
+		// state at that boundary so later deltas remain valid after reload.
+		if (sourceEntry.type === "compaction" && index === 0 && !sourceEntry.systemMessage && sourceEntry.parentId) {
+			const previousMessages = buildSessionProjection(entries, sourceEntry.parentId, entryIndex).messages;
+			const systemMessage = getCurrentSystemMessage(previousMessages);
+			if (systemMessage) {
+				const timestamp = Date.parse(sourceEntry.timestamp);
+				messages.unshift({
+					...systemMessage,
+					timestamp: Number.isFinite(timestamp) ? timestamp : systemMessage.timestamp,
+				});
+			}
+		}
+		return { sourceEntry, messages };
+	});
 	return {
 		entries: projectedEntries,
 		messages: projectedEntries.flatMap((entry) => entry.messages),
@@ -1275,9 +1286,13 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		systemMessageOverride?: SystemMessage | null,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const systemMessage =
+			systemMessageOverride === undefined
+				? getCurrentSystemMessage(this.buildSessionProjection().messages)
+				: (systemMessageOverride ?? undefined);
 		const id = generateId(this.byId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",

@@ -1213,6 +1213,7 @@ function buildParams(
 		compat.allowEmptySignature,
 		effortMessages ? model.provider : undefined,
 		nativeToolChanges ? convertToolDefinitions : undefined,
+		nativeToolChanges ? initialTools : [],
 	);
 	const activeEffort = options?.effort ?? "high";
 	const betaFeatures = getBetaFeatures(model, context, isOAuthToken, nativeToolChanges, options);
@@ -1358,8 +1359,10 @@ function convertMessages(
 	managedProvider?: string,
 	/** Converts tool definitions for native `tool_addition` blocks; undefined when tool changes are not native. */
 	convertToolDefinitions?: (tools: Tool[]) => BetaTool[],
+	initialTools: readonly Tool[] = [],
 ): ConvertedAnthropicMessages {
 	const params: MessageParam[] = [];
+	const declaredToolNames = new Set(initialTools.map((tool) => tool.name));
 	const assistantLevels = new Map<number, AnthropicEffort>();
 	// Later system messages are held back and emitted directly before the next assistant
 	// message (or at the end of the transcript). Anthropic requires `tool_result` blocks to
@@ -1386,15 +1389,17 @@ function convertMessages(
 				const redefined = new Set(added.map((tool) => tool.name));
 				for (const tool of msg.toolsRemoved ?? []) {
 					// A new definition under the same name replaces the old one, so no removal is needed.
-					if (redefined.has(tool.name)) continue;
+					if (redefined.has(tool.name) || !declaredToolNames.has(tool.name)) continue;
 					blocks.push({
 						type: "tool_removal",
 						tool: { type: "tool_reference", name: isOAuthToken ? toClaudeCodeName(tool.name) : tool.name },
 					});
+					declaredToolNames.delete(tool.name);
 				}
 				for (const definition of convertToolDefinitions(added)) {
 					blocks.push({ type: "tool_addition", tool: { type: "tool_definition", definition } });
 				}
+				for (const tool of added) declaredToolNames.add(tool.name);
 			}
 			if (blocks.length > 0) pendingSystemMessages.push({ role: "system", content: blocks });
 		} else if (msg.role === "user") {

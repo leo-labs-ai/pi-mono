@@ -140,6 +140,43 @@ describe("transcript system messages", () => {
 		expect(initial.tools?.map((tool) => tool.name)).toEqual(["base_tool", "__pi_deferred_placeholder__"]);
 	});
 
+	test("skips undeclared removals and tracks inline tool changes", async () => {
+		const payload = await capturePayload<AnthropicPayload>(anthropicNativeModel, {
+			messages: [
+				{ role: "system", content: "base prompt", toolsAdded: [baseTool], timestamp: 0 },
+				{ role: "user", content: "before", timestamp: 1 },
+				{
+					role: "system",
+					content: "",
+					toolsRemoved: [{ name: "undeclared_tool" }, { name: "base_tool" }],
+					toolsAdded: [lateTool],
+					timestamp: 2,
+				},
+				{ role: "user", content: "after addition", timestamp: 3 },
+				{
+					role: "system",
+					content: "",
+					toolsRemoved: [{ name: "base_tool" }, { name: "late_tool" }, { name: "undeclared_tool" }],
+					timestamp: 4,
+				},
+			],
+		});
+
+		expect(payload.messages.slice(-2)).toMatchObject([
+			{
+				role: "system",
+				content: [
+					{ type: "tool_removal", tool: { type: "tool_reference", name: "base_tool" } },
+					{
+						type: "tool_addition",
+						tool: { type: "tool_definition", definition: { name: "late_tool" } },
+					},
+				],
+			},
+			{ role: "system", content: [{ type: "tool_removal", tool: { type: "tool_reference", name: "late_tool" } }] },
+		]);
+	});
+
 	test("redefines an Anthropic tool by value under the same name", async () => {
 		const redefinedTool = { ...baseTool, description: "changed" };
 		const payload = await capturePayload<AnthropicPayload>(anthropicNativeModel, {
