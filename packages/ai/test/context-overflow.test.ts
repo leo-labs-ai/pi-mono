@@ -30,9 +30,11 @@ const LOREM_IPSUM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Se
 
 // Generate a string that will exceed the context window
 // Using chars/4 as token estimate (works better with varied text than repeated chars)
-function generateOverflowContent(contextWindow: number): string {
+// charsPerToken defaults to a deliberately generous 6 (chars/4 estimate x 1.5 margin).
+// Pass a measured ratio for providers whose quota is charged on input tokens.
+function generateOverflowContent(contextWindow: number, charsPerToken = 4 * 1.5): string {
 	const targetTokens = contextWindow + 10000; // Exceed by 10k tokens
-	const targetChars = targetTokens * 4 * 1.5;
+	const targetChars = targetTokens * charsPerToken;
 	const repetitions = Math.ceil(targetChars / LOREM_IPSUM.length);
 	return LOREM_IPSUM.repeat(repetitions);
 }
@@ -48,8 +50,8 @@ interface OverflowResult {
 	response: AssistantMessage;
 }
 
-async function testContextOverflow(model: Model<any>, apiKey: string): Promise<OverflowResult> {
-	const overflowContent = generateOverflowContent(model.contextWindow);
+async function testContextOverflow(model: Model<any>, apiKey: string, charsPerToken?: number): Promise<OverflowResult> {
+	const overflowContent = generateOverflowContent(model.contextWindow, charsPerToken);
 
 	const context: Context = {
 		systemPrompt: "You are a helpful assistant.",
@@ -76,6 +78,11 @@ async function testContextOverflow(model: Model<any>, apiKey: string): Promise<O
 		hasUsageData,
 		response,
 	};
+}
+
+// Google's per-minute quota error: HTTP 429 with status RESOURCE_EXHAUSTED.
+function isGeminiQuotaExhausted(errorMessage: string | undefined): boolean {
+	return !!errorMessage && /RESOURCE_EXHAUSTED/.test(errorMessage) && /\b429\b/.test(errorMessage);
 }
 
 function logResult(result: OverflowResult) {
@@ -203,10 +210,22 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google", () => {
-		it("gemini-2.5-flash - should detect overflow via isContextOverflow", async () => {
+		it("gemini-2.5-flash - should detect overflow via isContextOverflow", async (ctx) => {
 			const model = getModel("google", "gemini-2.5-flash");
-			const result = await testContextOverflow(model, process.env.GEMINI_API_KEY!);
+			// Gemini counts this lorem text at ~5.31 chars/token (countTokens API). Rejected
+			// overflow requests still consume the per-minute input-token quota (3M on paid
+			// tier 2), so the generic 6 chars/token margin (~1.2M tokens/request) made
+			// back-to-back runs hit 429 RESOURCE_EXHAUSTED. 5.5 sends ~1.1M tokens: still
+			// ~40k over the 1,048,576 window, with less quota per run.
+			const result = await testContextOverflow(model, process.env.GEMINI_API_KEY!, 5.5);
 			logResult(result);
+
+			if (isGeminiQuotaExhausted(result.errorMessage)) {
+				// Transient provider quota, not an overflow answer. The detector must still
+				// refuse to call it an overflow; then report the run as skipped, not passed.
+				expect(isContextOverflow(result.response, model.contextWindow)).toBe(false);
+				ctx.skip("Gemini returned 429 RESOURCE_EXHAUSTED (input-token quota); overflow not exercised");
+			}
 
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toMatch(/input token count.*exceeds the maximum/i);
