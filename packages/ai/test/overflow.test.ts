@@ -30,6 +30,32 @@ function createErrorMessage(errorMessage: string, provider = "ollama"): Assistan
 }
 
 describe("isContextOverflow", () => {
+	// Captured from gemini-2.5-flash (2026-10) when the live context-overflow test exhausted the
+	// per-minute input-token quota. It names "input_token_count" and "exceeded" but is a 429, not
+	// an overflow; treating it as one would compact a session that only needs to wait.
+	it("does not treat Gemini 429 RESOURCE_EXHAUSTED input-token quota as overflow", () => {
+		const errorMessage = JSON.stringify({
+			error: {
+				message: JSON.stringify({
+					error: {
+						code: 429,
+						message:
+							"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_2_input_token_count, limit: 3000000, model: gemini-2.5-flash\nPlease retry in 27.636918293s.",
+						status: "RESOURCE_EXHAUSTED",
+					},
+				}),
+				code: 429,
+				status: "",
+			},
+		});
+		expect(isContextOverflow(createErrorMessage(errorMessage, "google"), 1048576)).toBe(false);
+	});
+
+	it("detects the current Gemini overflow message, which no longer includes the token count", () => {
+		const errorMessage = "The input token count exceeds the maximum number of tokens allowed (1048576).";
+		expect(isContextOverflow(createErrorMessage(errorMessage, "google"), 1048576)).toBe(true);
+	});
+
 	// The 413 pattern is provider-agnostic, so a single Copilot-prefixed string and a single
 	// non-Copilot string cover both branches of the regex; the bare forms cover the raw SDK output.
 	it.each([
