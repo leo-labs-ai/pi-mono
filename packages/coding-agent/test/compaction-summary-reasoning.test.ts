@@ -107,7 +107,7 @@ describe("generateSummary reasoning options", () => {
 		vi.unstubAllEnvs();
 	});
 
-	it("uses the provided thinking level for reasoning-capable models", async () => {
+	it("does not enable thinking for reasoning-capable models, whatever the session level", async () => {
 		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
@@ -124,10 +124,8 @@ describe("generateSummary reasoning options", () => {
 		expect(result.usage).toEqual(mockSummaryResponse.usage);
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			reasoning: "medium",
-			apiKey: "test-key",
-		});
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ apiKey: "test-key" });
+		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
 	it("preserves the string result from generateSummary", async () => {
@@ -402,6 +400,35 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
 	});
 
+	it("runs both summaries without thinking at xhigh with a nearly full context", async () => {
+		// Thinking counts inside max_tokens. At xhigh on a ~196k/200k session the summarizer spent its
+		// whole output cap on thinking and compaction failed with a length stop.
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 196000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
+		};
+
+		await compact(
+			preparation,
+			createModel(true, 64000, { forceAdaptiveThinking: true }),
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			"xhigh",
+		);
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+		for (const call of completeSimpleMock.mock.calls) {
+			expect(call[2]).not.toHaveProperty("reasoning");
+		}
+	});
+
 	it("sets no compaction-specific output cap, so thinking cannot starve the summary", async () => {
 		// reserveTokens only moves the trigger. It used to cap output at 0.8 × 32000 = 25600 (and the
 		// turn prefix at 16000), which thinking at the session level could exhaust before the
@@ -428,7 +455,7 @@ describe("generateSummary reasoning options", () => {
 
 		const options = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(options.map((o) => o?.maxTokens)).toEqual([undefined, undefined]);
-		expect(options.map((o) => o?.reasoning)).toEqual(["high", "high"]);
+		expect(options.map((o) => o?.reasoning)).toEqual([undefined, undefined]);
 		expect(result.summary).toContain("Test summary");
 	});
 
