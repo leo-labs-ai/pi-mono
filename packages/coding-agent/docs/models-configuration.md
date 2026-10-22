@@ -146,6 +146,7 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 |---|---|---|---|
 | `supportsDeveloperRole` | boolean | `true` | Whether the provider supports the developer role instead of system. |
 | `supportsMidConvoSystemMessages` | boolean | `false` | Whether the exact model accepts developer or system messages after the conversation has started. When false, later system messages are folded into the leading system message. The generated catalog enables this for verified models. |
+| `sendSessionAffinityHeaders` | boolean |  | Whether to also send the x-session-affinity header from options.sessionId. Gateways that route by replica affinity key off this header. Default: true for OpenRouter endpoints, false otherwise. |
 | `sessionAffinityFormat` | `"openai" \| "openai-nosession" \| "openrouter"` |  | Session-affinity header format. openai sends session_id and x-client-request-id; openai-nosession sends x-client-request-id; openrouter sends x-session-id. Does not affect prompt_cache_key. Default: auto-detected. |
 | `supportsLongCacheRetention` | boolean | `true` | Whether the provider supports long prompt cache retention. This uses prompt_cache_options.ttl: "30m" on GPT-5.6+ and prompt_cache_retention: "24h" on earlier models. |
 | `supportsStrictMode` | boolean |  | Whether the provider supports strict JSON-schema function tools. Defaults are API-specific; generated OpenAI models enable it explicitly. |
@@ -153,8 +154,11 @@ Also applies to `azure-openai-responses` and `openai-codex-responses`.
 | `supportsAdditionalTools` | boolean | `false` | Whether the model supports message-anchored additional_tools input items. |
 | `supportsToolSearch` | boolean | `false` | Whether the model supports client-executed tool search for transcript-anchored additions. |
 | `supportsExplicitPromptCacheMode` | boolean | `false` | Whether the model accepts prompt_cache_options. Older OpenAI models reject the parameter. |
-| `supportsMidConvoEffort` | boolean | `false` | Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Only used by the openai-responses API, and ignored with Sign in with ChatGPT on the openai provider. |
+| `supportsMidConvoEffort` | boolean | `false` | Whether thinking level changes are sent as configuration_update input items instead of changing reasoning.effort, so a change keeps the prompt cache. Used by the openai-responses and openai-codex-responses APIs, and ignored with Sign in with ChatGPT on the openai provider. |
 | `supportsMaxOutputTokens` | boolean | `true` | Whether the provider accepts max_output_tokens. Some Codex-protocol gateways reject it. |
+| `sendChatgptAccountId` | boolean | `true` | Whether to derive and send the ChatGPT account header (Codex Responses only). Opaque gateway credentials carry no account claim. |
+| `supportsWebSocketTransport` | boolean | `true` | Whether the endpoint accepts the Codex WebSocket transport (Codex Responses only). |
+| `supportsZstdRequestCompression` | boolean |  | Whether SSE request bodies may use Content-Encoding: zstd (Codex Responses only). Defaults to true on the official ChatGPT Codex backend and false for any other base URL. |
 
 ### `anthropic-messages`
 
