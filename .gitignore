@@ -45,6 +45,7 @@ plans/
 .pi/workspaces/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/settings.json
 collect.sh
 .repowise/
 .mcp.json

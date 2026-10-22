@@ -6,6 +6,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Upstream sync 1.4.0
+
+- **Merges upstream Pi `v1.4.0`** (from `v1.3.0`). Fork scope `@leo-labs-ai/pi-*` and fork-only cache-safe compaction are kept; `compaction.ts` adopts upstream's optional reserve and custom-instruction summaries. `provider-attribution.ts` is gone (moved into pi-ai upstream). `packages/ai/model-catalog.snapshot.json` holds upstream's pinned 1.4.0 catalog plus the fork's Kimi K3 `cacheWrite: 3` override.
+- **Resume restores the tool loadout from compaction checkpoints.** `_restoreToolsFromTranscript` replays the session projection, so a loadout checkpointed at compaction wins over earlier raw declarations.
+
 ### Upstream sync 1.3.0
 
 - **Merges upstream Pi `v1.3.0`** (from the integrated `v1.0.4`). Upstream removed the `client`, `server`, `protocol` and inherited `experimental` code; the fork follows. `durable` stays. Fork-owned packages keep `@leo-labs-ai/pi-*` names and now use upstream's exact-version pinning in `sync-versions` (#10865); vendored `@earendil-works/*` packages keep their pins. Details: `docs/fork-merge-conflict-log-2026-10-15.md`.

@@ -8,6 +8,7 @@ type Live = { message?: string; items: string[]; nested: { count: number }; othe
 
 let liveInitCount = 0;
 const LiveDoc = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 1,
 	scope: "conversation",
@@ -20,6 +21,7 @@ const LiveDoc = defineDoc<Live>({
 });
 
 const RewindableLiveDoc = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 1,
 	scope: "conversation",
@@ -29,6 +31,7 @@ const RewindableLiveDoc = defineDoc<Live>({
 });
 
 const LiveDocV2 = defineDoc<Live>({
+	checkpointWhen: () => false,
 	kind: "test.live",
 	version: 2,
 	scope: "conversation",
@@ -39,6 +42,7 @@ const LiveDocV2 = defineDoc<Live>({
 
 type Counter = { count: number };
 const CounterDoc = defineDoc<Counter>({
+	checkpointWhen: () => false,
 	kind: "test.counter",
 	version: 1,
 	scope: "session",
@@ -48,6 +52,7 @@ const CounterDoc = defineDoc<Counter>({
 type Member = { seed: string; hits: number };
 const seeds: string[] = [];
 const MemberDoc = defineDocFamily<Member, string>({
+	checkpointWhen: () => false,
 	kind: "test.member",
 	version: 1,
 	family: true,
@@ -306,6 +311,7 @@ describe("Session document transactions", () => {
 		const { session, storage } = openTestSession();
 		let initialized = 0;
 		const LateDoc = defineDoc<Counter>({
+			checkpointWhen: () => false,
 			kind: "test.late",
 			version: 1,
 			scope: "session",
@@ -375,6 +381,7 @@ describe("Session document transactions", () => {
 		const { session, storage } = openTestSession();
 		const conversationId = await createConversation(session);
 		const DateDoc = defineDoc<JsonObject>({
+			checkpointWhen: () => false,
 			kind: "test.date",
 			version: 1,
 			scope: "session",
