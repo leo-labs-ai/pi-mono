@@ -116,7 +116,7 @@ jobs:
           # `npm ci --ignore-scripts` leaves without a dist/ as well.
           # Tolerant: skip packages absent from the PR head tree (e.g. protocol/
           # client/server removed by the v1.3.0 sync).
-          for p in chord tui telemetry codemode mcp ai durable env agent protocol client server; do
+          for p in telemetry chord tui codemode mcp ai durable env agent protocol client server; do
             if [ -f "packages/$p/package.json" ]; then
               npm --prefix "packages/$p" run build
             else
