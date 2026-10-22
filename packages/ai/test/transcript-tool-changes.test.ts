@@ -542,7 +542,10 @@ describe("transcript system messages", () => {
 		["synthetic tool search", { supportsToolSearch: true }],
 	] as const) {
 		// Regression for #616: a removed name can be loaded again without a new boundary.
-		test.each(["loaded_two", "base_tool"])(
+		// Upstream #10940 moves the top-level boundary when a removed tool is declared again, because Kimi K3
+		// ignores a removed tool that a later tool message declares. Synthetic tool search therefore cannot keep
+		// the request bytes for a reloaded base tool; the additional_tools transport has no top-level tools.
+		test.each(label === "synthetic tool search" ? ["loaded_two"] : ["loaded_two", "base_tool"])(
 			`keeps the request prefix after a removal (${label}, %s)`,
 			async (loadedName) => {
 				const model: Model<"openai-responses"> = {
@@ -591,7 +594,10 @@ describe("transcript system messages", () => {
 					Buffer.from(JSON.stringify(firstInput)),
 				);
 				// The top-level list is the tool set after the removal; later loads do not rewrite it.
-				expect(first.tools?.map((value) => value.name)).toEqual(["late_tool"]);
+				// additional_tools declares every tool in input items, so it has no top-level list.
+				expect(first.tools?.map((value) => value.name)).toEqual(
+					"supportsAdditionalTools" in toolCompat ? undefined : ["late_tool"],
+				);
 				expect(second.tools).toEqual(first.tools);
 				expect(second.input.slice(0, first.input.length)).toEqual(first.input);
 				const anchorType = "supportsAdditionalTools" in toolCompat ? "additional_tools" : "tool_search_output";
