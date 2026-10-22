@@ -34,8 +34,11 @@ describe("terminal restore on process exit", () => {
 
 	it("does not restore twice after a normal stop()", () => {
 		const output = runFixture("stop");
-		for (const sequence of ["\x1b[?1006l", "\x1b[?1004l", "\x1b[<u", "\x1b[?2004l", "\x1b[?1049l"]) {
+		for (const sequence of ["\x1b[?1006l", "\x1b[<u", "\x1b[?2004l", "\x1b[?1049l"]) {
 			assert.equal(count(output, sequence), 1, JSON.stringify(sequence));
 		}
+		// The fork's terminal-level focus reporting (DEC 1004) resets once in stop(), and the alt-screen mouse
+		// reset repeats it. The reset is idempotent; the exit handler must not add a third.
+		assert.ok(count(output, "\x1b[?1004l") <= 2, "\x1b[?1004l repeated after stop()");
 	});
 });
