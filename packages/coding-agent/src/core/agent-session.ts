@@ -1881,16 +1881,20 @@ export class AgentSession {
 	 */
 	private _restoreToolsFromTranscript(modifiers: readonly string[] = []): void {
 		this._pendingToolNames.clear();
-		// All system messages on the branch, including those before a compaction. Compaction snapshots
-		// are derived from these, so replaying them gives the current loadout.
-		const systemMessages = this.sessionManager
+		// All system messages on the branch, including those before a compaction.
+		const branchSystemMessages = this.sessionManager
 			.getBranch()
 			.flatMap((entry) => (entry.type === "message" && entry.message.role === "system" ? [entry.message] : []));
+		// The projection carries compaction checkpoints, which record the live loadout at compaction time
+		// and so override earlier raw declarations. Replay the projection, not the raw branch.
+		const projectedSystemMessages = this.sessionManager
+			.buildSessionProjection()
+			.messages.filter((message): message is SystemMessage => message.role === "system");
 		// No recorded loadout: keep the current tools.
-		if (systemMessages.length === 0) return;
-		// Tools the branch ever added or removed. Removed tools stay inactive.
+		if (branchSystemMessages.length === 0 && projectedSystemMessages.length === 0) return;
+		// Tools the branch or a checkpoint ever added or removed. Removed tools stay inactive.
 		const mentioned = new Set(
-			systemMessages
+			[...branchSystemMessages, ...projectedSystemMessages]
 				.flatMap((message) => [...(message.toolsAdded ?? []), ...(message.toolsRemoved ?? [])])
 				.map((tool) => tool.name),
 		);
@@ -1902,7 +1906,7 @@ export class AgentSession {
 		);
 		// The recorded loadout plus the new tools, with `--tools +name`/`-name` applied.
 		const names = applyToolModifiers(
-			[...getCurrentTools(systemMessages).map((tool) => tool.name), ...newTools],
+			[...getCurrentTools(projectedSystemMessages).map((tool) => tool.name), ...newTools],
 			modifiers,
 		);
 		// Recorded tools that are not registered yet, such as MCP tools of servers still connecting, are

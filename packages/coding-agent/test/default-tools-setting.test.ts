@@ -382,6 +382,21 @@ describe("defaultTools setting", () => {
 			session.dispose();
 		});
 
+		it("restores the live loadout a compaction checkpointed over earlier raw declarations", async () => {
+			// The raw branch declares read, grep and active_tool, but the live loadout at compaction time was read only.
+			const sessionManager = createRecordedSession(["read", "grep", "active_tool"]);
+			const kept = sessionManager.appendMessage({ role: "user", content: "hi", timestamp: Date.now() });
+			sessionManager.appendCompaction("summary", kept, 1000, undefined, undefined, undefined, {
+				role: "system",
+				content: "",
+				toolsAdded: toolReferences(["read"]),
+				timestamp: Date.now(),
+			});
+			const session = await resume(sessionManager);
+			expect(session.getActiveToolNames()).toEqual(["read"]);
+			session.dispose();
+		});
+
 		// #11075
 		it("restores the target branch's loadout on tree navigation", async () => {
 			// The target branch never mentions active_tool, so it is active there. It removed grep.
