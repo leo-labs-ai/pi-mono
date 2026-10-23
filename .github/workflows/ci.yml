@@ -14,6 +14,7 @@ jobs:
   # and release.yml runs a subset after code has already landed. That gap let a
   # provider-transport regression sit on main with three red tests (see #467).
   unit-tests:
+    # Requires sudo/apt for native build dependencies; ARC runs non-root.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,6 +54,7 @@ jobs:
         run: ./test.sh
 
   fork-safety-check:
+    # Requires sudo/apt for native build dependencies; ARC runs non-root.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -136,7 +138,9 @@ jobs:
   # official conformance suite and fails on regressions against
   # packages/coding-agent/test/mcp-conformance/baseline.json.
   mcp-conformance:
-    runs-on: ubuntu-latest
+    # Public PR code stays hosted, including after a maintainer approves it.
+    # Only an explicit dispatch of main can use the repo-scoped ARC pool.
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && 'lue-pi-mono-arc' || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: read   # read published @leo-labs-ai/pi-* dependencies from GitHub Packages
