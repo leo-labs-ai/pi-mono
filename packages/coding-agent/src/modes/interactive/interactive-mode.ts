@@ -61,6 +61,7 @@ import {
 	detectInstallChange,
 	getAgentDir,
 	getAuthPath,
+	getCommandName,
 	getDebugLogPath,
 	getDocsPath,
 	VERSION,
@@ -345,7 +346,7 @@ export function formatResumeCommand(sessionManager: SessionManager): string | un
 	const sessionFile = sessionManager.getSessionFile();
 	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
 
-	const args = [APP_NAME];
+	const args = [getCommandName()];
 	if (!sessionManager.usesDefaultSessionDir()) {
 		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
 	}
@@ -2163,7 +2164,9 @@ export class InteractiveMode {
 	}
 
 	private crashReportInstructions(): string {
-		const resume = this.session.sessionFile ? `run \`${APP_NAME} -r\` to resume the session, then` : "start pi and";
+		const resume = this.session.sessionFile
+			? `run \`${getCommandName()} -r\` to resume the session, then`
+			: "start pi and";
 		return `To report this crash: ${resume} run /bug. The crash details are attached automatically.`;
 	}
 
@@ -4604,7 +4607,7 @@ export class InteractiveMode {
 	showNewVersionNotification(release: LatestPiRelease): void {
 		const updateInstruction = () =>
 			theme.fg("muted", `New version ${release.version} is available. Run `) +
-			theme.fg("accent", `${APP_NAME} update`);
+			theme.fg("accent", `${getCommandName()} update`);
 		const changelogUrl = "https://pi.dev/changelog";
 		const changelogLine = () => {
 			const changelogLink = getCapabilities().hyperlinks
@@ -4636,7 +4639,7 @@ export class InteractiveMode {
 	showPackageUpdateNotification(packages: string[]): void {
 		const updateInstruction = () =>
 			theme.fg("muted", "Package updates are available. Run ") +
-			theme.fg("accent", `${APP_NAME} update --extensions`);
+			theme.fg("accent", `${getCommandName()} update --extensions`);
 		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
 
 		this.chatContainer.addChild(new Spacer(1));
