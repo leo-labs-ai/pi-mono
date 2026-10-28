@@ -1438,6 +1438,61 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("copies the active selection on Cmd+C reported as super+c (Rex, #656)", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const copied: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			copyOnSelect: false,
+			copySelection: async (text) => {
+				copied.push(text);
+				return true;
+			},
+		});
+		tui.addChild(new Text("alpha\nbeta\ngamma\ndelta", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		// No selection: Cmd+C does nothing here.
+		terminal.sendInput("\x1b[99;9u");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, []);
+
+		terminal.sendInput("\x1b[<0;1;1M");
+		terminal.sendInput("\x1b[<32;4;2M");
+		terminal.sendInput("\x1b[<0;4;2m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(copied, []);
+
+		// Rex encodes Cmd+C with Kitty flags as a press plus a release event.
+		terminal.sendInput("\x1b[99;9u");
+		terminal.sendInput("\x1b[99;9:3u");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(copied, ["alpha\nbeta"]);
+		assert.ok(terminal.getViewport().some((line) => line.includes("Copied!")));
+
+		tui.stop();
+	});
+
+	it("disables mouse reporting before exit so pointer reports cannot leak into the shell (#656)", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+		const before = terminal.events.length;
+
+		tui.disableMouseReporting();
+		const written = terminal.events
+			.slice(before)
+			.filter((event) => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		for (const mode of ["1000", "1002", "1003", "1006"]) assert.ok(written.includes(`\x1b[?${mode}l`), mode);
+
+		tui.stop();
+	});
+
 	it("copies an active selection programmatically", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];
