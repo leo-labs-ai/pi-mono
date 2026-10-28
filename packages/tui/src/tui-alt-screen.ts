@@ -756,6 +756,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				return { consume: true };
 			}
 		}
+		// Mouse tracking makes the selection application-owned, so the terminal has nothing to copy on
+		// Cmd+C. Terminals that report super-modified keys (Kitty protocol) forward it here instead.
+		if (keybindings.matches(data, "tui.altScreen.copy") && this.hasActiveSelection()) {
+			if (!isRelease) void this.copyActiveSelectionToClipboard();
+			return { consume: true };
+		}
 		if (this.shouldDeferViewportInputToOverlay()) return undefined;
 		if (keybindings.matches(data, "tui.altScreen.pageUp")) {
 			if (!isRelease) {

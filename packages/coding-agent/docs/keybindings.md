@@ -116,6 +116,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
 | `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the transcript |
 | `tui.altScreen.bottom` | `ctrl+end` | Scroll to the transcript end and follow new output |
+| `tui.altScreen.copy` | `super+c` | Copy the active fullscreen selection (Cmd+C in terminals that report super keys, such as Rex, Kitty and Ghostty) |
 
 ### Application
 
