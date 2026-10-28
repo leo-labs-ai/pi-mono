@@ -1474,6 +1474,25 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("disables mouse reporting before exit so pointer reports cannot leak into the shell (#656)", async () => {
+		const terminal = new RecordingTerminal(20, 4);
+		const tui = new TuiAltScreen(terminal);
+		tui.addChild(new Text("alpha", 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+		const before = terminal.events.length;
+
+		tui.disableMouseReporting();
+		const written = terminal.events
+			.slice(before)
+			.filter((event) => event.type === "write")
+			.map((event) => event.data)
+			.join("");
+		for (const mode of ["1000", "1002", "1003", "1006"]) assert.ok(written.includes(`\x1b[?${mode}l`), mode);
+
+		tui.stop();
+	});
+
 	it("copies an active selection programmatically", async () => {
 		const terminal = new RecordingTerminal(20, 4);
 		const copied: string[] = [];

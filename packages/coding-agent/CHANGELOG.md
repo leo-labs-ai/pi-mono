@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: quitting fullscreen mode turns mouse reporting off before draining input. Before, pointer motion reports sent during the exit drain could leak into the parent shell as escape text ([#656](https://github.com/leo-labs-ai/pi-mono/issues/656)).
 - Fix: in fullscreen mode, Cmd+C copies the active selection in terminals that forward it as `super+c` (Rex, Kitty protocol). Fullscreen mouse tracking owns the selection, so the terminal had nothing to copy. The new `tui.altScreen.copy` binding defaults to `super+c` ([#656](https://github.com/leo-labs-ai/pi-mono/issues/656)).
 - Fix: compaction checkpoints include the live tool declarations, even before their activation delta is written to the transcript. Legacy compactions without a checkpoint recover one from the preceding session projection, so later tool deltas retain a valid starting state after reload.
 - Fix: a resumed session keeps the tools its transcript declares, such as tools `tool_search` loaded, instead of falling back to the `defaultTools` setting. An explicit `--tools` list still wins. The first prompt also waits, up to the MCP `startupWaitMs`, for MCP servers that own restored tools, so slow servers no longer lose them on `pi -p --continue`. Before, the first request after a resume declared a different tool set and busted the prompt cache ([my-pi#1816](https://github.com/leo-labs-ai/my-pi/issues/1816)).

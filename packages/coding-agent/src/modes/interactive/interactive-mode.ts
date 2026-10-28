@@ -4274,6 +4274,7 @@ export class InteractiveMode {
 			// the render loop is already idle, so this cannot hot-spin (see #4144).
 			await this.runtimeHost.dispose();
 			this.themeController.disableAutoSync();
+			if (this.ui instanceof TuiAltScreen) this.ui.disableMouseReporting();
 			await this.ui.terminal.drainInput(1000);
 			this.stop();
 			process.exit(0);
@@ -4285,6 +4286,7 @@ export class InteractiveMode {
 		// Drain any in-flight Kitty key release events before stopping.
 		// This prevents escape sequences from leaking to the parent shell over slow SSH.
 		this.themeController.disableAutoSync();
+		if (this.ui instanceof TuiAltScreen) this.ui.disableMouseReporting();
 		await this.ui.terminal.drainInput(1000);
 
 		this.stop();

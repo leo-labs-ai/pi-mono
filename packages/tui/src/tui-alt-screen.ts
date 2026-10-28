@@ -301,6 +301,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.copyOnSelect = enabled;
 	}
 
+	/**
+	 * Stop mouse reporting ahead of stop(). Call before draining input on exit: with any-motion
+	 * tracking (1003) the terminal keeps sending pointer reports during the drain, and reports in
+	 * flight when stop() restores cooked mode leak into the parent shell as text (#656).
+	 */
+	disableMouseReporting(): void {
+		if (!this.altScreenActive || !this.mouseEnabled) return;
+		this.terminal.write(DISABLE_MOUSE);
+	}
+
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
 	hasActiveSelection(): boolean {
 		return this.getActiveSelectionText() !== undefined;
