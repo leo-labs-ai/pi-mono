@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
-import type { AssistantMessage } from "@lue-labs/pi-ai";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import planModeExtension from "../examples/extensions/plan-mode/index.ts";
 import type { ExtensionAPI, ExtensionContext } from "../src/core/extensions/index.ts";
@@ -110,13 +110,13 @@ describe("plan-mode example extension", () => {
 
 		await runCommand("plan");
 
-		expect(activeTools()).toEqual(["read", "bash", "echo_tool", "grep", "Glob", "ls", "questionnaire"]);
+		expect(activeTools()).toEqual(["read", "bash", "echo_tool", "grep", "find", "ls", "questionnaire"]);
 		expect(setActiveTools).toHaveBeenLastCalledWith([
 			"read",
 			"bash",
 			"echo_tool",
 			"grep",
-			"Glob",
+			"find",
 			"ls",
 			"questionnaire",
 		]);

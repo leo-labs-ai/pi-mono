@@ -1,315 +1,211 @@
-import {
-	appendFileSync,
-	existsSync,
-	constants as fsConstants,
-	type Mode,
-	mkdirSync,
-	mkdtempSync,
-	type OpenMode,
-	type PathLike,
-	readFileSync,
-	rmSync,
-} from "node:fs";
+import type * as fs from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
-import { type SessionEntry, SessionManager } from "../../../src/core/session-manager.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SessionManager } from "../../../src/core/session-manager.ts";
 
-const fsInterleave = vi.hoisted(() => ({
-	existsSync: null as null | ((actual: typeof import("node:fs"), path: PathLike) => boolean),
-	openSync: null as
-		| null
-		| ((actual: typeof import("node:fs"), path: PathLike, flags: OpenMode, mode?: Mode) => number),
+const interleave = vi.hoisted(() => ({
+	beforeOpen: null as null | ((actual: typeof fs, path: fs.PathLike, flags: fs.OpenMode) => void),
+	beforeWrite: null as null | ((actual: typeof fs, file: fs.PathOrFileDescriptor) => void),
 }));
 
 vi.mock("fs", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("node:fs")>();
+	const actual = await importOriginal<typeof fs>();
 	return {
 		...actual,
-		existsSync: (path: PathLike) =>
-			fsInterleave.existsSync ? fsInterleave.existsSync(actual, path) : actual.existsSync(path),
-		openSync: (path: PathLike, flags: OpenMode, mode?: Mode) =>
-			fsInterleave.openSync
-				? fsInterleave.openSync(actual, path, flags, mode)
-				: passThroughOpen(actual, path, flags, mode),
+		openSync: (...args: Parameters<typeof fs.openSync>) => {
+			interleave.beforeOpen?.(actual, args[0], args[1]);
+			return actual.openSync(...args);
+		},
+		writeFileSync: (...args: Parameters<typeof fs.writeFileSync>) => {
+			interleave.beforeWrite?.(actual, args[0]);
+			return actual.writeFileSync(...args);
+		},
 	};
 });
 
-const assistant = {
-	role: "assistant" as const,
-	content: [{ type: "text" as const, text: "hi" }],
-	api: "anthropic-messages" as const,
-	provider: "anthropic",
-	model: "test",
-	usage: {
-		input: 1,
-		output: 1,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 2,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-	},
-	stopReason: "stop" as const,
-	timestamp: 2,
-};
-
-describe("regression #521: recreate a missing session directory between appends", () => {
+describe("regression #521: bounded recovery of missing session persistence", () => {
 	let tempDir: string | undefined;
 
 	afterEach(() => {
-		fsInterleave.existsSync = null;
-		fsInterleave.openSync = null;
+		interleave.beforeOpen = null;
+		interleave.beforeWrite = null;
 		vi.restoreAllMocks();
 		if (tempDir) rmSync(tempDir, { recursive: true, force: true });
 		tempDir = undefined;
 	});
 
-	function persistedSession(): SessionManager {
+	function createSession(): SessionManager {
 		tempDir = mkdtempSync(join(tmpdir(), "pi-521-"));
 		const cwd = join(tempDir, "project");
-		const sessionDir = join(tempDir, "sessions");
-		mkdirSync(cwd, { recursive: true });
-		return SessionManager.create(cwd, sessionDir);
+		mkdirSync(cwd);
+		return SessionManager.create(cwd, join(tempDir, "sessions"));
 	}
 
-	function silenceWarn(): MockInstance<(...args: unknown[]) => void> {
-		return vi.spyOn(console, "warn").mockImplementation(() => {});
+	function conversation(): SessionManager {
+		const session = createSession();
+		session.appendMessage({ role: "user", content: "keep this prompt", timestamp: 1 });
+		expect(session.isPersisted()).toBe(true);
+		return session;
 	}
 
-	function expectBoundedWarning(warn: MockInstance<(...args: unknown[]) => void>, sessionId: string): void {
-		expect(warn).toHaveBeenCalledTimes(1);
-		expect(warn).toHaveBeenCalledWith(`Warning: recreated missing session directory for session ${sessionId}`);
+	function expectConnected(session: SessionManager): void {
+		interleave.beforeOpen = null;
+		interleave.beforeWrite = null;
+		const reloaded = SessionManager.open(session.getSessionFile()!, session.getSessionDir());
+		expect(reloaded.getSessionId()).toBe(session.getSessionId());
+		expect(reloaded.getEntries()).toEqual(session.getEntries());
+		const ids = new Set(reloaded.getEntries().map((entry) => entry.id));
+		for (const entry of reloaded.getEntries()) {
+			if (entry.parentId !== null) expect(ids.has(entry.parentId)).toBe(true);
+		}
 	}
 
-	it("appends after the parent directory of a flushed session file is removed", () => {
-		const session = persistedSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-		session.appendMessage(assistant);
-		const assistantId = session.getLeafId();
-		const sessionFile = session.getSessionFile();
-		expect(sessionFile).toBeDefined();
-		expect(existsSync(sessionFile!)).toBe(true);
+	function restoreBeforeExclusiveCreate(session: SessionManager, bytes: string): void {
+		interleave.beforeOpen = (actual, path, flags) => {
+			if (path !== session.getSessionFile() || flags !== "wx") return;
+			interleave.beforeOpen = null;
+			actual.writeFileSync(path, bytes);
+		};
+	}
 
-		rmSync(session.getSessionDir(), { recursive: true, force: true });
-		expect(existsSync(session.getSessionDir())).toBe(false);
-
-		const warn = silenceWarn();
-		expect(() => session.appendCustomEntry("probe", { ok: true })).not.toThrow();
-
-		expect(existsSync(session.getSessionDir())).toBe(true);
-		expect(existsSync(sessionFile!)).toBe(true);
-		const text = readFileSync(sessionFile!, "utf8");
-		expect(text).toContain(`"id":"${session.getSessionId()}"`);
-		expect(text).toContain('"customType":"probe"');
-		expectBoundedWarning(warn, session.getSessionId());
-
-		const entries = expectReloadedChain(sessionFile!, session.getSessionDir(), session.getSessionId());
-		expect(entries.some((entry) => entry.type === "custom" && entry.parentId === assistantId)).toBe(true);
-
-		appendFileSync(
-			sessionFile!,
-			`${JSON.stringify({
-				type: "custom",
-				customType: "disk-only",
-				id: "disk-only",
-				parentId: assistantId,
-				timestamp: "2020-01-01T00:00:00.000Z",
-			})}\n`,
+	it("recovers all resident entries after directory loss and warns without leaking paths", () => {
+		const session = conversation();
+		const root = session.getLeafId()!;
+		session.appendCustomEntry("before", { keep: true });
+		session.branch(root);
+		session.appendCustomEntry("other-branch", { keep: true });
+		rmSync(session.getSessionDir(), { recursive: true });
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		session.appendCustomEntry("after", { keep: true });
+		expectConnected(session);
+		expect(warn).toHaveBeenCalledExactlyOnceWith(
+			`Warning: recreated missing session directory for session ${session.getSessionId()}`,
 		);
-		expect(() => session.appendCustomEntry("after", { ok: true })).not.toThrow();
-		const after = readFileSync(sessionFile!, "utf8");
-		expect(after).toContain('"id":"disk-only"');
-		expect(after).toContain('"customType":"after"');
+		expect(JSON.stringify(warn.mock.calls)).not.toContain(tempDir!);
+		session.appendCustomEntry("later", {});
+		expectConnected(session);
 		expect(warn).toHaveBeenCalledTimes(1);
 	});
 
-	it("creates the session file when the directory disappears before the first flush", () => {
-		const session = persistedSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-		const sessionFile = session.getSessionFile();
-		expect(sessionFile).toBeDefined();
-		expect(existsSync(sessionFile!)).toBe(false);
-
-		rmSync(session.getSessionDir(), { recursive: true, force: true });
-		const warn = silenceWarn();
-		expect(() => session.appendMessage(assistant)).not.toThrow();
-
-		expect(existsSync(sessionFile!)).toBe(true);
-		const text = readFileSync(sessionFile!, "utf8");
-		expect(text).toContain('"role":"user"');
-		expect(text).toContain('"role":"assistant"');
-		expectBoundedWarning(warn, session.getSessionId());
-
-		const entries = expectReloadedChain(sessionFile!, session.getSessionDir(), session.getSessionId());
-		expect(entries.map((entry) => (entry.type === "message" ? entry.message.role : entry.type))).toEqual([
-			"user",
-			"assistant",
-		]);
-	});
-
-	it("keeps a restored file when it appears before the recovery write", () => {
-		const session = persistedSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-		session.appendMessage(assistant);
-		const assistantId = session.getLeafId();
-		const sessionFile = session.getSessionFile()!;
-		const marker = `${JSON.stringify({
+	it("ordinary appends retain disk-only entries rather than rewriting resident history", () => {
+		const session = conversation();
+		const marker = JSON.stringify({
 			type: "custom",
-			customType: "durable-only",
-			data: { marker: "keep-restored-bytes" },
-			id: "durable-only-marker",
-			parentId: assistantId,
-			timestamp: "2020-01-01T00:00:00.000Z",
-		})}\n`;
-		appendFileSync(sessionFile, marker);
-		const original = readFileSync(sessionFile, "utf8");
-		expect(original).toContain("durable-only-marker");
-
-		rmSync(session.getSessionDir(), { recursive: true, force: true });
-		plantOnCreate(sessionFile, original);
-		const warn = silenceWarn();
-
-		expect(() => session.appendCustomEntry("probe", { ok: true })).not.toThrow();
-		stopInterleave();
-
-		const text = readFileSync(sessionFile, "utf8");
-		expect(text.startsWith(original)).toBe(true);
-		expect(text).toContain('"customType":"probe"');
-		expectBoundedWarning(warn, session.getSessionId());
-
-		const entries = expectReloadedChain(sessionFile, session.getSessionDir(), session.getSessionId());
-		expect(entries.some((entry) => entry.id === "durable-only-marker")).toBe(true);
-		expect(entries.filter((entry) => entry.parentId === assistantId).length).toBeGreaterThanOrEqual(2);
+			customType: "disk-only",
+			id: "disk-only",
+			parentId: session.getLeafId(),
+			timestamp: "2026-01-01T00:00:00.000Z",
+		});
+		appendFileSync(session.getSessionFile()!, `${marker}\n`);
+		const before = readFileSync(session.getSessionFile()!, "utf8");
+		session.appendCustomEntry("ordinary", {});
+		expect(readFileSync(session.getSessionFile()!, "utf8").startsWith(before)).toBe(true);
 	});
 
-	it("reloads a connected session when a restored file disappears before append", () => {
-		const session = persistedSession();
-		session.appendMessage({ role: "user", content: "hello-restored", timestamp: 1 });
-		session.appendMessage(assistant);
-		const assistantId = session.getLeafId();
-		const sessionFile = session.getSessionFile()!;
-		const original = readFileSync(sessionFile, "utf8");
-
-		rmSync(session.getSessionDir(), { recursive: true, force: true });
-		reportMissingFileAsPresent(sessionFile);
-		const interleave = plantOnCreate(sessionFile, original, { removeBeforeAppend: true });
-		const warn = silenceWarn();
-
-		expect(() => session.appendCustomEntry("probe", { ok: true })).not.toThrow();
-		expect(interleave.planted).toBe(true);
-		expect(interleave.removedBeforeAppend).toBe(true);
-		stopInterleave();
-
-		const text = readFileSync(sessionFile, "utf8");
-		const lines = text.trim().split("\n");
-		expect(lines.length).toBeGreaterThan(1);
-		expect(JSON.parse(lines[0]).type).toBe("session");
-		expect(JSON.parse(lines[0]).id).toBe(session.getSessionId());
-		expect(text).toContain("hello-restored");
-		expect(text).toContain('"customType":"probe"');
-		expectBoundedWarning(warn, session.getSessionId());
-
-		const entries = expectReloadedChain(sessionFile, session.getSessionDir(), session.getSessionId());
-		const user = entries.find((entry) => entry.type === "message" && entry.message.role === "user");
-		const probe = entries.find((entry) => entry.type === "custom");
-		expect(user?.parentId).toBeNull();
-		expect(entries.find((entry) => entry.id === assistantId)?.parentId).toBe(user?.id);
-		expect(probe?.parentId).toBe(assistantId);
+	it("propagates a non-missing-path error without entering recovery", () => {
+		const session = conversation();
+		const before = readFileSync(session.getSessionFile()!, "utf8");
+		interleave.beforeOpen = () => {
+			throw Object.assign(new Error("permission fixture"), { code: "EACCES" });
+		};
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		expect(() => session.appendCustomEntry("denied", {})).toThrow("permission fixture");
+		expect(readFileSync(session.getSessionFile()!, "utf8")).toBe(before);
+		expect(warn).not.toHaveBeenCalled();
 	});
 
-	it("leaves a restored file untouched when its session header does not match", () => {
-		const session = persistedSession();
-		session.appendMessage({ role: "user", content: "hello", timestamp: 1 });
-		session.appendMessage(assistant);
-		const sessionFile = session.getSessionFile()!;
-		const foreign = `${JSON.stringify({
-			type: "session",
-			version: 3,
-			id: "foreign-session-id",
-			timestamp: "2020-01-01T00:00:00.000Z",
-			cwd: "/tmp/elsewhere",
-		})}\n${JSON.stringify({
-			type: "custom",
-			customType: "keep",
-			id: "foreign-preserved",
-			parentId: null,
-			timestamp: "2020-01-01T00:00:00.000Z",
-		})}\n`;
+	it("preserves main's first-user-message flush after directory loss", () => {
+		const session = createSession();
+		session.appendCustomEntry("setup", {});
+		expect(existsSync(session.getSessionFile()!)).toBe(false);
+		rmSync(session.getSessionDir(), { recursive: true });
+		vi.spyOn(console, "warn").mockImplementation(() => {});
+		session.appendMessage({ role: "user", content: "first prompt", timestamp: 1 });
+		expectConnected(session);
+	});
 
-		rmSync(session.getSessionDir(), { recursive: true, force: true });
-		plantOnCreate(sessionFile, foreign);
-		const warn = silenceWarn();
+	it("recovers a missing file without requiring its directory to disappear", () => {
+		const session = conversation();
+		rmSync(session.getSessionFile()!);
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		session.appendCustomEntry("after-file-loss", {});
+		expectConnected(session);
+		expect(warn).not.toHaveBeenCalled();
+	});
 
-		expect(() => session.appendCustomEntry("probe", { ok: true })).toThrow(/restored file header does not match/);
-		stopInterleave();
+	it.each(["older-same-id", "complete-same-id", "foreign"])(
+		"refuses %s restoration collisions and keeps later appends from corrupting the backup",
+		(kind) => {
+			const session = conversation();
+			const older = readFileSync(session.getSessionFile()!, "utf8");
+			session.appendCustomEntry("resident-parent", {});
+			const complete = readFileSync(session.getSessionFile()!, "utf8");
+			const restored = kind === "older-same-id" ? older : kind === "complete-same-id" ? complete : "foreign bytes\n";
+			rmSync(session.getSessionDir(), { recursive: true });
+			restoreBeforeExclusiveCreate(session, restored);
+			vi.spyOn(console, "warn").mockImplementation(() => {});
+			expect(() => session.appendCustomEntry("refused", {})).toThrow(/EEXIST/);
+			expect(readFileSync(session.getSessionFile()!, "utf8")).toBe(restored);
+			expect(() => session.appendCustomEntry("also-refused", {})).toThrow(/EEXIST/);
+			expect(readFileSync(session.getSessionFile()!, "utf8")).toBe(restored);
+			// Once the conflicting file is removed, every resident entry is recovered,
+			// including parents from the failed calls rather than a disconnected tail.
+			rmSync(session.getSessionFile()!);
+			session.appendCustomEntry("recovered", {});
+			expectConnected(session);
+		},
+	);
 
-		expect(readFileSync(sessionFile, "utf8")).toBe(foreign);
-		expectBoundedWarning(warn, session.getSessionId());
-		expect(JSON.stringify(warn.mock.calls)).not.toContain(tempDir!);
-		expect(JSON.stringify(warn.mock.calls)).not.toContain(sessionFile);
+	it("keeps refusing a collision for an opened transcript without conversation messages", () => {
+		const original = createSession();
+		writeFileSync(original.getSessionFile()!, `${JSON.stringify(original.getHeader())}\n`);
+		const session = SessionManager.open(original.getSessionFile()!, original.getSessionDir());
+		const backup = readFileSync(session.getSessionFile()!, "utf8");
+		rmSync(session.getSessionFile()!);
+		restoreBeforeExclusiveCreate(session, backup);
+		expect(() => session.appendCustomEntry("refused", {})).toThrow(/EEXIST/);
+		expect(() => session.appendCustomEntry("also-refused", {})).toThrow(/EEXIST/);
+		expect(readFileSync(session.getSessionFile()!, "utf8")).toBe(backup);
+	});
+
+	it("detects unlink after opening the append descriptor and before writing", () => {
+		const session = conversation();
+		interleave.beforeWrite = (actual, file) => {
+			if (typeof file !== "number") return;
+			interleave.beforeWrite = null;
+			actual.rmSync(session.getSessionFile()!);
+		};
+		session.appendCustomEntry("racing-append", {});
+		expectConnected(session);
+	});
+
+	it("refuses replacement during an append without modifying the replacement", () => {
+		const session = conversation();
+		interleave.beforeWrite = (actual, file) => {
+			if (typeof file !== "number") return;
+			interleave.beforeWrite = null;
+			actual.rmSync(session.getSessionFile()!);
+			actual.writeFileSync(session.getSessionFile()!, "replacement\n");
+		};
+		expect(() => session.appendCustomEntry("racing-append", {})).toThrow(/EEXIST/);
+		expect(() => session.appendCustomEntry("later-append", {})).toThrow(/EEXIST/);
+		expect(readFileSync(session.getSessionFile()!, "utf8")).toBe("replacement\n");
+	});
+
+	it("bounds recovery when the exclusive replacement is also unlinked", () => {
+		const session = conversation();
+		rmSync(session.getSessionFile()!);
+		let writes = 0;
+		interleave.beforeWrite = (actual, file) => {
+			if (typeof file !== "number" || writes++ !== 0) return;
+			actual.rmSync(session.getSessionFile()!);
+		};
+		expect(() => session.appendCustomEntry("lost-recovery", {})).toThrow(/disappeared during persistence/);
+		expect(existsSync(session.getSessionFile()!)).toBe(false);
+		interleave.beforeWrite = null;
+		session.appendCustomEntry("recovered", {});
+		expectConnected(session);
 	});
 });
-
-function expectReloadedChain(sessionFile: string, sessionDir: string, sessionId: string): SessionEntry[] {
-	stopInterleave();
-	const reloaded = SessionManager.open(sessionFile, sessionDir);
-	expect(reloaded.getSessionId()).toBe(sessionId);
-	const entries = reloaded.getEntries();
-	const ids = new Set(entries.map((entry) => entry.id));
-	expect(entries.filter((entry) => entry.parentId === null)).toHaveLength(1);
-	for (const entry of entries) {
-		if (entry.parentId !== null) expect(ids.has(entry.parentId)).toBe(true);
-	}
-	return entries;
-}
-
-function stopInterleave(): void {
-	fsInterleave.existsSync = null;
-	fsInterleave.openSync = null;
-}
-
-function reportMissingFileAsPresent(sessionFile: string): void {
-	fsInterleave.existsSync = (actual, path) => {
-		if (path === sessionFile && !actual.existsSync(path)) return true;
-		return actual.existsSync(path);
-	};
-}
-
-/** Plant `bytes` immediately before the recovery create so a truncating "w" open destroys them and "wx" does not. */
-function plantOnCreate(
-	sessionFile: string,
-	bytes: string,
-	options?: { removeBeforeAppend?: boolean },
-): { planted: boolean; removedBeforeAppend: boolean } {
-	const observed = { planted: false, removedBeforeAppend: false };
-	let armedRemoval = false;
-	fsInterleave.openSync = (actual, path, flags, mode) => {
-		if (path === sessionFile && !observed.planted && (flags === "w" || flags === "wx")) {
-			observed.planted = true;
-			const fd = actual.openSync(path, "w");
-			try {
-				actual.writeFileSync(fd, bytes);
-			} finally {
-				actual.closeSync(fd);
-			}
-			armedRemoval = options?.removeBeforeAppend === true;
-		} else if (path === sessionFile && armedRemoval && isNonCreatingAppend(flags)) {
-			armedRemoval = false;
-			observed.removedBeforeAppend = true;
-			actual.rmSync(path, { force: true });
-		}
-		return passThroughOpen(actual, path, flags, mode);
-	};
-	return observed;
-}
-
-function isNonCreatingAppend(flags: OpenMode): boolean {
-	if (typeof flags === "number") {
-		return (flags & fsConstants.O_APPEND) !== 0 && (flags & fsConstants.O_CREAT) === 0;
-	}
-	return flags === "a" || flags === "a+";
-}
-
-function passThroughOpen(actual: typeof import("node:fs"), path: PathLike, flags: OpenMode, mode?: Mode): number {
-	return mode === undefined ? actual.openSync(path, flags) : actual.openSync(path, flags, mode);
-}

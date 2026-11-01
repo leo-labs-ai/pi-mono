@@ -1,11 +1,11 @@
-import type { StreamFn } from "@lue-labs/pi-agent-core";
+import type { StreamFn } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
 	type Model,
 	type SimpleStreamOptions,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import { generateBranchSummary } from "../src/core/compaction/index.ts";
 import type { SessionEntry } from "../src/core/session-manager.ts";
@@ -61,28 +61,7 @@ describe("branch summarization", () => {
 			streamFn,
 		});
 
-		expect(requestOptions?.maxTokens).toBe(4096);
 		expect(requestOptions?.toolChoice).toBeUndefined();
-	});
-
-	it("clamps the branch summary output cap to the model limit", async () => {
-		let requestOptions: SimpleStreamOptions | undefined;
-		const streamFn: StreamFn = (_model, _context, options) => {
-			requestOptions = options;
-			const stream = createAssistantMessageEventStream();
-			queueMicrotask(() =>
-				stream.push({ type: "done", reason: "stop", message: response([{ type: "text", text: "summary" }]) }),
-			);
-			return stream;
-		};
-
-		await generateBranchSummary(entries, {
-			model: { ...model, maxTokens: 1024 },
-			signal: new AbortController().signal,
-			streamFn,
-		});
-
-		expect(requestOptions?.maxTokens).toBe(1024);
 	});
 
 	it("rejects tool calls from branch summaries", async () => {

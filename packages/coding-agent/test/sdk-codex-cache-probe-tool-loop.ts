@@ -12,29 +12,28 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
-import { normalizeContext } from "@lue-labs/pi-ai";
+import { normalizeContext } from "@leo-labs-ai/pi-ai";
 import {
 	type Api,
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	type Context,
+	getModel,
 	type Model,
 	type SimpleStreamOptions,
 	Type,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import {
 	getOpenAICodexWebSocketDebugStats,
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../../ai/src/api/openai-codex-responses.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
-import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime } from "../src/core/extensions/loader.ts";
 import type { ToolDefinition } from "../src/core/extensions/types.ts";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 
 type Transport = "sse" | "websocket" | "websocket-cached" | "auto";
@@ -137,7 +136,7 @@ Options:
 
 Notes:
   - Uses createAgentSession() from the coding-agent SDK
-  - Provider/model fixed to openai-codex/gpt-5.5
+  - Provider/model fixed to openai-codex/gpt-6.1-sol
   - Thinking level fixed to low
   - Activates exactly one deterministic custom tool
   - Prompts are intentionally > 1024 tokens and explicitly describe the test
@@ -174,16 +173,8 @@ function buildPrompt(turn: number): string {
 }
 
 function createMinimalResourceLoader(systemPrompt: string): ResourceLoader {
-	const emptyExtensionsResult = {
-		extensions: [],
-		deferredExtensions: [],
-		errors: [],
-		eventBus: createEventBus(),
-		runtime: createExtensionRuntime(),
-	};
 	return {
-		getExtensions: () => emptyExtensionsResult,
-		getExtensionsForRunner: () => emptyExtensionsResult,
+		getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
 		getSkills: () => ({ skills: [], diagnostics: [] }),
 		getPrompts: () => ({ prompts: [], diagnostics: [] }),
 		getThemes: () => ({ themes: [], diagnostics: [] }),
@@ -290,7 +281,10 @@ async function main(): Promise<void> {
 	const authStorage = AuthStorage.create();
 	const modelRegistry = await createModelRegistry(authStorage);
 
-	const model = pickModel("openai-codex");
+	const model = getModel("openai-codex", "gpt-6.1-sol");
+	if (!model) {
+		throw new Error("Model openai-codex/gpt-6.1-sol not found");
+	}
 	const baseModel = { ...model, maxTokens: args.maxTokens };
 	const streamSimpleOpenAICodexResponsesForRegistry = (
 		registryModel: Model<Api>,
@@ -340,7 +334,7 @@ async function main(): Promise<void> {
 	const turnElapsedMs: number[] = [];
 	let previousCacheRead: number | null = null;
 
-	console.log(`provider openai-codex, model gpt-5.5`);
+	console.log(`provider openai-codex, model gpt-6.1-sol`);
 	console.log(`session ${session.sessionFile}`);
 	console.log(`turns ${args.turns}, transport ${args.transport}, reasoning low, maxTokens ${args.maxTokens}`);
 	console.log("");

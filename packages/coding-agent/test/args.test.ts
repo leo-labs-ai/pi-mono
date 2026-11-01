@@ -1,5 +1,5 @@
-import { describe, expect, test, vi } from "vitest";
-import { normalizeSessionName, parseArgs, printHelp } from "../src/cli/args.ts";
+import { describe, expect, test } from "vitest";
+import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	describe("--version flag", () => {
@@ -30,16 +30,6 @@ describe("parseArgs", () => {
 		test("parses -h shorthand", () => {
 			const result = parseArgs(["-h"]);
 			expect(result.help).toBe(true);
-		});
-
-		test("lists adaptive as a supported thinking level", () => {
-			const log = vi.spyOn(console, "log").mockImplementation(() => {});
-			try {
-				printHelp();
-				expect(log).toHaveBeenCalledWith(expect.stringContaining("xhigh, max, ultra, adaptive"));
-			} finally {
-				log.mockRestore();
-			}
 		});
 	});
 
@@ -147,13 +137,19 @@ describe("parseArgs", () => {
 		});
 
 		test("parses --thinking", () => {
-			const result = parseArgs(["--thinking", "ultra"]);
-			expect(result.thinking).toBe("ultra");
+			const result = parseArgs(["--thinking", "high"]);
+			expect(result.thinking).toBe("high");
 		});
 
 		test("parses --models as comma-separated list", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);
+		});
+
+		// Issue #10334
+		test("ignores empty entries in --models", () => {
+			const result = parseArgs(["--models", "gpt-4o, ,claude-sonnet,"]);
+			expect(result.models).toEqual(["gpt-4o", "claude-sonnet"]);
 		});
 	});
 
@@ -283,6 +279,14 @@ describe("parseArgs", () => {
 			const result = parseArgs(["--no-extensions", "-e", "foo.ts", "-e", "bar.ts"]);
 			expect(result.noExtensions).toBe(true);
 			expect(result.extensions).toEqual(["foo.ts", "bar.ts"]);
+		});
+	});
+
+	describe("--no-mcp flag", () => {
+		test("parses --no-mcp flag", () => {
+			const result = parseArgs(["--no-mcp"]);
+			expect(result.noMcp).toBe(true);
+			expect(result.unknownFlags.size).toBe(0);
 		});
 	});
 
@@ -461,6 +465,31 @@ describe("parseArgs", () => {
 			expect(result.tools).toEqual(["read", "bash"]);
 		});
 
+		test("parses +name and -name tool modifiers", () => {
+			const result = parseArgs(["-t", "+codemode,-write"]);
+			expect(result.tools).toEqual(["+codemode", "-write"]);
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("rejects tool names mixed with modifiers", () => {
+			const result = parseArgs(["--tools", "read,+codemode"]);
+			expect(result.tools).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{ type: "error", message: "--tools: tool names cannot be mixed with +name or -name entries" },
+			]);
+		});
+
+		test("rejects patterns in tool modifiers", () => {
+			const result = parseArgs(["-t", "+mcp__radius__*"]);
+			expect(result.tools).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{
+					type: "error",
+					message: "-t: +name and -name entries take exact tool names, not patterns: +mcp__radius__*",
+				},
+			]);
+		});
+
 		test("parses --exclude-tools flag", () => {
 			const result = parseArgs(["--exclude-tools", "read,bash"]);
 			expect(result.excludeTools).toEqual(["read", "bash"]);
@@ -537,28 +566,6 @@ describe("parseArgs", () => {
 			expect(result.thinking).toBe("high");
 			expect(result.fileArgs).toEqual(["prompt.md"]);
 			expect(result.messages).toEqual(["Do the task"]);
-		});
-
-		test("parses --source child-agent", () => {
-			const result = parseArgs(["--print", "--source", "child-agent", "prompt"]);
-			expect(result.source).toBe("child-agent");
-			expect(result.diagnostics).toEqual([]);
-		});
-
-		test("accepts every InputSource value", () => {
-			for (const src of ["interactive", "rpc", "extension", "child-agent"]) {
-				const result = parseArgs(["--source", src]);
-				expect(result.source).toBe(src);
-				expect(result.diagnostics).toEqual([]);
-			}
-		});
-
-		test("warns on invalid --source value and leaves source unset", () => {
-			const result = parseArgs(["--source", "nonsense"]);
-			expect(result.source).toBeUndefined();
-			expect(result.diagnostics).toEqual([
-				{ type: "warning", message: expect.stringContaining("Invalid --source") },
-			]);
 		});
 	});
 });

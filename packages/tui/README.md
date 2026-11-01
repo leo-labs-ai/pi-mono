@@ -1,4 +1,4 @@
-# @lue-labs/pi-tui
+# @leo-labs-ai/pi-tui
 
 Minimal terminal UI framework with differential rendering and synchronized output for flicker-free interactive CLI applications.
 
@@ -18,7 +18,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 ## Quick Start
 
 ```typescript
-import { type TUI, Text, Editor, ProcessTerminal, TuiMainScreen, matchesKey } from "@lue-labs/pi-tui";
+import { type TUI, Text, Editor, ProcessTerminal, TuiMainScreen, matchesKey } from "@leo-labs-ai/pi-tui";
 
 // Create terminal
 const terminal = new ProcessTerminal();
@@ -62,7 +62,7 @@ tui.start();
 - `TuiAltScreen` renders a fixed-height viewport in the alternate terminal buffer with application-owned scrolling. When stopped, it restores the main buffer and prints the complete final document.
 
 ```typescript
-import { type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
+import { type TUI, TuiAltScreen, TuiMainScreen } from "@leo-labs-ai/pi-tui";
 
 const tui: TUI = new TuiMainScreen(terminal);
 // To use an application-owned viewport in the alternate terminal buffer instead:
@@ -78,6 +78,44 @@ tui.requestRender(); // Request a re-render
 tui.onDebug = () => console.log("Debug triggered");
 ```
 
+### Colors and terminal styles
+
+Colors are values that can be converted or mixed before terminal rendering:
+
+```typescript
+import {
+  colorToRgb,
+  foregroundAnsi,
+  getTerminalColorMode,
+  mixColors,
+  parseColor,
+  rgbColor,
+  styleText,
+} from "@leo-labs-ai/pi-tui";
+
+const accent = parseColor("oklch(70% 0.12 220)");
+const background = parseColor("#20242a");
+const foreground = mixColors(accent, background, 0.2);
+
+const text = styleText(
+  "Ready",
+  { fg: foreground, bg: background, bold: true },
+  getTerminalColorMode(),
+);
+```
+
+`Color` is an indexed ANSI color, an sRGB color, or an OKLCH color. Every color converts to sRGB, so color math such as `mixColors()` always works. Indices 0-15 follow the user's terminal palette, so their sRGB values are approximations. `styleText()` converts colors to truecolor or 256-color output based on the requested terminal mode.
+
+`parseColor()` also accepts OKHSL, as in `okhsl(250 60% 55%)`; `okhslColor()` builds it in code and `colorToOkhsl()` reads any color's OKHSL channels. OKHSL saturation is relative to the most the sRGB gamut allows at the hue and lightness, so every value is in gamut and equal saturation looks equally colorful across hues. OKHSL colors are converted to sRGB when created.
+
+Conversions are not cached. OKLCH colors, especially ones outside the sRGB gamut, are more expensive to convert than sRGB or indexed colors. For colors used on every render, convert once and reuse the result:
+
+```typescript
+const { r, g, b } = colorToRgb(mixColors(accent, background, 0.2));
+const foreground = rgbColor(r, g, b); // cheap to render repeatedly
+const foregroundCode = foregroundAnsi(foreground, getTerminalColorMode());
+```
+
 ### Alternate-screen viewport layouts
 
 `TuiAltScreen` can render an explicit terminal-height layout. `VStack` and `HStack` allocate constrained regions, while `ScrollView` owns scrolling for one region. These semantics are intentionally unavailable on `TuiMainScreen`, where the terminal owns scrollback.
@@ -89,7 +127,7 @@ import {
   ScrollView,
   Text,
   VStack,
-} from "@earendil-works/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 
 const transcript = new Container();
 transcript.addChild(new Text("History"));
@@ -213,7 +251,7 @@ interface Component {
   render(width: number): string[];
   handleInput?(data: string): void;
   handleMouse?(event: TuiMouseEvent): TuiMouseEventResult | undefined;
-  invalidate?(): void;
+  invalidate(): void;
 }
 ```
 
@@ -222,7 +260,7 @@ interface Component {
 | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
 | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
 | `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
-| `invalidate?()` | Called to clear any cached render state. Components should re-render from scratch on the next `render()` call. |
+| `invalidate()` | Required. Clear any cached render state so the next `render()` starts from scratch. Components without cached render state can use an empty implementation. |
 
 The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
 
@@ -231,7 +269,7 @@ The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered lin
 `TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. `TuiMainScreen` does not capture mouse input because the terminal owns its scrollback.
 
 ```typescript
-import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import type { TuiMouseEvent, TuiMouseEventResult } from "@leo-labs-ai/pi-tui";
 
 handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
   if (event.type === "click" && event.button === "left") {
@@ -270,7 +308,7 @@ const collapsible = new MouseRegion(content, (event) => {
 Components that display a text cursor and need IME (Input Method Editor) support should implement the `Focusable` interface:
 
 ```typescript
-import { CURSOR_MARKER, type Component, type Focusable } from "@lue-labs/pi-tui";
+import { CURSOR_MARKER, type Component, type Focusable, renderFakeCursor } from "@leo-labs-ai/pi-tui";
 
 class MyInput implements Component, Focusable {
   focused: boolean = false;  // Set by TUI when focus changes
@@ -278,8 +316,10 @@ class MyInput implements Component, Focusable {
   render(width: number): string[] {
     const marker = this.focused ? CURSOR_MARKER : "";
     // Emit marker right before the fake cursor
-    return [`> ${beforeCursor}${marker}\x1b[7m${atCursor}\x1b[27m${afterCursor}`];
+    return [`> ${beforeCursor}${marker}${renderFakeCursor(atCursor)}${afterCursor}`];
   }
+
+  invalidate(): void {}
 }
 ```
 
@@ -289,12 +329,14 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
+`renderFakeCursor()` wraps the cursor cell in zero-width markers. TUI renders them as reverse video. When `showHardwareCursor` is enabled, TUI removes the fake cursor that directly follows `CURSOR_MARKER`, so the focused component shows only the terminal cursor. Fake cursors without a preceding `CURSOR_MARKER` stay visible.
+
+The hardware cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 
 ```typescript
-import { Container, type Focusable, Input } from "@lue-labs/pi-tui";
+import { Container, type Focusable, Input } from "@leo-labs-ai/pi-tui";
 
 class SearchDialog extends Container implements Focusable {
   private searchInput: Input;
@@ -652,7 +694,7 @@ Supported formats: PNG, JPEG, GIF, WebP. Dimensions are parsed from the image he
 Supports both slash commands and file paths.
 
 ```typescript
-import { CombinedAutocompleteProvider } from "@lue-labs/pi-tui";
+import { CombinedAutocompleteProvider } from "@leo-labs-ai/pi-tui";
 
 const provider = new CombinedAutocompleteProvider(
   [
@@ -677,7 +719,7 @@ editor.setAutocompleteProvider(provider);
 Use `matchesKey()` with the `Key` helper for detecting keyboard input (supports Kitty keyboard protocol):
 
 ```typescript
-import { matchesKey, Key } from "@lue-labs/pi-tui";
+import { matchesKey, Key } from "@leo-labs-ai/pi-tui";
 
 if (matchesKey(data, Key.ctrl("c"))) {
   process.exit(0);
@@ -700,11 +742,12 @@ if (matchesKey(data, Key.enter)) {
 
 ## Rendering modes
 
-`TuiMainScreen` uses three rendering strategies:
+`TuiMainScreen` uses these rendering strategies:
 
 1. **First Render**: Output all lines without clearing scrollback
-2. **Width Changed or Change Above Viewport**: Clear screen and fully re-render
-3. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
+2. **Width Change, Deep Shrink, or Inline Image**: Clear the screen and fully re-render — the fallback used when a differential repaint cannot safely resolve the update
+3. **Change Above Viewport**: Repaint only the still-visible rows in place and preserve scrollback, rebasing the viewport for small off-screen shrinks; skip the paint when nothing visible changed
+4. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
 
 `TuiAltScreen` owns a terminal-height viewport. Without an explicit layout root it preserves the legacy single-document scrolling behavior. With `setLayoutRoot()`, `VStack`, `HStack`, and nested `ScrollView` components can reserve fixed regions and independently scroll constrained regions. It updates changed viewport rows in place, follows streaming output while at the bottom, and preserves a manually selected scroll position while content grows. Mouse-wheel and configurable keyboard navigation scroll without modifying terminal scrollback, including jumps between OSC 133 semantic prompt markers. Scrollbars support hover expansion, thumb dragging, and track-click jumping. Clicking an OSC 8 hyperlink opens it with the configured URL handler. Dragging with the primary mouse button selects text and, unless `TuiAltScreenOptions.copyOnSelect` is `false`, copies it to the clipboard with OSC 52; holding the drag at a scroll view's top or bottom edge auto-scrolls and extends the selection into off-screen content. Kitty images support vertical viewport cropping; iTerm2 inline images fall back to text because the iTerm2 protocol cannot delete or crop placements during viewport repainting.
 
@@ -737,7 +780,7 @@ interface Terminal {
 ## Utilities
 
 ```typescript
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@lue-labs/pi-tui";
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from "@leo-labs-ai/pi-tui";
 
 // Get visible width of string (ignoring ANSI codes)
 const width = visibleWidth("\x1b[31mHello\x1b[0m"); // 5
@@ -762,8 +805,8 @@ When creating custom components, **each line returned by `render()` must not exc
 Use `matchesKey()` with the `Key` helper for keyboard input:
 
 ```typescript
-import { matchesKey, Key, truncateToWidth } from "@lue-labs/pi-tui";
-import type { Component } from "@lue-labs/pi-tui";
+import { matchesKey, Key, truncateToWidth } from "@leo-labs-ai/pi-tui";
+import type { Component } from "@leo-labs-ai/pi-tui";
 
 class MyInteractiveComponent implements Component {
   private selectedIndex = 0;
@@ -790,6 +833,8 @@ class MyInteractiveComponent implements Component {
       return truncateToWidth(prefix + item, width);
     });
   }
+
+  invalidate(): void {}
 }
 ```
 
@@ -798,8 +843,8 @@ class MyInteractiveComponent implements Component {
 Use the provided utilities to ensure lines fit:
 
 ```typescript
-import { visibleWidth, truncateToWidth } from "@lue-labs/pi-tui";
-import type { Component } from "@lue-labs/pi-tui";
+import { visibleWidth, truncateToWidth } from "@leo-labs-ai/pi-tui";
+import type { Component } from "@leo-labs-ai/pi-tui";
 
 class MyComponent implements Component {
   private text: string;
@@ -821,6 +866,8 @@ class MyComponent implements Component {
     // Pad to exact width (optional, for backgrounds)
     return [line + " ".repeat(width - visible)];
   }
+
+  invalidate(): void {}
 }
 ```
 
@@ -878,7 +925,7 @@ See `test/chat-simple.ts` for a complete chat interface example with:
 
 Run it:
 ```bash
-npx tsx test/chat-simple.ts
+node test/chat-simple.ts
 ```
 
 ## Development
@@ -891,7 +938,7 @@ npm install
 npm run check
 
 # Run the demo
-npx tsx test/chat-simple.ts
+node test/chat-simple.ts
 ```
 
 ### Debug logging
@@ -899,5 +946,5 @@ npx tsx test/chat-simple.ts
 Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 
 ```bash
-PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx test/chat-simple.ts
+PI_TUI_WRITE_LOG=/tmp/tui-ansi.log node test/chat-simple.ts
 ```

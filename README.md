@@ -1,3 +1,5 @@
+> **leo-labs** — brand name (Leonardo + leopard). GitHub org: [`leo-labs-ai`](https://github.com/leo-labs-ai). Fork packages publish to GitHub Packages as `@leo-labs-ai/*`.
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
@@ -10,24 +12,76 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-# Pi Agent Harness
+# Pi
 
-This is the home of the Pi agent harness project including our self extensible coding agent.
+Pi is a minimal, extensible agent harness that you can make your own.
 
-* **[@lue-labs/pi-coding-agent](packages/coding-agent)**: Interactive coding agent CLI
-* **[@lue-labs/pi-agent-core](packages/agent)**: Agent runtime with tool calling and state management
-* **[@lue-labs/pi-ai](packages/ai)**: Unified multi-provider LLM API (OpenAI, Anthropic, Google, …)
+Adapt Pi to your workflows, not the other way around. Customize Pi with [extensions](packages/coding-agent/docs/extensions.md), [skills](packages/coding-agent/docs/skills.md), [prompt templates](packages/coding-agent/docs/prompt-templates.md), and [themes](packages/coding-agent/docs/themes.md). Bundle them as [Pi packages](packages/coding-agent/docs/packages.md) and share via npm or git.
 
-To learn more about Pi:
+Pi ships with powerful defaults but skips features like sub-agents and plan mode. Ask Pi to build what you want, or install a package that does it your way.
 
-* [Visit pi.dev](https://pi.dev), the project website with demos
-* [Read the documentation](https://pi.dev/docs/latest), but you can also ask the agent to explain itself
+Use Pi [interactively](packages/coding-agent/docs/usage.md), automate it in [print or JSON mode](packages/coding-agent/docs/cli.md), control it over [RPC](packages/coding-agent/docs/rpc.md), or build apps with the [Pi TypeScript SDK](packages/coding-agent/docs/sdk.md). See [OpenClaw](https://github.com/OpenClaw/OpenClaw) for a real-world integration.
 
-## All Packages
+## Getting started
+
+Install the command-line interface:
+
+```bash
+curl -fsSL https://pi.dev/install.sh | sh
+```
+
+On Windows:
+
+```shell
+powershell -c "irm https://pi.dev/install.ps1 | iex"
+```
+
+The installer pins all dependencies and updates Pi with `pi update`. Alternatively, install directly with npm, which does not pin transitive dependencies:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+```
+
+Pi requires Node.js 22.19 or newer. The macOS, Linux, and Windows installers can install it if needed. Pi does not require dependency lifecycle scripts for a normal npm installation.
+
+Start Pi in the directory where you want it to work:
+
+```bash
+cd /path/to/project
+pi
+```
+
+For a built-in AI provider, run `/login` inside Pi to connect a subscription or API key. Then give Pi a task.
+
+See the [documentation](https://pi.dev/docs/latest) for full setup and usage instructions, or [visit pi.dev](https://pi.dev) for demos.
+
+## Run with Nix
+
+```bash
+nix run github:earendil-works/pi/stable
+```
+
+`stable` points at the latest release. Install it with `nix profile add github:earendil-works/pi/stable` and update with `nix profile upgrade pi`. Use a release tag such as `github:earendil-works/pi/v1.0.0` to pin a version, or `github:earendil-works/pi` for unreleased changes on `main`. Nix builds Pi from source.
+
+Supports ARM64 and x86-64 on Linux and macOS. Use `nix build .` or `nix run .` to build or run your checkout.
+
+Nix builds are offline, so the bundled model data comes from a pi.dev model catalog revision pinned in `nix/model-catalog.json`. At runtime, Pi still overlays newer catalog data from pi.dev as usual. The Nix workflow replaces the pin on `main` when it no longer matches the checkout, for example after a provider is added or gains a new model type. To refresh it by hand:
+
+```bash
+npm run update:model-catalog-pin
+```
+
+Source builds do not use the Nix pin. `npm run build` in `packages/ai` hydrates model data from the committed `packages/ai/model-catalog.snapshot.json` and never contacts models.dev, so a build does not change when upstream model data changes. To hydrate by hand, run `npm run hydrate:model-snapshot`. To update the snapshot, run `npm run refresh:model-snapshot`. It regenerates the catalog from live data with `--check-api-drift`, validates it, and overwrites the snapshot only if no upstream model was skipped. Review and commit the snapshot diff. `npm run hydrate:model-data` and `npm run generate:models` remain live refreshes of the local data. Live refreshes skip upstream models whose npm adapter or API pi cannot serve and print `Skipped model:` warnings. Add `--check-api-drift` (and optionally `--diagnostics-json <file>`) to `node packages/ai/scripts/generate-models.ts` to exit non-zero when anything was skipped.
+
+OpenRouter snapshot costs come from each model ID's `pricing.prompt`, `pricing.completion`, and cache fields in [its models API](https://openrouter.ai/api/v1/models), converted from dollars per token to dollars per million tokens. A `:batch` suffix does not guarantee a lower price than another ID. For example, on 2026-10-14 the API returned GPT-OSS 20B at $0.018/$0.09 input/output and its batch variant at $0.024/$0.112. `openrouter-catalog-pricing.test.ts` records those source fields and verifies the conversion without adjusting either price.
+
+## Packages
+
+This monorepo contains the Pi CLI and its supporting libraries.
 
 | Package | Description |
 |---------|-------------|
-| **[@earendil-works/chord](packages/chord)** | Standalone application-composition runtime for services, replicated state, RPC, and plugins |
+| **[@earendil-works/chord](packages/chord)** | Typed host runtime for hot-reloadable plugins, contracts, replicated state, and RPC over JSON links |
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-durable](packages/durable)** | Durable conversation, task, and document runtime |
@@ -62,6 +116,48 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+### Using local packages outside the monorepo
+
+Build every public package into one coherent local artifact set:
+
+```bash
+npm run pack:packages -- --out .artifacts/pi-packages
+```
+
+This refreshes model data before building `pi-ai`. To avoid network access when
+model data is already hydrated, pass `--offline-model-data`.
+
+Then configure an external project to consume one package and resolve all of
+its Pi dependencies from the same artifact set. npm is the default:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-durable \
+  --package @earendil-works/pi-agent-core
+cd ../my-project
+npm install --ignore-scripts
+```
+
+For a pnpm project, point `--consumer` at the workspace root:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-agent-core \
+  --package-manager pnpm
+cd ../my-project
+pnpm install --ignore-scripts
+```
+
+Repeat `--package` for each direct dependency. The command updates the
+consumer's `package.json` with content-addressed local `file:` references. It
+writes transitive overrides to `package.json` for npm or `pnpm-workspace.yaml`
+for pnpm. Keep the artifact directory available while installing or updating
+the consumer. Re-run both commands after changing Pi source.
+
 ## Building standalone binaries from release source
 
 GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
@@ -80,14 +176,14 @@ The archive includes release model data and native prebuilds. `--offline-model-d
 We treat npm dependency changes as reviewed code changes.
 
 - Direct external dependencies are pinned to exact versions. Internal workspace packages remain version-ranged.
-- `.npmrc` sets `save-exact=true` and `min-release-age=14` to avoid same-day dependency releases during npm resolution.
+- `.npmrc` sets `save-exact=true` and `min-release-age=2` to avoid same-day dependency releases during npm resolution.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
-- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent shrinkwrap.
-- The published CLI package includes `packages/coding-agent/npm-shrinkwrap.json`, generated from the root lockfile, to pin transitive deps for npm users.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
+- `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
+- The pi.dev installer installs from `packages/coding-agent/install-lock/`, generated from the root lockfile, to pin transitive deps. The npm package does not pin transitive deps.
+- Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
 - Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
-- Shrinkwrap generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
+- Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.
 
 ## Share your OSS coding agent sessions
 

@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Message, Model } from "../src/types.ts";
-import { pickModelForApi } from "./helpers/models.ts";
 
 interface CacheControl {
 	type: "ephemeral";
@@ -112,15 +111,15 @@ function expectAnthropicCacheMarkers(params: CapturedParams): void {
 	const instructionMessage = getInstructionMessage(params);
 	expect(instructionMessage).toBeDefined();
 	expect(Array.isArray(instructionMessage?.content)).toBe(true);
-	expect((instructionMessage?.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+	expect((instructionMessage?.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 
 	expect(params.tools).toHaveLength(1);
-	expect(params.tools?.[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+	expect(params.tools?.[0]?.cache_control).toEqual({ type: "ephemeral" });
 
 	const lastMessage = params.messages[params.messages.length - 1];
 	expect(lastMessage.role).toBe("user");
 	expect(Array.isArray(lastMessage.content)).toBe(true);
-	expect((lastMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+	expect((lastMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 }
 
 describe("openai-completions cacheControlFormat", () => {
@@ -150,15 +149,6 @@ describe("openai-completions cacheControlFormat", () => {
 			},
 		};
 
-		const params = await capturePayload(model);
-		expectAnthropicCacheMarkers(params);
-	});
-
-	it("preserves Anthropic-style cache markers for OpenRouter Anthropic models", async () => {
-		// OpenRouter routes its native Anthropic models over anthropic-messages, so
-		// pin the completions transport this suite is about rather than taking
-		// whichever Anthropic model the registry happens to list first.
-		const model = pickModelForApi("openrouter", "openai-completions", (m) => m.id.startsWith("anthropic/"));
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
 	});
@@ -207,7 +197,7 @@ describe("openai-completions cacheControlFormat", () => {
 		const toolMessage = params.messages[params.messages.length - 1];
 		expect(toolMessage.role).toBe("tool");
 		expect(Array.isArray(toolMessage.content)).toBe(true);
-		expect((toolMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+		expect((toolMessage.content as TextPart[])[0]?.cache_control).toEqual({ type: "ephemeral" });
 	});
 
 	it("omits Anthropic-style cache markers when cacheRetention is none", async () => {

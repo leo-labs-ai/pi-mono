@@ -1,6 +1,12 @@
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
-import { type AssistantMessage, type Model, normalizeContext, type TranscriptContext } from "@lue-labs/pi-ai";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
+import {
+	type AssistantMessage,
+	type Message,
+	type Model,
+	normalizeContext,
+	type TranscriptContext,
+} from "@leo-labs-ai/pi-ai";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type CompactionPreparation,
 	compact,
@@ -13,8 +19,8 @@ const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
 }));
 
-vi.mock("@lue-labs/pi-ai/compat", async (importOriginal) => {
-	const actual = await importOriginal<typeof import("@lue-labs/pi-ai/compat")>();
+vi.mock("@leo-labs-ai/pi-ai/compat", async (importOriginal) => {
+	const actual = await importOriginal<typeof import("@leo-labs-ai/pi-ai/compat")>();
 	return {
 		...actual,
 		completeSimple: completeSimpleMock,
@@ -85,17 +91,27 @@ function countOccurrences(text: string, needle: string): number {
 	return text.split(needle).length - 1;
 }
 
+/** The live model-facing transcript a cache-safe summary request replays. */
+const liveTranscript: Message[] = [
+	{ role: "system", content: "Live system prompt", toolsAdded: [], timestamp: 0 },
+	{ role: "user", content: [{ type: "text", text: "LIVE_USER_TURN" }], timestamp: 1 },
+];
+
 describe("generateSummary reasoning options", () => {
 	beforeEach(() => {
 		completeSimpleMock.mockReset();
 		completeSimpleMock.mockResolvedValue(mockSummaryResponse);
 	});
 
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
 	it("uses the provided thinking level for reasoning-capable models", async () => {
 		const result = await generateSummaryWithUsage(
 			messages,
 			createModel(true),
-			2000,
+			undefined,
 			"test-key",
 			undefined,
 			undefined,
@@ -115,14 +131,14 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("preserves the string result from generateSummary", async () => {
-		await expect(generateSummary(messages, createModel(false), 2000, "test-key")).resolves.toBe(
+		await expect(generateSummary(messages, createModel(false), undefined, "test-key")).resolves.toBe(
 			"## Goal\nTest summary",
 		);
 	});
 
 	it("uses fresh routing sessions without prompt caching", async () => {
-		await generateSummary(messages, createModel(false), 2000, "test-key");
-		await generateSummary(messages, createModel(false), 2000, "test-key");
+		await generateSummary(messages, createModel(false), undefined, "test-key");
+		await generateSummary(messages, createModel(false), undefined, "test-key");
 
 		const requestOptions = completeSimpleMock.mock.calls.map((call) => call[2]);
 		expect(requestOptions).toHaveLength(2);
@@ -150,11 +166,26 @@ describe("generateSummary reasoning options", () => {
 		});
 	});
 
+	it("still defaults to no caching when the caller omits retention", async () => {
+		// Branch summarization and other standalone callers pass no retention. They serialize the
+		// conversation into a text blob that shares no prefix with a live session, so a cache write
+		// here could never be read back. They must keep the "none" default.
+		await completeSummarization(createModel(false), normalizeContext({ systemPrompt: "Summarize", messages: [] }), {
+			toolChoice: "auto",
+		});
+
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "none" });
+		expect(completeSimpleMock.mock.calls[0][2]?.sessionId).toEqual(expect.any(String));
+	});
+
 	it("reads the live cached prefix when compaction is cache-safe", async () => {
-		// The fork builds cacheSafeContext so the summary request replays the live conversation
-		// prefix verbatim. That prefix is already cached by the main loop, so the request must
-		// keep caching on to READ it. Forcing "none" here cold-writes the whole context instead:
-		// the measured symptom was a 266,090-token write while the loop sat at 98% cached.
+		// The fork builds cacheSafeContext so the summary request replays the live transcript
+		// verbatim. That prefix is already cached by the main loop, so the request must keep
+		// caching on to READ it, with the retention the loop resolved (no explicit value, so the
+		// provider default), and keep the loop's routing session. Forcing "none" cold-writes the
+		// whole context instead: the measured symptom was a 266,090-token write while the loop
+		// sat at 98% cached.
+		vi.stubEnv("PI_CACHE_RETENTION", "");
 		await generateSummaryWithUsage(
 			messages,
 			createModel(false),
@@ -169,14 +200,49 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			undefined,
-			{ systemPrompt: "Live system prompt", messages: [], tools: [] },
 			"live-session-id",
+			{ messages: liveTranscript },
 		);
 
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({
-			cacheRetention: "long",
+			cacheRetention: "short",
 			sessionId: "live-session-id",
 		});
+		// The transcript is replayed as-is and only the summary instruction is appended: no
+		// serialized <conversation> copy, no standalone summarization system prompt in front.
+		const requestMessages = (completeSimpleMock.mock.calls[0][1] as { messages: Message[] }).messages;
+		expect(requestMessages.slice(0, liveTranscript.length)).toEqual(liveTranscript);
+		expect(requestMessages).toHaveLength(liveTranscript.length + 1);
+		expect(requestMessages.at(-1)?.role).toBe("user");
+		const prompt = getTextFromSummaryPromptCall(0);
+		expect(prompt).toContain("The conversation above is the active session context.");
+		expect(prompt).not.toContain("<conversation>");
+		expect(prompt).not.toContain("LIVE_USER_TURN");
+	});
+
+	it("matches the main loop's long retention when PI_CACHE_RETENTION=long", async () => {
+		// The loop sends no explicit retention and lets the provider resolve PI_CACHE_RETENTION.
+		// A cache-safe summary must land on that same entry, so it resolves the variable the same
+		// way instead of hardcoding a TTL.
+		await generateSummaryWithUsage(
+			messages,
+			createModel(false),
+			2000,
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{ PI_CACHE_RETENTION: "long" },
+			undefined,
+			undefined,
+			"live-session-id",
+			{ messages: liveTranscript },
+		);
+
+		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "long" });
 	});
 
 	it("keeps caching off for standalone compaction without a cache-safe context", async () => {
@@ -185,18 +251,7 @@ describe("generateSummary reasoning options", () => {
 		await generateSummaryWithUsage(messages, createModel(false), 2000, "test-key");
 
 		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "none" });
-	});
-
-	it("still defaults to no caching when the caller omits retention", async () => {
-		// Branch summarization and other standalone callers pass no retention. They serialize the
-		// conversation into a text blob that shares no prefix with a live session, so a cache write
-		// here could never be read back. They must keep the "none" default.
-		await completeSummarization(createModel(false), normalizeContext({ systemPrompt: "Summarize", messages: [] }), {
-			toolChoice: "auto",
-		});
-
-		expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ cacheRetention: "none" });
-		expect(completeSimpleMock.mock.calls[0][2]?.sessionId).toEqual(expect.any(String));
+		expect(getTextFromSummaryPromptCall(0)).toContain("<conversation>");
 	});
 
 	it("preserves the previous summary without an empty history request for a split turn", async () => {
@@ -217,14 +272,35 @@ describe("generateSummary reasoning options", () => {
 		expect(result.summary).toContain("previous checkpoint");
 		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
-		expect(prompt).toContain("This is the PREFIX of a turn that was too large to keep");
-		expect(prompt).toContain("<conversation>");
+		// Regression test for #9652: clear boundaries and continuation wording avoid the reasoning-extraction false positive.
+		expect(prompt).toContain("# Conversation\\n[User]: Summarize this.");
+		expect(prompt).toContain("# Instructions\\nThe messages above are earlier context from an ongoing conversation.");
+	});
+
+	it("applies custom instructions to the turn prefix summary of a split turn", async () => {
+		// Regression test for #11058
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: [],
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			previousSummary: "previous checkpoint",
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		await compact(preparation, createModel(false), "test-key", undefined, "keep migration decisions");
+
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
+		expect(JSON.stringify(requestContext.messages)).toContain("Additional focus: keep migration decisions");
 	});
 
 	it("rejects tool calls from conversation summaries", async () => {
 		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
 
-		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+		await expect(generateSummaryWithUsage(messages, createModel(false), undefined, "test-key")).rejects.toThrow(
 			"Summarization attempted to call a tool",
 		);
 	});
@@ -253,7 +329,7 @@ describe("generateSummary reasoning options", () => {
 			content: [{ type: "text", text: "partial" }],
 		});
 
-		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
+		await expect(generateSummaryWithUsage(messages, createModel(false), undefined, "test-key")).rejects.toThrow(
 			"generation hit the token cap",
 		);
 	});
@@ -283,7 +359,7 @@ describe("generateSummary reasoning options", () => {
 		await generateSummary(
 			messages,
 			createModel(true),
-			2000,
+			undefined,
 			"test-key",
 			undefined,
 			undefined,
@@ -303,7 +379,7 @@ describe("generateSummary reasoning options", () => {
 		await generateSummary(
 			messages,
 			createModel(false),
-			2000,
+			undefined,
 			"test-key",
 			undefined,
 			undefined,
@@ -319,56 +395,6 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
-	it("disables parent xhigh reasoning for compaction summaries", async () => {
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: messages,
-			turnPrefixMessages: [],
-			isSplitTurn: false,
-			tokensBefore: 190000,
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
-		};
-
-		await compact(preparation, createModel(true), "test-key", undefined, undefined, undefined, "xhigh");
-
-		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
-	});
-
-	it("rejects a length-limited history summary", async () => {
-		completeSimpleMock.mockResolvedValueOnce({
-			...mockSummaryResponse,
-			stopReason: "length",
-			content: [{ type: "text", text: "partial" }],
-		});
-
-		await expect(generateSummaryWithUsage(messages, createModel(false), 2000, "test-key")).rejects.toThrow(
-			"generation hit the token cap",
-		);
-	});
-
-	it("rejects a length-limited split-turn summary", async () => {
-		completeSimpleMock.mockResolvedValueOnce({
-			...mockSummaryResponse,
-			stopReason: "length",
-			content: [{ type: "text", text: "partial" }],
-		});
-		const preparation: CompactionPreparation = {
-			firstKeptEntryId: "entry-keep",
-			messagesToSummarize: [],
-			turnPrefixMessages: messages,
-			isSplitTurn: true,
-			tokensBefore: 190000,
-			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
-		};
-
-		await expect(compact(preparation, createModel(false), "test-key")).rejects.toThrow(
-			"generation hit the token cap",
-		);
-	});
-
 	it("leaves Anthropic refusal fallback handling to pi-ai model metadata", async () => {
 		await generateSummary(
 			messages,
@@ -381,7 +407,7 @@ describe("generateSummary reasoning options", () => {
 					},
 				],
 			}),
-			2000,
+			undefined,
 			"test-key",
 		);
 
@@ -390,13 +416,43 @@ describe("generateSummary reasoning options", () => {
 	});
 
 	it("does not set Anthropic refusal fallback for models without allowed fallback targets", async () => {
-		await generateSummary(messages, createModel(true), 2000, "test-key");
+		await generateSummary(messages, createModel(true), undefined, "test-key");
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("refusalFallbacks");
 	});
 
-	it("clamps compaction summary maxTokens to the model output cap", async () => {
+	it("sets no compaction-specific output cap, so thinking cannot starve the summary", async () => {
+		// reserveTokens only moves the trigger. It used to cap output at 0.8 × 32000 = 25600 (and the
+		// turn prefix at 16000), which thinking at the session level could exhaust before the
+		// summary finished. pi-ai now applies the model's output limit, clamped to the context window.
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 210000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 32000, keepRecentTokens: 20000 },
+		};
+
+		const result = await compact(
+			preparation,
+			createModel(true, 128000, { forceAdaptiveThinking: true }),
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			"high",
+		);
+
+		const options = completeSimpleMock.mock.calls.map((call) => call[2]);
+		expect(options.map((o) => o?.maxTokens)).toEqual([undefined, undefined]);
+		expect(options.map((o) => o?.reasoning)).toEqual(["high", "high"]);
+		expect(result.summary).toContain("Test summary");
+	});
+
+	it("combines usage from split-turn summaries", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: messages,
@@ -404,10 +460,10 @@ describe("generateSummary reasoning options", () => {
 			isSplitTurn: true,
 			tokensBefore: 600000,
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
-			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
+			settings: { enabled: true, reserveTokens: 16384, keepRecentTokens: 20000 },
 		};
 
-		const result = await compact(preparation, createModel(false, 128000), "test-key");
+		const result = await compact(preparation, createModel(false), "test-key");
 
 		expect(result.usage).toEqual({
 			...mockSummaryResponse.usage,
@@ -416,7 +472,7 @@ describe("generateSummary reasoning options", () => {
 			totalTokens: 40,
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 		});
-		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([undefined, undefined]);
 	});
 
 	it("uses split-turn format for cache-safe turn-prefix summaries", async () => {
@@ -444,11 +500,8 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			undefined,
-			{
-				systemPrompt: "stable parent prompt",
-				messages: [],
-				tools: [],
-			},
+			"live-session-id",
+			{ messages: liveTranscript },
 		);
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
@@ -456,7 +509,7 @@ describe("generateSummary reasoning options", () => {
 		// The cache-safe path must NOT re-serialize the turn prefix into the prompt: those
 		// messages are already in cacheSafeContext.messages, and duplicating them is billed as a
 		// never-read cache write on every compaction. It points at the boundary instead.
-		expect(turnPrefixPrompt).not.toContain("<split-turn-prefix>");
+		expect(turnPrefixPrompt).not.toContain("# Conversation");
 		expect(turnPrefixPrompt).toContain("<boundary>");
 		expect(turnPrefixPrompt).toContain("UNIQUE_PREFIX_BODY_MARKER");
 		expect(turnPrefixPrompt).toContain("## Original Request");
@@ -466,6 +519,13 @@ describe("generateSummary reasoning options", () => {
 		expect(turnPrefixPrompt).not.toContain("## Constraints & Preferences");
 		expect(turnPrefixPrompt).not.toContain("## Progress");
 		expect(turnPrefixPrompt).not.toContain("## Next Steps");
+		// Both requests replay the same live prefix and keep the live routing session.
+		for (const call of completeSimpleMock.mock.calls) {
+			const requestMessages = (call[1] as { messages: Message[] }).messages;
+			expect(requestMessages.slice(0, liveTranscript.length)).toEqual(liveTranscript);
+			expect(call[2]).toMatchObject({ sessionId: "live-session-id" });
+			expect(call[2]?.cacheRetention).not.toBe("none");
+		}
 	});
 
 	it("keeps split-turn cache-safe compaction output from duplicating checkpoint headings", async () => {
@@ -505,7 +565,8 @@ describe("generateSummary reasoning options", () => {
 			undefined,
 			undefined,
 			undefined,
-			{ systemPrompt: "stable parent prompt", messages: [], tools: [] },
+			"live-session-id",
+			{ messages: liveTranscript },
 		);
 
 		expect(countOccurrences(result.summary, "## Goal")).toBe(1);

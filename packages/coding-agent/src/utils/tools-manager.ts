@@ -1,11 +1,12 @@
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
 import { arch, platform } from "os";
-import { basename, join } from "path";
+import { join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { APP_NAME, getBinDir } from "../config.ts";
+import { getBinDir, VERSION } from "../config.ts";
 import { fetchWithRetry } from "./management-http.ts";
+import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
@@ -79,29 +80,16 @@ function commandExists(cmd: string): boolean {
 	}
 }
 
-function getLocalToolPath(binaryName: string): string | null {
-	const localPath = join(TOOLS_DIR, binaryName + (platform() === "win32" ? ".exe" : ""));
-	if (existsSync(localPath)) return localPath;
-	return null;
-}
-
 // Get the path to a tool (system-wide or in our tools dir)
 export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
 
 	// Check our tools directory first
-	const localPath = getLocalToolPath(config.binaryName);
-	if (localPath) return localPath;
-
-	// On macOS, skip the system-PATH lookup. Homebrew/system binaries are
-	// adhoc-signed without a kernel trust-cache entry, so every spawn triggers a
-	// Gatekeeper assessment (amfid -> syspolicyd -> trustd) — under Pi's hot
-	// Grep/Glob loops this pins the CPU. Returning null here makes ensureTool()
-	// download a clean copy into our managed bin dir (no quarantine xattr, so no
-	// repeated assessment). Offline mode still falls back to system PATH so a
-	// machine with no managed binary can search.
-	if (platform() === "darwin" && !isOfflineModeEnabled()) return null;
+	const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
+	if (existsSync(localPath)) {
+		return localPath;
+	}
 
 	// Check system PATH - if found, just return the command name (it's in PATH)
 	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
@@ -114,32 +102,6 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 	return null;
 }
 
-export type OptionalSearchTool = "ugrep" | "bfs";
-
-// Get optional search backends from Pi's controlled tools dir or the system PATH.
-// These are not downloaded yet: their release packaging differs enough that fd/rg
-// remain the portable managed fallback.
-export function getOptionalSearchToolPath(tool: OptionalSearchTool): string | null {
-	const localPath = getLocalToolPath(tool);
-	if (localPath) return localPath;
-
-	// On macOS, never spawn a system-PATH binary: Homebrew's adhoc-signed
-	// ugrep/bfs trigger a Gatekeeper assessment on every exec, which under Pi's
-	// hot Grep/Glob loops pins amfid/syspolicyd. These optional backends are not
-	// downloaded, so returning null makes Grep/Glob fall through to the managed
-	// rg/fd (which are Gatekeeper-inert). Offline mode keeps the PATH fallback
-	// (mirroring getToolPath): an offline mac with only ugrep/bfs and no managed
-	// rg/fd would otherwise lose search entirely.
-	if (platform() === "darwin" && !isOfflineModeEnabled()) return null;
-
-	if (commandExists(tool)) return tool;
-	return null;
-}
-
-export function toolDisplayName(command: string): string {
-	return basename(command);
-}
-
 // Resolve the latest release version from the release page redirect.
 // The api.github.com releases endpoint counts against the anonymous API
 // quota (60 requests/hour per IP), which is permanently exhausted behind
@@ -150,7 +112,7 @@ export async function getLatestVersion(repo: string): Promise<string> {
 	const response = await fetchWithRetry(
 		`https://github.com/${repo}/releases/latest`,
 		{
-			headers: { "User-Agent": `${APP_NAME}-coding-agent` },
+			headers: { "User-Agent": getPiUserAgent(VERSION) },
 			redirect: "manual",
 		},
 		{ timeoutMs: NETWORK_TIMEOUT_MS },
@@ -245,7 +207,7 @@ function extractTarGzArchive(archivePath: string, extractDir: string, assetName:
 }
 
 function getWindowsTarCommand(): string {
-	const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+	const systemRoot = process.env.SystemRoot;
 	if (systemRoot) {
 		const systemTar = join(systemRoot, "System32", "tar.exe");
 		if (existsSync(systemTar)) {
@@ -359,14 +321,6 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 		// Make executable (Unix only)
 		if (plat !== "win32") {
 			chmodSync(binaryPath, 0o755);
-		}
-
-		// macOS belt-and-suspenders: strip any quarantine xattr so the binary is
-		// never subject to a Gatekeeper assessment on exec. Bun's fetch() does not
-		// currently set it, but this future-proofs against OS changes. xattr is a
-		// platform binary with a permanent trust-cache entry, so it is safe to spawn.
-		if (plat === "darwin") {
-			spawnSync("xattr", ["-d", "com.apple.quarantine", binaryPath], { stdio: "pipe" });
 		}
 	} finally {
 		// Cleanup

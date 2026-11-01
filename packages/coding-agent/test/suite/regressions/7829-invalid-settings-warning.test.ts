@@ -1,4 +1,4 @@
-import { Container } from "@lue-labs/pi-tui";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AgentSessionRuntimeDiagnostic } from "../../../src/core/agent-session-services.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";

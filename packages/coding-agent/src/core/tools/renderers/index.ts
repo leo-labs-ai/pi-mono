@@ -6,47 +6,38 @@
  * graph out of a process that only renders.
  */
 
-import type { ToolDefinition } from "../../extensions/types.ts";
+import type { ToolRenderers } from "../../extensions/types.ts";
 import type { ToolName } from "../index.ts";
 import { createShellRenderers } from "./bash.ts";
 import { editRenderers } from "./edit.ts";
-import { createGlobRenderers, globRenderers } from "./glob.ts";
+import { findRenderers } from "./find.ts";
 import { grepRenderers } from "./grep.ts";
 import { lsRenderers } from "./ls.ts";
 import { readRenderers } from "./read.ts";
 import { writeRenderers } from "./write.ts";
 
-export type ToolRenderers = Pick<ToolDefinition<any, any>, "renderCall" | "renderResult">;
+export type { ToolRenderers };
 
 export {
-	createGlobRenderers,
 	createShellRenderers,
 	editRenderers,
-	globRenderers,
+	findRenderers,
 	grepRenderers,
 	lsRenderers,
 	readRenderers,
 	writeRenderers,
 };
 
-/**
- * Renderers for the built-in tools that ship one here, keyed by tool name.
- *
- * Partial by design: tools registered under more than one name (`bash`/`Bash`) share an entry, and
- * tools whose renderer still lives beside the implementation (the agent tools, whose renderers close
- * over live parent-session accessors) have none. `withBuiltInRenderers` treats a miss as "the
- * definition already renders itself".
- */
-export function createAllToolRenderers(): Partial<Record<ToolName, ToolRenderers>> {
+/** Renderers for every built-in tool, keyed by tool name. */
+export function createAllToolRenderers(): Record<ToolName, ToolRenderers> {
 	return {
 		read: readRenderers,
 		bash: createShellRenderers("$"),
-		Bash: createShellRenderers("$"),
 		powershell: createShellRenderers("PS>"),
 		edit: editRenderers,
 		write: writeRenderers,
 		grep: grepRenderers,
-		Glob: globRenderers,
+		find: findRenderers,
 		ls: lsRenderers,
 	};
 }

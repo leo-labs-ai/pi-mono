@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	getCurrentSystemMessage,
@@ -10,7 +10,7 @@ import {
 	type Usage,
 	type UserMessage,
 	uuidv7,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -40,25 +40,6 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.ts";
-import {
-	buildResidentLoadPrunePlan,
-	estimateResidentPayloadBytes,
-	metadataForSessionLine,
-	pruneResidentHistory,
-	type ResidentPruneOptions,
-	type ResidentPruneResult,
-	readSessionFileLines,
-	resolveResidentPruneOptions,
-	shouldPruneResidentOnHydration,
-	stubResidentEntryPayload,
-} from "./session-resident-prune.ts";
-
-export {
-	estimateResidentPayloadBytes,
-	type ResidentPruneOptions,
-	type ResidentPruneResult,
-} from "./session-resident-prune.ts";
-
 export const CURRENT_SESSION_VERSION = 3;
 
 export interface SessionHeader {
@@ -248,18 +229,6 @@ export interface SessionContext {
 	messages: AgentMessage[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
-}
-
-export interface SessionHydrationOptions {
-	/** Stub summarized pre-compaction payloads while hydrating existing sessions. Durable JSONL is not rewritten. */
-	residentPrune?: boolean;
-	residentPruneOptions?: ResidentPruneOptions;
-}
-
-export interface LoadEntriesFromFileOptions {
-	/** Stub summarized pre-compaction payloads before retaining parsed entries. Durable JSONL is not rewritten. */
-	residentPrune?: boolean;
-	residentPruneOptions?: ResidentPruneOptions;
 }
 
 export interface SessionInfo {
@@ -588,25 +557,36 @@ export function buildSessionProjection(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionProjection {
-	const path = buildSessionPath(entries, leafId, byId);
+	const entryIndex = buildEntryIndex(entries, byId);
+	const path = buildSessionPath(entries, leafId, entryIndex);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
-	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const contextEntries = buildContextEntries(entries, leafId, entryIndex);
 	const edits = new Map<string, ContextEditEntry>();
 	for (const entry of contextEntries) {
 		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
 	}
-	const projectedEntries = contextEntries.map(
-		(sourceEntry, index): ProjectedSessionEntry => ({
-			sourceEntry,
-			// buildContextEntries() may retain an older compaction entry because its
-			// raw ID lies inside the newest retained range. Only the newest compaction
-			// at index zero contributes a checkpoint and summary.
-			messages:
-				sourceEntry.type === "compaction" && index > 0
-					? []
-					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
-		}),
-	);
+	const projectedEntries = contextEntries.map((sourceEntry, index): ProjectedSessionEntry => {
+		// buildContextEntries() may retain an older compaction entry because its
+		// raw ID lies inside the newest retained range. Only the newest compaction
+		// at index zero contributes a checkpoint and summary.
+		if (sourceEntry.type === "compaction" && index > 0) return { sourceEntry, messages: [] };
+
+		const messages = projectContextEntry(sourceEntry, edits.get(sourceEntry.id));
+		// Older session files predate compaction system checkpoints. Recover the tool/prompt
+		// state at that boundary so later deltas remain valid after reload.
+		if (sourceEntry.type === "compaction" && index === 0 && !sourceEntry.systemMessage && sourceEntry.parentId) {
+			const previousMessages = buildSessionProjection(entries, sourceEntry.parentId, entryIndex).messages;
+			const systemMessage = getCurrentSystemMessage(previousMessages);
+			if (systemMessage) {
+				const timestamp = Date.parse(sourceEntry.timestamp);
+				messages.unshift({
+					...systemMessage,
+					timestamp: Number.isFinite(timestamp) ? timestamp : systemMessage.timestamp,
+				});
+			}
+		}
+		return { sourceEntry, messages };
+	});
 	return {
 		entries: projectedEntries,
 		messages: projectedEntries.flatMap((entry) => entry.messages),
@@ -644,6 +624,7 @@ export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultA
 	return sessionDir;
 }
 
+const SESSION_READ_BUFFER_SIZE = 1024 * 1024;
 const SESSION_HEADER_READ_BUFFER_SIZE = 4096;
 /** Bound synchronous header discovery while allowing large cwd and custom metadata fields. */
 const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
@@ -665,80 +646,50 @@ function parseSessionEntryLine(line: string): FileEntry | null {
 	}
 }
 
-function hasValidSessionHeader(entries: FileEntry[]): boolean {
-	if (entries.length === 0) return true;
-	const header = entries[0];
-	return header.type === "session" && typeof (header as { id?: unknown }).id === "string";
-}
-
-function buildBranchFromEntries(entries: FileEntry[], leafId: string): SessionEntry[] | undefined {
-	const byId = new Map<string, SessionEntry>();
-	for (const entry of entries) {
-		if (entry.type !== "session") byId.set(entry.id, entry);
-	}
-	const path: SessionEntry[] = [];
-	let current = byId.get(leafId);
-	if (!current) return undefined;
-	while (current) {
-		path.unshift(current);
-		current = current.parentId ? byId.get(current.parentId) : undefined;
-	}
-	return path;
-}
-
 /** Exported for testing */
-export function loadEntriesFromFile(filePath: string, options: LoadEntriesFromFileOptions = {}): FileEntry[] {
+export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	const resolvedFilePath = normalizePath(filePath);
 	if (!existsSync(resolvedFilePath)) return [];
 
-	const pruneOptions = resolveResidentPruneOptions(options.residentPruneOptions);
-	const prunePlan = options.residentPrune ? buildResidentLoadPrunePlan(resolvedFilePath, pruneOptions) : undefined;
 	const entries: FileEntry[] = [];
-
-	readSessionFileLines(resolvedFilePath, (line) => {
-		const metadata = prunePlan ? metadataForSessionLine(line) : undefined;
-		if (metadata && metadata !== "session") {
-			const stub = prunePlan?.rawStubs.get(metadata.id);
-			if (stub) {
-				entries.push(stub);
-				return;
-			}
-		}
-
-		const entry = parseSessionEntryLine(line);
-		if (!entry) return;
-		if (
-			prunePlan &&
-			entry.type !== "session" &&
-			prunePlan.candidateIds.has(entry.id) &&
-			!prunePlan.protectedIds.has(entry.id)
-		) {
-			stubResidentEntryPayload(entry, pruneOptions);
-		}
-		entries.push(entry);
-	});
-
-	if (!hasValidSessionHeader(entries)) return [];
-
-	// Repair an unterminated tail so subsequent appends cannot fuse with it.
-	if (entries.length > 0 && fileEndsWithoutNewline(resolvedFilePath)) {
-		appendFileSync(resolvedFilePath, "\n");
-	}
-	return entries;
-}
-
-/** True when the file has content and its final byte is not a newline. */
-function fileEndsWithoutNewline(filePath: string): boolean {
-	const { size } = statSync(filePath);
-	if (size === 0) return false;
-	const fd = openSync(filePath, "r");
+	let pending = "";
+	const fd = openSync(resolvedFilePath, "r");
 	try {
-		const lastByte = Buffer.allocUnsafe(1);
-		readSync(fd, lastByte, 0, 1, size - 1);
-		return lastByte[0] !== 0x0a;
+		const decoder = new StringDecoder("utf8");
+		const buffer = Buffer.allocUnsafe(SESSION_READ_BUFFER_SIZE);
+
+		while (true) {
+			const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+			if (bytesRead === 0) break;
+
+			pending += decoder.write(buffer.subarray(0, bytesRead));
+			let lineStart = 0;
+			let newlineIndex = pending.indexOf("\n", lineStart);
+			while (newlineIndex !== -1) {
+				const entry = parseSessionEntryLine(pending.slice(lineStart, newlineIndex));
+				if (entry) entries.push(entry);
+				lineStart = newlineIndex + 1;
+				newlineIndex = pending.indexOf("\n", lineStart);
+			}
+			pending = pending.slice(lineStart);
+		}
+
+		pending += decoder.end();
+		const finalEntry = parseSessionEntryLine(pending);
+		if (finalEntry) entries.push(finalEntry);
 	} finally {
 		closeSync(fd);
 	}
+
+	// Validate session header before repairing the file.
+	if (entries.length === 0) return entries;
+	const header = entries[0];
+	if (header.type !== "session" || typeof (header as { id?: unknown }).id !== "string") {
+		return [];
+	}
+
+	if (pending) appendFileSync(resolvedFilePath, "\n");
+	return entries;
 }
 
 /**
@@ -1063,6 +1014,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private _needsPersistenceRecovery = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
@@ -1075,7 +1027,6 @@ export class SessionManager {
 		sessionFile: string | undefined,
 		persist: boolean,
 		newSessionOptions?: NewSessionOptions,
-		hydrationOptions?: SessionHydrationOptions,
 		preloadedFileEntries?: FileEntry[],
 	) {
 		this.cwd = resolvePath(cwd);
@@ -1086,7 +1037,7 @@ export class SessionManager {
 		}
 
 		if (sessionFile) {
-			this.setSessionFile(sessionFile, hydrationOptions, preloadedFileEntries);
+			this._setSessionFile(sessionFile, preloadedFileEntries);
 		} else if (preloadedFileEntries?.length) {
 			this._loadEntries(preloadedFileEntries, newSessionOptions);
 		} else {
@@ -1095,24 +1046,14 @@ export class SessionManager {
 	}
 
 	/** Switch to a different session file (used for resume and branching) */
-	setSessionFile(
-		sessionFile: string,
-		hydrationOptions: SessionHydrationOptions = {},
-		preloadedFileEntries?: FileEntry[],
-	): void {
+	setSessionFile(sessionFile: string): void {
+		this._setSessionFile(sessionFile);
+	}
+
+	private _setSessionFile(sessionFile: string, preloadedFileEntries?: FileEntry[]): void {
 		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
-			const pruneOnHydration = shouldPruneResidentOnHydration(hydrationOptions);
-			const headerBeforeLoad = readSessionHeaderForDiscovery(this.sessionFile);
-			const canPruneDuringLoad = pruneOnHydration && headerBeforeLoad?.version === CURRENT_SESSION_VERSION;
-			const pruneLoadOptions: LoadEntriesFromFileOptions = {
-				residentPrune: true,
-				residentPruneOptions: hydrationOptions.residentPruneOptions,
-			};
-
-			const entries =
-				preloadedFileEntries ??
-				loadEntriesFromFile(this.sessionFile, canPruneDuringLoad ? pruneLoadOptions : undefined);
+			const entries = preloadedFileEntries ?? loadEntriesFromFile(this.sessionFile);
 
 			// If file was empty, initialize it with a valid session header. If it was
 			// non-empty but did not parse as a pi session, fail without modifying it.
@@ -1125,15 +1066,13 @@ export class SessionManager {
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
 				this.flushed = true;
+				this._needsPersistenceRecovery = false;
 				return;
 			}
 
-			// A migration rewrites the file unpruned, so re-read it to keep the pruned view.
-			if (this._loadEntries(entries) && pruneOnHydration) {
-				this.fileEntries = loadEntriesFromFile(this.sessionFile, pruneLoadOptions);
-				this._buildIndex();
-			}
+			this._loadEntries(entries);
 			this.flushed = true;
+			this._needsPersistenceRecovery = false;
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -1161,6 +1100,7 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
+		this._needsPersistenceRecovery = false;
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
@@ -1169,10 +1109,8 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	/** Returns true when a version migration rewrote the session file. */
-	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): boolean {
+	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
-		let migrated = false;
 
 		if (header) {
 			this.fileEntries = entries;
@@ -1180,7 +1118,6 @@ export class SessionManager {
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
-				migrated = true;
 			}
 		} else {
 			this.newSession(options);
@@ -1188,7 +1125,6 @@ export class SessionManager {
 		}
 
 		this._buildIndex();
-		return migrated;
 	}
 
 	private _buildIndex(): void {
@@ -1249,184 +1185,73 @@ export class SessionManager {
 	}
 
 	/**
-	 * True while a file-backed session still buffers entries that have not been
-	 * written to disk (the deferred first flush waits for the first assistant
-	 * message). Buffered entries share object references with resident state, so
-	 * in-place mutations before the flush would leak into the durable JSONL.
+	 * A new session file is created only once the session contains a user or assistant message.
+	 * Setup entries alone (model, thinking level, system prompt) stay in memory so opening and
+	 * closing pi without chatting leaves no file behind. Starting at the user message (not the
+	 * first assistant reply) keeps the prompt on disk if the first turn never completes (#10000).
 	 */
-	hasPendingDurableEntries(): boolean {
-		return this.persist && this.sessionFile !== undefined && !this.flushed;
-	}
-
-	getParentSession(): string | undefined {
-		const header = this.fileEntries.find((entry) => entry.type === "session") as SessionHeader | undefined;
-		return header?.parentSession;
+	private _hasConversation(): boolean {
+		return this.fileEntries.some(
+			(e) => e.type === "message" && (e.message.role === "user" || e.message.role === "assistant"),
+		);
 	}
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (!this.flushed && !this._hasConversation()) return;
 
-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			if (this.flushed) {
-				this._appendPersistedLine(`${JSON.stringify(entry)}\n`);
+		try {
+			if (this.flushed && !this._needsPersistenceRecovery) {
+				// Do not create a headerless transcript when an active file disappears.
+				const fd = openSync(this.sessionFile, constants.O_WRONLY | constants.O_APPEND);
+				try {
+					writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+					this._assertPersistedFileLinked(fd);
+				} finally {
+					closeSync(fd);
+				}
 			} else {
-				// Mark as not flushed so when assistant arrives, all entries get written
-				this.flushed = false;
+				this._createPersistedSessionFile();
 			}
-			return;
-		}
-
-		if (!this.flushed) {
+		} catch (error) {
+			if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) {
+				throw error;
+			}
+			// Keep recovery pending if it fails. The next append must not write into
+			// a colliding backup that lacks entries already present in memory.
+			this._needsPersistenceRecovery = true;
+			const sessionDir = dirname(this.sessionFile);
+			if (!existsSync(sessionDir)) {
+				mkdirSync(sessionDir, { recursive: true });
+				console.warn(`Warning: recreated missing session directory for session ${this.sessionId}`);
+			}
+			// One exclusive recovery attempt. Even a same-ID backup can be missing
+			// a parent, so never append to or replace a file that wins this race.
 			this._createPersistedSessionFile();
-			this.flushed = true;
-		} else {
-			this._appendPersistedLine(`${JSON.stringify(entry)}\n`);
+		}
+		this.flushed = true;
+		this._needsPersistenceRecovery = false;
+	}
+
+	private _assertPersistedFileLinked(fd: number): void {
+		// Check after writing: unlink between open/fstat and write must not look
+		// like successful persistence into a reachable transcript.
+		if (fstatSync(fd).nlink === 0) {
+			throw Object.assign(new Error(`Session ${this.sessionId} file disappeared during persistence`), {
+				code: "ENOENT",
+			});
 		}
 	}
 
-	private _isFsCode(error: unknown, code: string): boolean {
-		return typeof error === "object" && error !== null && "code" in error && error.code === code;
-	}
-
-	private _isEnoent(error: unknown): boolean {
-		return this._isFsCode(error, "ENOENT");
-	}
-
-	private _recoverMissingSessionDir(error: unknown): void {
-		if (!this._isEnoent(error) || !this.sessionFile) throw error;
-		const sessionDir = dirname(this.sessionFile);
-		if (existsSync(sessionDir)) return;
-		mkdirSync(sessionDir, { recursive: true });
-		// Session id only. The absolute file path would leak the home directory.
-		console.warn(`Warning: recreated missing session directory for session ${this.sessionId}`);
-	}
-
-	/**
-	 * ENOENT recovery for a flushed session.
-	 *
-	 * A missing file is exclusively created from resident entries. Resident entries
-	 * may be pruned, so an existing file is never truncated or replaced. Its new
-	 * line is appended only when the session header id matches and the inode is
-	 * unchanged. Append does not create: if that file disappears, one exclusive
-	 * create runs, and a second EEXIST fails without writing.
-	 */
-	private _appendPersistedLine(line: string): void {
-		try {
-			this._appendExistingFile(line);
-		} catch (error) {
-			this._recoverMissingSessionDir(error);
-			this._recoverFlushedSessionFile(line);
-		}
-	}
-
-	private _appendExistingFile(line: string): void {
-		const fd = openSync(this.sessionFile!, constants.O_WRONLY | constants.O_APPEND);
-		try {
-			writeFileSync(fd, line);
-		} finally {
-			closeSync(fd);
-		}
-	}
-
-	private _recoverFlushedSessionFile(line: string): void {
-		try {
-			this._createFileFromResidentEntries();
-		} catch (error) {
-			if (!this._isFsCode(error, "EEXIST")) throw error;
-			this._appendToMatchingRestoredFile(line);
-		}
-	}
-
-	private _createFileFromResidentEntries(): void {
+	private _createPersistedSessionFile(): void {
 		const fd = openSync(this.sessionFile!, "wx");
 		try {
 			for (const entry of this.fileEntries) {
 				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
 			}
+			this._assertPersistedFileLinked(fd);
 		} finally {
 			closeSync(fd);
-		}
-	}
-
-	private _leaveRestoredFileUntouched(): never {
-		throw new Error(`Session ${this.sessionId} file changed while recovering a missing directory; left it untouched`);
-	}
-
-	private _createResidentFileUnlessPresent(): void {
-		try {
-			this._createFileFromResidentEntries();
-		} catch (error) {
-			if (this._isFsCode(error, "EEXIST")) this._leaveRestoredFileUntouched();
-			throw error;
-		}
-	}
-
-	/** Undefined means the path disappeared and the caller should exclusively create it. */
-	private _matchingRestoredIdentity(): { dev: number; ino: number } | undefined {
-		try {
-			const header = readSessionHeader(this.sessionFile!);
-			if (!header || header.id !== this.sessionId) {
-				throw new Error(`Refusing to modify session ${this.sessionId}: restored file header does not match`);
-			}
-			const stat = statSync(this.sessionFile!);
-			return { dev: stat.dev, ino: stat.ino };
-		} catch (error) {
-			if (this._isEnoent(error)) return undefined;
-			if (error instanceof SessionHeaderScanLimitError) {
-				throw new Error(`Refusing to modify session ${this.sessionId}: restored file header is unreadable`);
-			}
-			throw error;
-		}
-	}
-
-	private _appendToMatchingRestoredFile(line: string): void {
-		const identity = this._matchingRestoredIdentity();
-		if (!identity) {
-			this._createResidentFileUnlessPresent();
-			return;
-		}
-
-		let fd: number;
-		try {
-			fd = openSync(this.sessionFile!, constants.O_RDWR | constants.O_APPEND);
-		} catch (error) {
-			if (this._isEnoent(error)) {
-				this._createResidentFileUnlessPresent();
-				return;
-			}
-			throw error;
-		}
-
-		let recreate = false;
-		try {
-			const stat = fstatSync(fd);
-			if (stat.dev !== identity.dev || stat.ino !== identity.ino) this._leaveRestoredFileUntouched();
-			if (stat.nlink === 0) {
-				recreate = true;
-			} else {
-				const previous = Buffer.alloc(1);
-				const needsNewline =
-					stat.size > 0 && readSync(fd, previous, 0, 1, stat.size - 1) === 1 && previous[0] !== 0x0a;
-				writeFileSync(fd, needsNewline ? `\n${line}` : line);
-			}
-		} finally {
-			closeSync(fd);
-		}
-		if (recreate) this._createResidentFileUnlessPresent();
-	}
-
-	private _createPersistedSessionFile(): void {
-		try {
-			this._createFileFromResidentEntries();
-		} catch (error) {
-			this._recoverMissingSessionDir(error);
-			try {
-				this._createFileFromResidentEntries();
-			} catch (retryError) {
-				if (this._isFsCode(retryError, "EEXIST")) this._leaveRestoredFileUntouched();
-				throw retryError;
-			}
 		}
 	}
 
@@ -1507,9 +1332,13 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		systemMessageOverride?: SystemMessage | null,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const systemMessage =
+			systemMessageOverride === undefined
+				? getCurrentSystemMessage(this.buildSessionProjection().messages)
+				: (systemMessageOverride ?? undefined);
 		const id = generateId(this.byId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -1559,10 +1388,10 @@ export class SessionManager {
 	/** Get the current session name from the latest session_info entry, if any. */
 	getSessionName(): string | undefined {
 		// Walk entries in reverse to find the latest session_info entry.
-		// Empty names explicitly clear the session title.
-		const entries = this.getEntries();
-		for (let i = entries.length - 1; i >= 0; i--) {
-			const entry = entries[i];
+		// Empty names explicitly clear the session title. Reads fileEntries directly: the footer
+		// calls this on every frame, and getEntries() copies the whole session.
+		for (let i = this.fileEntries.length - 1; i >= 0; i--) {
+			const entry = this.fileEntries[i];
 			if (entry.type === "session_info") {
 				return entry.name?.trim() || undefined;
 			}
@@ -1744,24 +1573,17 @@ export class SessionManager {
 		return { messages, thinkingLevel, model };
 	}
 
-	estimateResidentPayloadBytes(): number {
-		return estimateResidentPayloadBytes(this.getEntries());
-	}
-
-	/**
-	 * Stub resident-only payloads from the summarized span before a compaction boundary.
-	 * Durable JSONL remains append-only: this method never rewrites or deletes the session file.
-	 */
-	pruneResidentHistoryAfterCompaction(compactionId?: string, options: ResidentPruneOptions = {}): ResidentPruneResult {
-		return pruneResidentHistory(this.getEntries(), this.getBranch(), compactionId, options);
-	}
-
 	/**
 	 * Get session header.
 	 */
 	getHeader(): SessionHeader | null {
 		const h = this.fileEntries.find((e) => e.type === "session");
 		return h ? (h as SessionHeader) : null;
+	}
+
+	/** Number of session entries (excludes header), without copying them like `getEntries()`. */
+	getEntryCount(): number {
+		return this.byId.size;
 	}
 
 	/**
@@ -1823,37 +1645,12 @@ export class SessionManager {
 	// =========================================================================
 
 	/**
-	 * Restore durable payloads when a rewind path contains resident-pruned data.
-	 * Rewind must retain the original branch context; the compacted JSONL is the
-	 * source of truth and is never rewritten by prune.
-	 */
-	private _restoreDurableTranscriptBeforeBranch(branchFromId: string | null): void {
-		if (!branchFromId || !this.sessionFile || this.hasPendingDurableEntries()) return;
-		const residentPath = this.getBranch(branchFromId);
-		if (residentPath.length === 0) return;
-
-		const durableEntries = loadEntriesFromFile(this.sessionFile);
-		const durablePath = buildBranchFromEntries(durableEntries, branchFromId);
-		if (
-			!durablePath ||
-			(durablePath.length === residentPath.length &&
-				durablePath.every((entry, index) => JSON.stringify(entry) === JSON.stringify(residentPath[index])))
-		) {
-			return;
-		}
-
-		this.fileEntries = durableEntries;
-		this._buildIndex();
-	}
-
-	/**
 	 * Start a new branch from an earlier entry.
 	 * Moves the leaf pointer to the specified entry. The next appendXXX() call
 	 * will create a child of that entry, forming a new branch. Existing entries
 	 * are not modified or deleted.
 	 */
 	branch(branchFromId: string): void {
-		this._restoreDurableTranscriptBeforeBranch(branchFromId);
 		if (!this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -1881,7 +1678,6 @@ export class SessionManager {
 		fromHook?: boolean,
 		usage?: Usage,
 	): string {
-		this._restoreDurableTranscriptBeforeBranch(branchFromId);
 		if (branchFromId !== null && !this.byId.has(branchFromId)) {
 			throw new Error(`Entry ${branchFromId} not found`);
 		}
@@ -1909,14 +1705,10 @@ export class SessionManager {
 	 */
 	createBranchedSession(leafId: string): string | undefined {
 		const previousSessionFile = this.sessionFile;
-		const residentPath = this.getBranch(leafId);
-		if (residentPath.length === 0) {
+		const path = this.getBranch(leafId);
+		if (path.length === 0) {
 			throw new Error(`Entry ${leafId} not found`);
 		}
-		const durablePath = previousSessionFile
-			? buildBranchFromEntries(loadEntriesFromFile(previousSessionFile), leafId)
-			: undefined;
-		const path = durablePath ?? residentPath;
 
 		// Filter out LabelEntry from path - we'll recreate them from the resolved map.
 		// Because labels are real tree entries, later entries can be children of labels;
@@ -1996,17 +1788,15 @@ export class SessionManager {
 			this.sessionFile = newSessionFile;
 			this._buildIndex();
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
+			// Use the same rule as _persist(): write now if the branched path already
+			// has a conversation, otherwise let _persist() create the file later.
+			if (this._hasConversation()) {
 				this._rewriteFile();
 				this.flushed = true;
+				this._needsPersistenceRecovery = false;
 			} else {
 				this.flushed = false;
+				this._needsPersistenceRecovery = false;
 			}
 
 			return newSessionFile;
@@ -2049,18 +1839,11 @@ export class SessionManager {
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
-	static open(
-		path: string,
-		sessionDir?: string,
-		cwdOverride?: string,
-		hydrationOptions?: SessionHydrationOptions,
-	): SessionManager {
+	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		const resolvedPath = resolvePath(path);
-		// Extract cwd from the session header when possible; setSessionFile() owns
-		// the single full JSONL load unless the bounded header scan overflowed.
 		let header: SessionHeader | null = null;
 		let preloadedFileEntries: FileEntry[] | undefined;
-		if (existsSync(resolvedPath)) {
+		if (cwdOverride === undefined && existsSync(resolvedPath)) {
 			try {
 				header = readSessionHeader(resolvedPath);
 			} catch (error) {
@@ -2075,7 +1858,7 @@ export class SessionManager {
 		const cwd = cwdOverride ?? (header ? getSessionHeaderCwd(header) : undefined) ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ? normalizePath(sessionDir) : resolve(resolvedPath, "..");
-		return new SessionManager(cwd, dir, resolvedPath, true, undefined, hydrationOptions, preloadedFileEntries);
+		return new SessionManager(cwd, dir, resolvedPath, true, undefined, preloadedFileEntries);
 	}
 
 	/**
@@ -2083,19 +1866,19 @@ export class SessionManager {
 	 * @param cwd Working directory
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
-	static continueRecent(cwd: string, sessionDir?: string, hydrationOptions?: SessionHydrationOptions): SessionManager {
+	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
 		const dir = sessionDir ? normalizePath(sessionDir) : getDefaultSessionDir(cwd);
 		const filterCwd = sessionDir !== undefined && dir !== getDefaultSessionDirPath(cwd);
 		const mostRecent = findMostRecentSession(dir, filterCwd ? cwd : undefined);
 		if (mostRecent) {
-			return new SessionManager(cwd, dir, mostRecent, true, undefined, hydrationOptions);
+			return new SessionManager(cwd, dir, mostRecent, true);
 		}
 		return new SessionManager(cwd, dir, undefined, true);
 	}
 
 	/** Create an in-memory session (no file persistence), optionally from entries held outside the filesystem. */
 	static inMemory(cwd: string = process.cwd(), options?: NewSessionOptions, entries?: FileEntry[]): SessionManager {
-		return new SessionManager(cwd, "", undefined, false, options, undefined, entries);
+		return new SessionManager(cwd, "", undefined, false, options, entries);
 	}
 
 	/**
@@ -2110,7 +1893,6 @@ export class SessionManager {
 		targetCwd: string,
 		sessionDir?: string,
 		options?: NewSessionOptions,
-		hydrationOptions?: SessionHydrationOptions,
 	): SessionManager {
 		const resolvedSourcePath = resolvePath(sourcePath);
 		const resolvedTargetCwd = resolvePath(targetCwd);
@@ -2156,7 +1938,7 @@ export class SessionManager {
 			}
 		}
 
-		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true, undefined, hydrationOptions);
+		return new SessionManager(resolvedTargetCwd, dir, newSessionFile, true);
 	}
 
 	/**

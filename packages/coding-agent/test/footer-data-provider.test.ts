@@ -83,10 +83,7 @@ function emitReftableChange(provider: FooterDataProvider): void {
 	reftableWatcher?.emit("change", "change", "tables.list");
 }
 
-// fs.watch can take longer than 3s to fire under parallel-test contention (the
-// macOS/Linux watcher is shared across tempdirs). Bump default to 8s to absorb
-// the contention window without slowing the happy path.
-async function waitFor(condition: () => boolean, timeoutMs = 8000): Promise<void> {
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
 	const startedAt = Date.now();
 	while (!condition()) {
 		if (Date.now() - startedAt > timeoutMs) {
@@ -239,8 +236,9 @@ describe("FooterDataProvider reftable branch detection", () => {
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
-			await waitFor(() => provider.getGitBranch() === "foo");
+			// Real fs watcher events can arrive late under full-suite load.
+			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1, 10_000);
+			await waitFor(() => provider.getGitBranch() === "foo", 10_000);
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(provider.getGitBranch()).toBe("foo");

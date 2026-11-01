@@ -12,14 +12,14 @@
  * - Progress tracking widget during execution
  */
 
-import type { AgentMessage } from "@lue-labs/pi-agent-core";
-import type { AssistantMessage, TextContent } from "@lue-labs/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@lue-labs/pi-coding-agent";
-import { Key } from "@lue-labs/pi-tui";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
+import type { AssistantMessage, TextContent } from "@leo-labs-ai/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@leo-labs-ai/pi-coding-agent";
+import { Key } from "@leo-labs-ai/pi-tui";
 import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.ts";
 
 // Tools
-const PLAN_MODE_TOOLS = ["read", "bash", "grep", "Glob", "ls", "questionnaire"];
+const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls", "questionnaire"];
 const NORMAL_MODE_TOOLS = ["read", "bash", "edit", "write"];
 const PLAN_MODE_DISABLED_TOOLS = new Set<string>(["edit", "write"]);
 const PLAN_MANAGED_TOOLS = new Set<string>([...PLAN_MODE_TOOLS, ...NORMAL_MODE_TOOLS]);
@@ -197,8 +197,12 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		};
 	});
 
-	// Inject plan/execution context before agent starts
-	pi.on("before_agent_start", async () => {
+	// Inject plan/execution context before a user prompt. Runs started by custom messages, such as
+	// background task notifications, skip it: the context from the last prompt is still in the
+	// conversation, and adding it again on every notification would only repeat it.
+	pi.on("before_agent_start", async (event) => {
+		if (event.messageType !== "user") return;
+
 		if (planModeEnabled) {
 			return {
 				message: {

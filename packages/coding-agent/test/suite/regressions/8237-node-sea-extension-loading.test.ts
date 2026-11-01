@@ -27,7 +27,7 @@ vi.mock("../../../src/core/extensions/virtual-modules.ts", () => {
 	return {
 		VIRTUAL_MODULES: {
 			typebox: {},
-			"@earendil-works/pi-coding-agent": {},
+			"@leo-labs-ai/pi-coding-agent": {},
 		},
 	};
 });
@@ -52,7 +52,8 @@ describe("Node SEA extension loading", () => {
 		expect(state.jitiModuleLoads).toBe(0);
 		expect(state.virtualModulesLoads).toBe(0);
 
-		const result = await loadExtensions(["/extension.ts"], "/");
+		// Jiti is mocked, but canonical module resolution requires an existing file.
+		const result = await loadExtensions([import.meta.filename], "/");
 
 		expect(result.errors).toEqual([]);
 		expect(state.jitiModuleLoads).toBe(1);
@@ -66,6 +67,6 @@ describe("Node SEA extension loading", () => {
 		expect(options.tryNative).toBe(false);
 		expect(options.alias).toBeUndefined();
 		expect(options.virtualModules?.typebox).toBeDefined();
-		expect(options.virtualModules?.["@earendil-works/pi-coding-agent"]).toBeDefined();
+		expect(options.virtualModules?.["@leo-labs-ai/pi-coding-agent"]).toBeDefined();
 	});
 });

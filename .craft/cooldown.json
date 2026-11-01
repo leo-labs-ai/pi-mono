@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "kind": "dedupe-validation",
+      "area": "packages/ai/src/utils/transcript.ts",
+      "lastSuggestedAt": "2026-10-12T02:40:59Z",
+      "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/616",
+      "outcome": "applied"
+    }
+  ]
+}

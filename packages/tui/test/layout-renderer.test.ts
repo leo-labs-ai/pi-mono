@@ -298,3 +298,51 @@ describe("LayoutRenderer / input — focus + cancel", () => {
 		assert.equal(cancels, 2);
 	});
 });
+
+// #588: graph-supplied values and duplicate group IDs.
+describe("LayoutRenderer / initial values", () => {
+	function submitOf(graph: LayoutGraph): unknown {
+		let submitted: unknown = null;
+		const r = new LayoutRenderer(graph, {
+			onSubmit: (resp) => {
+				submitted = resp;
+			},
+		});
+		r.handleInput(KEY.enter);
+		return submitted;
+	}
+
+	it("keeps a pre-populated radio value and puts the cursor on it", () => {
+		const graph = radioGraph();
+		if (graph.root.type !== "card" || graph.root.children[1].type !== "radio_group") assert.fail("fixture shape");
+		graph.root.children[1].value = "none";
+		const r = new LayoutRenderer(graph, { onSubmit: () => {} });
+		assert.equal(r.getCursor("strategy"), 2);
+		assert.deepEqual(submitOf(graph), { strategy: "none" });
+	});
+
+	it("keeps pre-populated checkbox values", () => {
+		const graph = checkboxGraph();
+		if (graph.root.type !== "card" || graph.root.children[1].type !== "checkbox_group") assert.fail("fixture shape");
+		graph.root.children[1].value = ["linux", "win"];
+		assert.deepEqual(submitOf(graph), { targets: ["linux", "win"] });
+	});
+
+	it("rejects values that are not options", () => {
+		const radio = radioGraph();
+		if (radio.root.type !== "card" || radio.root.children[1].type !== "radio_group") assert.fail("fixture shape");
+		radio.root.children[1].value = "bogus";
+		assert.throws(() => new LayoutRenderer(radio, { onSubmit: () => {} }), /"strategy" value "bogus"/);
+		const checkbox = checkboxGraph();
+		if (checkbox.root.type !== "card" || checkbox.root.children[1].type !== "checkbox_group")
+			assert.fail("fixture shape");
+		checkbox.root.children[1].value = ["linux", "bogus"];
+		assert.throws(() => new LayoutRenderer(checkbox, { onSubmit: () => {} }), /"targets" value "bogus"/);
+	});
+
+	it("rejects duplicate group IDs", () => {
+		const group = { type: "radio_group" as const, id: "dup", options: [{ value: "a", label: "A" }] };
+		const graph: LayoutGraph = { version: "0.1", root: { type: "col", children: [group, { ...group }] } };
+		assert.throws(() => new LayoutRenderer(graph, { onSubmit: () => {} }), /duplicate group id "dup"/);
+	});
+});

@@ -1,4 +1,4 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@lue-labs/pi-tui";
+import { Editor, type EditorOptions, type EditorTheme, type TUI, visibleWidth } from "@leo-labs-ai/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 import type { StatusIndicator } from "./status-indicator.ts";
 
@@ -15,13 +15,6 @@ export class CustomEditor extends Editor {
 	private workingStatusIndicator: StatusIndicator | undefined;
 	public readonly embedWorkingStatus: boolean;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
-
-	/**
-	 * Called before all other input handling (including extension shortcuts).
-	 * Return true to consume the input and prevent further processing.
-	 * Used by InteractiveMode core for built-in pre-input hooks (e.g. footer nav).
-	 */
-	public onPreInput?: (data: string) => boolean;
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
@@ -93,9 +86,6 @@ export class CustomEditor extends Editor {
 	}
 
 	handleInput(data: string): void {
-		// Core pre-input hook (footer nav, etc.) — runs before extension shortcuts.
-		if (this.onPreInput?.(data)) return;
-
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
 			return;

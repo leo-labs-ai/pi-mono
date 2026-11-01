@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { complete } from "../src/compat.ts";
+import { complete, getModel } from "../src/compat.ts";
 import type { Context } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 
 describe.skipIf(!process.env.OPENAI_API_KEY)("openai responses cache affinity e2e", () => {
 	it("handles direct OpenAI Responses requests with aligned cache-affinity identifiers", { retry: 2 }, async () => {
-		const model = pickModel("openai");
+		const model = getModel("openai", "gpt-5.4");
 		const sessionId = "0195d6e4-4cf9-7f44-a2d8-f8f7f49ee9d3";
 		const context: Context = {
 			systemPrompt: "You are a helpful assistant. Reply exactly as requested.",

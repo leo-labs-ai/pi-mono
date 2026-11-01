@@ -1,4 +1,4 @@
-import { fauxAssistantMessage } from "@lue-labs/pi-ai";
+import { fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionBeforeCompactEvent } from "../../src/core/extensions/index.ts";
 import { createHarness, type Harness } from "./harness.ts";
@@ -75,15 +75,9 @@ describe("AgentSession compaction model overrides", () => {
 								fauxAssistantMessage("", { stopReason: "error", errorMessage: "prompt is too long" }),
 								fauxAssistantMessage("recovered"),
 							]
-						: [
-								fauxAssistantMessage(path === "post-run" ? "z".repeat(8000) : "done"),
-								...(path === "post-run" ? [fauxAssistantMessage("continued after deferred compaction")] : []),
-							],
+						: [fauxAssistantMessage(path === "post-run" ? "z".repeat(8000) : "done")],
 				);
 				await harness.session.prompt("continue");
-				// This fork defers threshold compaction after a completed run until
-				// the next prompt, preserving the finished assistant response.
-				if (path === "post-run") await harness.session.prompt("continue again");
 			}
 
 			expect(preparations).toHaveLength(1);
@@ -91,7 +85,6 @@ describe("AgentSession compaction model overrides", () => {
 				enabled: path !== "manual",
 				reserveTokens: 2000,
 				keepRecentTokens: 150,
-				residentPrune: true,
 			});
 			expect(preparations[0]?.reason).toBe(
 				path === "manual" ? "manual" : path === "overflow" ? "overflow" : "threshold",
@@ -109,36 +102,40 @@ describe("AgentSession compaction model overrides", () => {
 		},
 	);
 
-	it.each(["manual", "automatic"] as const)("passes resolved budgets to built-in %s summarization", async (path) => {
-		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 4000, maxTokens: 3000 }],
-			tools: [],
-			settings: {
-				compaction: {
-					reserveTokens: 10,
-					modelOverrides: { "faux/faux-1": { reserveTokens: 2000, keepRecentTokens: 150 } },
+	it.each(["manual", "automatic"] as const)(
+		"does not cap built-in %s summary output by reserveTokens",
+		async (path) => {
+			const harness = await createHarness({
+				models: [{ id: "faux-1", contextWindow: 4000, maxTokens: 3000 }],
+				tools: [],
+				settings: {
+					compaction: {
+						reserveTokens: 10,
+						modelOverrides: { "faux/faux-1": { reserveTokens: 2000, keepRecentTokens: 150 } },
+					},
 				},
-			},
-		});
-		harnesses.push(harness);
-		const recentUserId = seedHistory(harness, 2500);
-		const budgets: Array<number | undefined> = [];
-		harness.setResponses([
-			(_context, options) => {
-				budgets.push(options?.maxTokens);
-				return fauxAssistantMessage("built-in summary");
-			},
-			...(path === "automatic" ? [fauxAssistantMessage("done")] : []),
-		]);
-		if (path === "manual") await harness.session.compact();
-		else await harness.session.prompt("continue");
-		expect(budgets).toEqual([1600]);
-		expect(harness.sessionManager.getEntries().find((entry) => entry.type === "compaction")).toMatchObject({
-			firstKeptEntryId: recentUserId,
-			summary: "built-in summary",
-		});
-		expect(harness.getPendingResponseCount()).toBe(0);
-	});
+			});
+			harnesses.push(harness);
+			const recentUserId = seedHistory(harness, 2500);
+			const budgets: Array<number | undefined> = [];
+			harness.setResponses([
+				(_context, options) => {
+					budgets.push(options?.maxTokens);
+					return fauxAssistantMessage("built-in summary");
+				},
+				...(path === "automatic" ? [fauxAssistantMessage("done")] : []),
+			]);
+			if (path === "manual") await harness.session.compact();
+			else await harness.session.prompt("continue");
+			// reserveTokens moves the trigger only. pi-ai applies the model's output limit to the summary.
+			expect(budgets).toEqual([undefined]);
+			expect(harness.sessionManager.getEntries().find((entry) => entry.type === "compaction")).toMatchObject({
+				firstKeptEntryId: recentUserId,
+				summary: "built-in summary",
+			});
+			expect(harness.getPendingResponseCount()).toBe(0);
+		},
+	);
 
 	it("uses the newly selected model without changing ordinary settings", async () => {
 		const harness = await createHarness({
@@ -200,14 +197,14 @@ describe("AgentSession compaction model overrides", () => {
 			harness.session.agent.state.model = harness.getModel("second")!;
 			return getAuth(model, ...args);
 		});
-		const requests: Array<{ id: string; maxTokens: number | undefined }> = [];
+		const requests: string[] = [];
 		harness.setResponses([
-			(_context, options, _state, model) => {
-				requests.push({ id: model.id, maxTokens: options?.maxTokens });
+			(_context, _options, _state, model) => {
+				requests.push(model.id);
 				return fauxAssistantMessage("summary");
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual([{ id: "first", maxTokens: 1600 }]);
+		expect(requests).toEqual(["first"]);
 	});
 });

@@ -1,5 +1,5 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
-import { getSupportedThinkingLevels, type Model, type Transport } from "@lue-labs/pi-ai";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import { getSupportedThinkingLevels, type Model, type Transport } from "@leo-labs-ai/pi-ai";
 import {
 	type Component,
 	Container,
@@ -10,19 +10,28 @@ import {
 	SettingsList,
 	Spacer,
 	Text,
-} from "@lue-labs/pi-tui";
-import type { ExtensionSetting } from "../../../core/extensions/types.ts";
+	type WheelScrollLines,
+} from "@leo-labs-ai/pi-tui";
 import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
+import { SETTINGS_DEFAULTS } from "../../../core/settings-defaults.ts";
 import {
 	CACHE_WARMING_MODES,
 	type CacheWarmingMode,
 	type DefaultProjectTrust,
 	type FullscreenExitOutput,
 	type MermaidRenderingMode,
+	type QuietStartup,
+	type SessionShareDestination,
 	type TuiMode,
 	type WarningSettings,
 } from "../../../core/settings-manager.ts";
-import { getSettingsListTheme, parseAutoThemeSetting, type TerminalTheme, theme } from "../theme/theme.ts";
+import {
+	getSettingsListTheme,
+	parseAutoThemeSetting,
+	SYSTEM_THEME_NAME,
+	type TerminalTheme,
+	theme,
+} from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
 import { SelectSubmenu, SteppedSubmenu, type SteppedSubmenuStep } from "./settings-submenu.ts";
@@ -31,14 +40,12 @@ const MODEL_PICKER_LAYOUT = { minPrimaryColumnWidth: 12, maxPrimaryColumnWidth: 
 
 const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
-	adaptive: "Model self-regulates (Claude 4.6+)",
 	minimal: "Very brief reasoning (~1k tokens)",
 	low: "Light reasoning (~2k tokens)",
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
-	max: "Extended reasoning beyond xhigh (GPT-5.6+)",
-	ultra: "Maximum reasoning + orchestration signal (GPT-5.6 Sol/Terra)",
+	xhigh: "Extra-high reasoning (~32k tokens)",
+	max: "Maximum reasoning",
 };
 
 const DEFAULT_PROJECT_TRUST_LABELS: Record<DefaultProjectTrust, string> = {
@@ -64,6 +71,7 @@ export interface SettingsConfig {
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
 	transport: Transport;
+	sessionShareDestination: SessionShareDestination;
 	httpIdleTimeoutMs: number;
 	cacheWarmingMode: CacheWarmingMode;
 	thinkingLevel: ThinkingLevel;
@@ -83,18 +91,16 @@ export interface SettingsConfig {
 	editorPaddingX: number;
 	outputPad: 0 | 1;
 	autocompleteMaxVisible: number;
-	quietStartup: boolean;
+	quietStartup: QuietStartup;
 	defaultProjectTrust: DefaultProjectTrust;
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
-	toolOutput: "compact" | "expanded";
-	motion: "full" | "reduced";
 	tuiMode: TuiMode;
 	fullscreenExitOutput: FullscreenExitOutput;
 	fullscreenScrollbar: ScrollViewScrollbar;
 	fullscreenCopyOnSelect: boolean;
+	fullscreenWheelScrollLines: WheelScrollLines;
 	warnings: WarningSettings;
-	extensionSettings?: ExtensionSetting[];
 }
 
 export interface SettingsCallbacks {
@@ -107,6 +113,7 @@ export interface SettingsCallbacks {
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
 	onTransportChange: (transport: Transport) => void;
+	onSessionShareDestinationChange: (destination: SessionShareDestination) => void;
 	onHttpIdleTimeoutMsChange: (timeoutMs: number) => void;
 	onCacheWarmingModeChange: (mode: CacheWarmingMode) => void;
 	onModelThinkingLevelChange: (provider: string, modelId: string, level: ThinkingLevel) => void;
@@ -124,18 +131,16 @@ export interface SettingsCallbacks {
 	onEditorPaddingXChange: (padding: number) => void;
 	onOutputPadChange: (padding: 0 | 1) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
-	onQuietStartupChange: (enabled: boolean) => void;
+	onQuietStartupChange: (quiet: QuietStartup) => void;
 	onDefaultProjectTrustChange: (defaultProjectTrust: DefaultProjectTrust) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
-	onToolOutputChange: (toolOutput: "compact" | "expanded") => void;
-	onMotionChange: (motion: "full" | "reduced") => void;
 	onTuiModeChange: (mode: TuiMode) => void;
 	onFullscreenExitOutputChange: (output: FullscreenExitOutput) => void;
 	onFullscreenScrollbarChange: (mode: ScrollViewScrollbar) => void;
 	onFullscreenCopyOnSelectChange: (enabled: boolean) => void;
+	onFullscreenWheelScrollLinesChange: (lines: WheelScrollLines) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
-	onExtensionSettingError?: (setting: ExtensionSetting, error: unknown) => void;
 	onCancel: () => void;
 }
 
@@ -156,7 +161,8 @@ class WarningSettingsSubmenu extends Container {
 				id: "anthropic-extra-usage",
 				label: "Anthropic extra usage",
 				description: "Warn when Anthropic subscription auth may use paid extra usage",
-				currentValue: (this.state.anthropicExtraUsage ?? true) ? "true" : "false",
+				currentValue:
+					(this.state.anthropicExtraUsage ?? SETTINGS_DEFAULTS.warnings.anthropicExtraUsage) ? "true" : "false",
 				values: ["true", "false"],
 			},
 		];
@@ -208,19 +214,25 @@ function themeItems(availableThemes: string[], currentTheme: string): SelectItem
 	return availableThemes.map((name) => ({
 		value: name,
 		label: `${name === currentTheme ? "✓ " : "  "}${name}`,
+		...(name === SYSTEM_THEME_NAME ? { description: "Theme created from your terminal's colors" } : {}),
 	}));
 }
 
 const AUTOMATIC_THEME_VALUE = "/";
 
+/** The system theme comes first, then automatic mode, then the remaining themes. */
 function singleModeThemeItems(availableThemes: string[], currentTheme: string): SelectItem[] {
+	const items = themeItems(availableThemes, currentTheme);
+	const systemIndex = items.findIndex((item) => item.value === SYSTEM_THEME_NAME);
+	const system = systemIndex === -1 ? [] : items.splice(systemIndex, 1);
 	return [
+		...system,
 		{
 			value: AUTOMATIC_THEME_VALUE,
-			label: "  Automatic",
+			label: "  automatic",
 			description: "Use separate themes for light and dark terminal appearance",
 		},
-		...themeItems(availableThemes, currentTheme),
+		...items,
 	];
 }
 
@@ -238,7 +250,7 @@ function defaultAutomaticThemes(
 	if (autoTheme) return autoTheme;
 
 	const currentFixedTheme = currentThemeSetting.includes("/") ? undefined : currentThemeSetting;
-	const themeName = preferredTheme(availableThemes, currentFixedTheme, "dark");
+	const themeName = preferredTheme(availableThemes, currentFixedTheme, SYSTEM_THEME_NAME);
 	return { lightTheme: themeName, darkTheme: themeName };
 }
 
@@ -276,7 +288,7 @@ class ThemeSubmenu extends Container {
 		this.singleTheme = preferredTheme(
 			availableThemes,
 			fixedTheme ?? (autoTheme ? this.getActiveAutomaticTheme() : undefined),
-			"dark",
+			SYSTEM_THEME_NAME,
 		);
 
 		if (this.mode === "automatic") {
@@ -300,7 +312,7 @@ class ThemeSubmenu extends Container {
 		this.mode = "single";
 		const menu = new SelectSubmenu(
 			"Theme",
-			"Select a theme, or choose Automatic to follow terminal appearance.",
+			"Select a theme, or choose automatic to follow terminal appearance.",
 			singleModeThemeItems(this.availableThemes, this.singleTheme),
 			this.singleTheme,
 			(value) => {
@@ -463,7 +475,6 @@ export class SettingsSelectorComponent extends Container {
 		const followUpKey = keyDisplayText("app.message.followUp");
 		const cycleThinkingKey = keyDisplayText("app.thinking.cycle");
 		let currentWarnings = { ...config.warnings };
-		const extensionSettingsById = new Map<string, ExtensionSetting>();
 		const currentModelThinkingLevels = { ...config.modelThinkingLevels };
 		const defaultModelByValue = new Map(
 			config.availableDefaultModels.map((model) => [modelSettingKey(model), model]),
@@ -500,6 +511,14 @@ export class SettingsSelectorComponent extends Container {
 				description: "Preferred transport for providers that support multiple transports",
 				currentValue: config.transport,
 				values: ["sse", "websocket", "websocket-cached", "auto"],
+			},
+			{
+				id: "share-destination",
+				label: "Session share destination",
+				description:
+					"Where to upload sessions with /share (auto prefers Radius when authenticated, otherwise GitHub Gist)",
+				currentValue: config.sessionShareDestination,
+				values: ["auto", "gist", "radius"],
 			},
 			{
 				id: "http-idle-timeout",
@@ -548,9 +567,9 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "quiet-startup",
 				label: "Quiet startup",
-				description: "Disable verbose printing at startup",
-				currentValue: config.quietStartup ? "true" : "false",
-				values: ["true", "false"],
+				description: "Disable verbose printing at startup (header: keep only the startup header)",
+				currentValue: String(config.quietStartup),
+				values: ["true", "header", "false"],
 			},
 			{
 				id: "install-telemetry",
@@ -699,7 +718,7 @@ export class SettingsSelectorComponent extends Container {
 			{
 				id: "tui-mode",
 				label: "TUI mode",
-				description: "Interface layout; fullscreen mode is experimental",
+				description: "Interface layout; regular mode uses the terminal's normal scrollback",
 				currentValue: config.tuiMode,
 				values: ["regular", "fullscreen"],
 			},
@@ -723,6 +742,20 @@ export class SettingsSelectorComponent extends Container {
 				description: "Automatically copy selected text in fullscreen mode; disable to copy selections with Ctrl+X",
 				currentValue: config.fullscreenCopyOnSelect ? "true" : "false",
 				values: ["true", "false"],
+			},
+			{
+				id: "fullscreen-wheel-scroll-lines",
+				label: "Fullscreen wheel scrolling",
+				description:
+					"Lines per mouse-wheel event in fullscreen mode; 'auto' speeds up fast wheel spins where the terminal does not",
+				currentValue: String(config.fullscreenWheelScrollLines),
+				values: [
+					"auto",
+					...[...new Set([1, 2, 3, 5, 10, config.fullscreenWheelScrollLines])]
+						.filter((lines) => lines !== "auto")
+						.sort((a, b) => a - b)
+						.map(String),
+				],
 			},
 			{
 				id: "theme",
@@ -787,7 +820,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Show the terminal cursor while still positioning it for IME support",
+			description: "Use the terminal cursor instead of Pi's drawn cursor",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});
@@ -807,7 +840,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(editorPaddingIndex + 1, 0, {
 			id: "output-padding",
 			label: "Output padding",
-			description: "Horizontal padding for user messages, assistant messages, and thinking",
+			description: "Horizontal padding for messages, tool output, and command output",
 			currentValue: String(config.outputPad),
 			values: ["0", "1"],
 		});
@@ -841,40 +874,6 @@ export class SettingsSelectorComponent extends Container {
 			currentValue: config.showTerminalProgress ? "true" : "false",
 			values: ["true", "false"],
 		});
-
-		// Tool output and motion preferences stay with other terminal display settings.
-		const terminalProgressIndex = items.findIndex((item) => item.id === "terminal-progress");
-		items.splice(
-			terminalProgressIndex + 1,
-			0,
-			{
-				id: "tool-output",
-				label: "Tool output",
-				description: "Default tool detail level; Ctrl+O toggles this for the current session",
-				currentValue: config.toolOutput,
-				values: ["compact", "expanded"],
-			},
-			{
-				id: "motion",
-				label: "Motion",
-				description: "Use static activity indicators instead of animation",
-				currentValue: config.motion,
-				values: ["full", "reduced"],
-			},
-		);
-
-		for (const setting of config.extensionSettings ?? []) {
-			const id = `extension:${setting.extensionPath}:${setting.id}`;
-			if (extensionSettingsById.has(id)) continue;
-			extensionSettingsById.set(id, setting);
-			items.push({
-				id,
-				label: setting.label,
-				description: setting.description,
-				currentValue: setting.currentValue,
-				values: [...setting.values],
-			});
-		}
 
 		// Add borders
 		this.addChild(new DynamicBorder());
@@ -912,6 +911,9 @@ export class SettingsSelectorComponent extends Container {
 					case "transport":
 						callbacks.onTransportChange(newValue as Transport);
 						break;
+					case "share-destination":
+						callbacks.onSessionShareDestinationChange(newValue as SessionShareDestination);
+						break;
 					case "http-idle-timeout": {
 						const choice = HTTP_IDLE_TIMEOUT_CHOICES.find((item) => item.label === newValue);
 						if (choice) {
@@ -935,7 +937,7 @@ export class SettingsSelectorComponent extends Container {
 						callbacks.onCollapseChangelogChange(newValue === "true");
 						break;
 					case "quiet-startup":
-						callbacks.onQuietStartupChange(newValue === "true");
+						callbacks.onQuietStartupChange(newValue === "header" ? "header" : newValue === "true");
 						break;
 					case "install-telemetry":
 						callbacks.onEnableInstallTelemetryChange(newValue === "true");
@@ -973,12 +975,6 @@ export class SettingsSelectorComponent extends Container {
 					case "terminal-progress":
 						callbacks.onShowTerminalProgressChange(newValue === "true");
 						break;
-					case "tool-output":
-						callbacks.onToolOutputChange(newValue as "compact" | "expanded");
-						break;
-					case "motion":
-						callbacks.onMotionChange(newValue as "full" | "reduced");
-						break;
 					case "tui-mode":
 						callbacks.onTuiModeChange(newValue as TuiMode);
 						break;
@@ -991,20 +987,12 @@ export class SettingsSelectorComponent extends Container {
 					case "fullscreen-copy-on-select":
 						callbacks.onFullscreenCopyOnSelectChange(newValue === "true");
 						break;
+					case "fullscreen-wheel-scroll-lines":
+						callbacks.onFullscreenWheelScrollLinesChange(newValue === "auto" ? "auto" : parseInt(newValue, 10));
+						break;
 					case "theme":
 						callbacks.onThemeChange(newValue);
 						break;
-					default: {
-						const setting = extensionSettingsById.get(id);
-						if (!setting) break;
-						try {
-							setting.onChange(newValue);
-							setting.currentValue = newValue;
-						} catch (error) {
-							callbacks.onExtensionSettingError?.(setting, error);
-						}
-						break;
-					}
 				}
 			},
 			callbacks.onCancel,

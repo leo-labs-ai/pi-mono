@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getModel } from "@lue-labs/pi-ai/compat";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -23,7 +23,7 @@ describe("strict built-in tools", () => {
 			expect(definitions[name].constrainedSampling).toEqual({ type: "json_schema", strict: "prefer" });
 			expect(tools[name].constrainedSampling).toEqual(definitions[name].constrainedSampling);
 		}
-		for (const name of ["grep", "Glob", "ls"] as const) {
+		for (const name of ["grep", "find", "ls"] as const) {
 			expect(definitions[name].constrainedSampling).toBeUndefined();
 		}
 		// Strictness is a provider-side conversion, not a change to the execution schema.

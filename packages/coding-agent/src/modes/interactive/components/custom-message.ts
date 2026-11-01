@@ -1,6 +1,6 @@
-import type { TextContent } from "@lue-labs/pi-ai";
-import type { Component } from "@lue-labs/pi-tui";
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@lue-labs/pi-tui";
+import type { TextContent } from "@leo-labs-ai/pi-ai";
+import type { Component } from "@leo-labs-ai/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.ts";
 import type { CustomMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
@@ -87,6 +87,7 @@ export class CustomMessageComponent extends Container {
 		// Default rendering uses our box
 		this.addChild(this.box);
 		this.box.clear();
+		this.box.setPaddingX(this.outputPad);
 
 		// Default rendering: label + content
 		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);

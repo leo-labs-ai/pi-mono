@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
-import { pickModel } from "./helpers/models.ts";
 
 interface FakeOpenAIClientOptions {
 	apiKey: string;
@@ -82,7 +81,7 @@ describe("openai-completions prompt caching", () => {
 	});
 
 	function createModel(overrides: Partial<Model<"openai-completions">> = {}): Model<"openai-completions"> {
-		const { compat: _compat, ...baseModel } = pickModel("openai");
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		return {
 			...(baseModel as Omit<Model<"openai-completions">, "api">),
 			api: "openai-completions",
@@ -113,11 +112,11 @@ describe("openai-completions prompt caching", () => {
 		};
 	}
 
-	it("defaults direct OpenAI requests to long prompt cache retention", async () => {
+	it("sets prompt_cache_key for direct OpenAI requests when caching is enabled", async () => {
 		const { payload } = await captureRequest({ sessionId: "session-123" });
 
 		expect(payload?.prompt_cache_key).toBe("session-123");
-		expect(payload?.prompt_cache_retention).toBe("24h");
+		expect(payload?.prompt_cache_retention).toBeUndefined();
 	});
 
 	it("sets prompt_cache_retention to 24h for direct OpenAI requests when cacheRetention is long", async () => {
@@ -152,12 +151,12 @@ describe("openai-completions prompt caching", () => {
 		expect(payload?.prompt_cache_retention).toBeUndefined();
 	});
 
-	it("uses PI_CACHE_RETENTION overrides for direct OpenAI requests", async () => {
-		process.env.PI_CACHE_RETENTION = "short";
+	it("uses PI_CACHE_RETENTION for direct OpenAI requests", async () => {
+		process.env.PI_CACHE_RETENTION = "long";
 		const { payload } = await captureRequest({ sessionId: "session-env" });
 
 		expect(payload?.prompt_cache_key).toBe("session-env");
-		expect(payload?.prompt_cache_retention).toBeUndefined();
+		expect(payload?.prompt_cache_retention).toBe("24h");
 	});
 
 	it("sends known session-affinity headers when compat.sendSessionAffinityHeaders is enabled", async () => {
@@ -172,7 +171,7 @@ describe("openai-completions prompt caching", () => {
 		expect(headers["x-session-affinity"]).toBe("session-affinity");
 	});
 
-	it.each(["accounts/fireworks/models/glm-5p2", "accounts/fireworks/routers/glm-5p2-fast"] as const)(
+	it.each(["accounts/fireworks/models/glm-5p3", "accounts/fireworks/routers/glm-5p3-fast"] as const)(
 		"sends Fireworks session affinity for %s",
 		async (modelId) => {
 			const model = getModel("fireworks", modelId);

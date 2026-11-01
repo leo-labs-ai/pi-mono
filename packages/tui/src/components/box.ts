@@ -1,5 +1,5 @@
 import { type Component, dispatchMouseEvent, type TuiMouseDispatchResult, type TuiMouseEvent } from "../tui.ts";
-import { applyBackgroundToLine, visibleWidth } from "../utils.ts";
+import { applyBackgroundToLine, flattenLines, visibleWidth } from "../utils.ts";
 
 type RenderCache = {
 	childLines: string[];
@@ -48,6 +48,11 @@ export class Box implements Component {
 	setBgFn(bgFn?: (text: string) => string): void {
 		this.bgFn = bgFn;
 		// Don't invalidate here - we'll detect bgFn changes by sampling output
+	}
+
+	setPaddingX(paddingX: number): void {
+		this.paddingX = paddingX;
+		this.invalidateCache();
 	}
 
 	private invalidateCache(): void {
@@ -106,14 +111,16 @@ export class Box implements Component {
 		const contentWidth = Math.max(1, width - this.paddingX * 2);
 		const leftPad = " ".repeat(this.paddingX);
 
-		// Render all children
+		// Render all children. Keep the child lines unpadded: children usually return the same string
+		// objects every frame, so the cache check below is a cheap identity comparison per line.
+		// Padding here would create new strings that must be compared character by character.
 		const childLines: string[] = [];
 		const mouseChildren: Array<{ component: Component; height: number }> = [];
 		for (const child of this.children) {
 			const lines = child.render(contentWidth);
 			mouseChildren.push({ component: child, height: lines.length });
 			for (const line of lines) {
-				childLines.push(leftPad + line);
+				childLines.push(line);
 			}
 		}
 		this.mouseLayout = { width: contentWidth, children: mouseChildren };
@@ -140,7 +147,7 @@ export class Box implements Component {
 
 		// Content
 		for (const line of childLines) {
-			result.push(this.applyBg(line, width));
+			result.push(this.applyBg(leftPad + line, width));
 		}
 
 		// Bottom padding
@@ -149,19 +156,21 @@ export class Box implements Component {
 		}
 
 		// Update cache
+		flattenLines(result);
 		this.cache = { childLines, width, bgSample, lines: result };
 
 		return result;
 	}
 
 	private applyBg(line: string, width: number): string {
-		const visLen = visibleWidth(line);
-		const padNeeded = Math.max(0, width - visLen);
-		const padded = line + " ".repeat(padNeeded);
-
+		// applyBackgroundToLine pads to width itself (one measurement either way) and re-opens
+		// the background after any reset inside the content, so a child line that emits
+		// ESC[0m or ESC[49m (diffs, syntax highlighting, raw command output) cannot punch a
+		// hole in the panel background. Wrapping the padded line in bgFn alone does not.
 		if (this.bgFn) {
-			return applyBackgroundToLine(padded, width, this.bgFn);
+			return applyBackgroundToLine(line, width, this.bgFn);
 		}
-		return padded;
+		const visLen = visibleWidth(line);
+		return line + " ".repeat(Math.max(0, width - visLen));
 	}
 }

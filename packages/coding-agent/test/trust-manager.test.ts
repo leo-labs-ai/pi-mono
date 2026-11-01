@@ -54,14 +54,6 @@ describe("ProjectTrustStore", () => {
 			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 
 			rmSync(join(cwd, ".pi"), { recursive: true, force: true });
-			mkdirSync(join(cwd, ".pi", "agents"), { recursive: true });
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
-
-			rmSync(join(cwd, ".pi"), { recursive: true, force: true });
-			mkdirSync(join(cwd, ".pi", "chains"), { recursive: true });
-			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
-
-			rmSync(join(cwd, ".pi"), { recursive: true, force: true });
 			mkdirSync(join(cwd, ".agents", "skills"), { recursive: true });
 			expect(hasTrustRequiringProjectResources(cwd)).toBe(true);
 		} finally {

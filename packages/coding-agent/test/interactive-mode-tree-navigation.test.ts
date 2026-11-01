@@ -1,4 +1,4 @@
-import { Container } from "@lue-labs/pi-tui";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -37,7 +37,6 @@ function createTreeUI() {
 		isInitialized: true,
 		footer: { invalidate: vi.fn() },
 		ui: { terminal: { rows: 24, setProgress: vi.fn() }, requestRender: vi.fn() },
-		clearChatForRebuild: vi.fn(() => ui.chatContainer.clear()),
 		showSelector: (
 			create: (done: () => void) => { component: TreeSelectorComponent; focus: TreeSelectorComponent },
 		) => {

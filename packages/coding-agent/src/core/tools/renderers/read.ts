@@ -7,8 +7,8 @@
  */
 
 import { basename, dirname, isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
-import type { ImageContent, TextContent, ToolReferenceContent } from "@lue-labs/pi-ai";
-import { Text } from "@lue-labs/pi-tui";
+import type { ImageContent, TextContent } from "@leo-labs-ai/pi-ai";
+import { Text } from "@leo-labs-ai/pi-tui";
 import { getReadmePath } from "../../../config.ts";
 import { keyHint, keyText } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
@@ -16,7 +16,7 @@ import { formatPathRelativeToCwdOrAbsolute } from "../../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import { resolveToCwd } from "../path-utils.ts";
 import type { ReadToolDetails } from "../read.ts";
-import { getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import { formatReadLineRange, getTextOutput, renderToolPath, replaceTabs, str } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../truncate.ts";
 
 interface CompactReadClassification {
@@ -24,16 +24,14 @@ interface CompactReadClassification {
 	label: string;
 }
 const COMPACT_RESOURCE_FILE_NAMES = new Set(["AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"]);
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
-function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
-	if (args?.offset === undefined && args?.limit === undefined) return "";
-	const startLine = args.offset ?? 1;
-	const endLine = args.limit !== undefined ? startLine + args.limit - 1 : "";
-	return theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+type ReadRenderArgs = { path?: string; file_path?: string; offset?: unknown; limit?: unknown };
+function styledReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
+	const range = formatReadLineRange(args?.offset, args?.limit);
+	return range ? theme.fg("warning", range) : "";
 }
-function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, label: string, cwd: string): string {
+function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold(label))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
+	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${styledReadLineRange(args, theme)}`;
 }
 function trimTrailingEmptyLines(lines: string[]): string[] {
 	let end = lines.length;
@@ -89,29 +87,28 @@ function formatCompactReadCall(
 	classification: CompactReadClassification,
 	args: ReadRenderArgs | undefined,
 	theme: Theme,
-	label: string,
 ): string {
 	const expandHint = theme.fg("dim", ` (${keyText("app.tools.expand")} to expand)`);
 	if (classification.kind === "skill") {
 		return (
 			theme.fg("customMessageLabel", `\x1b[1m[skill]\x1b[22m `) +
 			theme.fg("customMessageText", classification.label) +
-			formatReadLineRange(args, theme) +
+			styledReadLineRange(args, theme) +
 			expandHint
 		);
 	}
 
 	return (
-		theme.fg("toolTitle", theme.bold(`${label} ${classification.kind}`)) +
+		theme.fg("toolTitle", theme.bold(`read ${classification.kind}`)) +
 		" " +
 		theme.fg("accent", classification.label) +
-		formatReadLineRange(args, theme) +
+		styledReadLineRange(args, theme) +
 		expandHint
 	);
 }
 function formatReadResult(
 	args: ReadRenderArgs | undefined,
-	result: { content: (TextContent | ImageContent | ToolReferenceContent)[]; details?: ReadToolDetails },
+	result: { content: (TextContent | ImageContent)[]; details?: ReadToolDetails },
 	options: ToolRenderResultOptions,
 	theme: Theme,
 	showImages: boolean,
@@ -148,41 +145,29 @@ function formatReadResult(
 	return text;
 }
 
-export type ReadRenderers = Pick<ToolDefinition<any, ReadToolDetails | undefined>, "renderCall" | "renderResult">;
-
-/**
- * The read tool is registered under more than one label (`read` and the native-style `Read`), so the
- * title the renderer prints has to follow the definition rather than be hardcoded.
- */
-export function createReadRenderers(label = "Read"): ReadRenderers {
-	return {
-		renderCall(rawArgs, theme, context) {
-			const args = rawArgs as ReadRenderArgs | undefined;
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
-			text.setText(
-				classification
-					? formatCompactReadCall(classification, args, theme, label)
-					: formatReadCall(args, theme, label, context.cwd),
-			);
-			return text;
-		},
-		renderResult(result, options, theme, context) {
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(
-				formatReadResult(
-					context.args as ReadRenderArgs | undefined,
-					result,
-					options,
-					theme,
-					context.showImages,
-					context.cwd,
-					context.isError,
-				),
-			);
-			return text;
-		},
-	};
-}
-
-export const readRenderers: ReadRenderers = createReadRenderers();
+export const readRenderers: Pick<ToolDefinition<any, ReadToolDetails | undefined>, "renderCall" | "renderResult"> = {
+	renderCall(rawArgs, theme, context) {
+		const args = rawArgs as ReadRenderArgs | undefined;
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		const classification = !context.expanded ? getCompactReadClassification(args, context.cwd) : undefined;
+		text.setText(
+			classification ? formatCompactReadCall(classification, args, theme) : formatReadCall(args, theme, context.cwd),
+		);
+		return text;
+	},
+	renderResult(result, options, theme, context) {
+		const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+		text.setText(
+			formatReadResult(
+				context.args as ReadRenderArgs | undefined,
+				result,
+				options,
+				theme,
+				context.showImages,
+				context.cwd,
+				context.isError,
+			),
+		);
+		return text;
+	},
+};

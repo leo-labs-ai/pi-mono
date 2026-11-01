@@ -56,12 +56,30 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 });
 
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import type { Context, Message } from "../src/types.ts";
+import type { Context, Message, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
-import { hasCompatFlag, pickModel } from "./helpers/models.ts";
 
-const baseModel = pickModel("amazon-bedrock", hasCompatFlag("supportsStrictMode"));
-const noStrictModel = pickModel("amazon-bedrock", (m) => !hasCompatFlag("supportsStrictMode")(m));
+const baseModel: Model<"bedrock-converse-stream"> = {
+	id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+	name: "Claude Sonnet 4.5 (US)",
+	api: "bedrock-converse-stream",
+	provider: "amazon-bedrock",
+	baseUrl: "https://bedrock-runtime.us-east-1.amazonaws.com",
+	reasoning: true,
+	input: ["text", "image"],
+	cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+	contextWindow: 200000,
+	maxTokens: 64000,
+	compat: { supportsStrictMode: true },
+};
+
+const novaModel: Model<"bedrock-converse-stream"> = {
+	...baseModel,
+	id: "amazon.nova-lite-v1:0",
+	name: "Nova Lite",
+	reasoning: false,
+	compat: undefined,
+};
 
 async function capturePayload(context: Context, model = baseModel): Promise<unknown> {
 	let capturedPayload: unknown;
@@ -97,7 +115,7 @@ describe("Bedrock constrained sampling", () => {
 		expect(toolConfig.tools[0].toolSpec.strict).toBe(true);
 
 		context.tools![0].constrainedSampling = { type: "json_schema", strict: "prefer" };
-		const novaPayload = await capturePayload(context, noStrictModel);
+		const novaPayload = await capturePayload(context, novaModel);
 		const novaToolConfig = (
 			novaPayload as {
 				toolConfig: { tools: Array<{ toolSpec: { strict?: boolean } }> };
@@ -222,20 +240,14 @@ describe("bedrock convertMessages skips unknown content types", () => {
 		expect(p.messages[0].content).toEqual([{ text: "<empty>" }]);
 	});
 
-	it("drops a lone blank user string message (filtered upstream by transformMessages)", async () => {
-		// A user message whose entire content is blank carries no visible content, so
-		// transformMessages (hasVisibleUserContent) removes it before the bedrock
-		// converter runs -- this preserves assistant tool_use -> toolResult adjacency
-		// (CACHE CRITICAL). The per-message "<empty>" placeholder still applies to a
-		// message that keeps a non-empty content array which only empties out during
-		// conversion (e.g. the unknown-only blocks case above), since that array counts
-		// as visible content and is not dropped upstream.
+	it("replaces blank user string content with a placeholder", async () => {
 		const payload = await capturePayload({
 			messages: [{ role: "user", content: "   ", timestamp: Date.now() }],
 		});
 		expect(payload).toBeDefined();
 		const p = payload as { messages: Array<{ role: string; content: unknown[] }> };
-		expect(p.messages).toHaveLength(0);
+		expect(p.messages).toHaveLength(1);
+		expect(p.messages[0].content).toEqual([{ text: "<empty>" }]);
 	});
 
 	it("filters blank user text blocks when other content remains", async () => {
@@ -295,11 +307,33 @@ describe("bedrock convertMessages skips unknown content types", () => {
 
 	it("replaces blank tool result content with a placeholder", async () => {
 		const messages: Message[] = [
-			// The call must be declared: a tool_result whose tool_use is absent from
-			// the history is an orphan and is dropped at the transform seam (#479).
+			{
+				role: "toolResult",
+				toolCallId: "tool-1",
+				toolName: "tool",
+				content: [{ type: "text", text: "" }],
+				isError: false,
+				timestamp: Date.now(),
+			},
+		];
+		const payload = await capturePayload({ messages });
+		expect(payload).toBeDefined();
+		const p = payload as {
+			messages: Array<{ role: string; content: Array<{ toolResult: { content: unknown[] } }> }>;
+		};
+		expect(p.messages).toHaveLength(1);
+		expect(p.messages[0].content[0].toolResult.content).toEqual([{ text: "<empty>" }]);
+	});
+
+	// Regression for #10794: Claude rejects error tool results that contain images.
+	it("moves images of error tool results after the tool results", async () => {
+		const messages: Message[] = [
 			{
 				role: "assistant",
-				content: [{ type: "toolCall", id: "tool-1", name: "tool", arguments: {} }],
+				content: [
+					{ type: "toolCall", id: "call-1", name: "codemode", arguments: {} },
+					{ type: "toolCall", id: "call-2", name: "read", arguments: {} },
+				],
 				api: "bedrock-converse-stream",
 				provider: "amazon-bedrock",
 				model: baseModel.id,
@@ -316,20 +350,71 @@ describe("bedrock convertMessages skips unknown content types", () => {
 			},
 			{
 				role: "toolResult",
-				toolCallId: "tool-1",
-				toolName: "tool",
-				content: [{ type: "text", text: "" }],
+				toolCallId: "call-1",
+				toolName: "codemode",
+				content: [
+					{ type: "text", text: "Script failed" },
+					{ type: "image", data: "AAAA", mimeType: "image/png" },
+					{ type: "text", text: "Script error" },
+				],
+				isError: true,
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId: "call-2",
+				toolName: "read",
+				content: [{ type: "image", data: "BBBB", mimeType: "image/png" }],
 				isError: false,
 				timestamp: Date.now(),
 			},
 		];
-		const payload = await capturePayload({ messages });
-		expect(payload).toBeDefined();
-		const p = payload as {
-			messages: Array<{ role: string; content: Array<{ toolResult: { content: unknown[] } }> }>;
+		const payload = (await capturePayload({ messages })) as {
+			messages: Array<{ role: string; content: Array<Record<string, any>> }>;
 		};
-		expect(p.messages).toHaveLength(2);
-		expect(p.messages[1].content[0].toolResult.content).toEqual([{ text: "<empty>" }]);
+		const content = payload.messages[1].content;
+		expect(content).toHaveLength(4);
+		expect(content[0].toolResult).toEqual({
+			toolUseId: "call-1",
+			content: [
+				{ text: "Script failed" },
+				{ text: "(image attached after the tool results)" },
+				{ text: "Script error" },
+			],
+			status: "error",
+		});
+		expect(content[1].toolResult.status).toBe("success");
+		expect(content[1].toolResult.content).toEqual([{ image: expect.objectContaining({ format: "png" }) }]);
+		expect(content[2]).toEqual({ text: "Images from the error result of tool call call-1 (codemode):" });
+		expect(content[3]).toEqual({ image: expect.objectContaining({ format: "png" }) });
+	});
+
+	it("keeps images in error tool results for non-Claude models", async () => {
+		const messages: Message[] = [
+			{
+				role: "toolResult",
+				toolCallId: "call-1",
+				toolName: "codemode",
+				content: [
+					{ type: "text", text: "Script failed" },
+					{ type: "image", data: "AAAA", mimeType: "image/png" },
+				],
+				isError: true,
+				timestamp: Date.now(),
+			},
+		];
+		const payload = (await capturePayload({ messages }, novaModel)) as {
+			messages: Array<{ role: string; content: Array<Record<string, any>> }>;
+		};
+		expect(payload.messages[0].content).toEqual([
+			{
+				toolResult: {
+					toolUseId: "call-1",
+					content: [{ text: "Script failed" }, { image: expect.objectContaining({ format: "png" }) }],
+					status: "error",
+				},
+			},
+		]);
 	});
 
 	it("skips assistant messages with only unknown content blocks", async () => {

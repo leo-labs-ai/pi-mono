@@ -1,24 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { getModel, streamSimple } from "../src/compat.ts";
-import { allOf, isReasoning, pickModel, supportsThinkingLevel } from "./helpers/models.ts";
-
-// Adaptive-thinking Anthropic models are exactly the ones exposing the xhigh level
-// (opus 4.6+); budget-based reasoning models do not expose xhigh.
-const budgetBasedReasoningModel = allOf(isReasoning, (model) => !supportsThinkingLevel("xhigh")(model));
-// Fable 5 exposes xhigh but cannot be turned off (off: null) and never sends
-// thinking.type=disabled, so adaptive predicates also require "off" support.
-const adaptiveReasoningModel = allOf(isReasoning, supportsThinkingLevel("xhigh"), supportsThinkingLevel("off"));
-// Models whose xhigh level maps to the "xhigh" effort (opus 4.7+); opus 4.6 maps to "max".
-const xhighEffortReasoningModel = allOf(
-	isReasoning,
-	(model) => model.thinkingLevelMap?.xhigh === "xhigh",
-	supportsThinkingLevel("off"),
-);
-
 import type { Context, Model, SimpleStreamOptions } from "../src/types.ts";
 
 interface AnthropicThinkingPayload {
-	max_tokens?: number;
 	thinking?: { type: string; budget_tokens?: number; display?: string };
 	output_config?: { effort?: string };
 }
@@ -39,7 +23,6 @@ function makePayloadCaptureContext(): Context {
 async function capturePayload(
 	model: Model<"anthropic-messages">,
 	options?: SimpleStreamOptions,
-	context: Context = makePayloadCaptureContext(),
 ): Promise<AnthropicThinkingPayload> {
 	let capturedPayload: AnthropicThinkingPayload | undefined;
 	const payloadCaptureModel: Model<"anthropic-messages"> = {
@@ -47,7 +30,7 @@ async function capturePayload(
 		baseUrl: "http://127.0.0.1:9",
 	};
 
-	const s = streamSimple(payloadCaptureModel, context, {
+	const s = streamSimple(payloadCaptureModel, makePayloadCaptureContext(), {
 		...options,
 		apiKey: "fake-key",
 		onPayload: (payload) => {
@@ -128,21 +111,21 @@ async function runWithoutReasoning(model: Model<"anthropic-messages">): Promise<
 
 describe("Anthropic thinking disable payload", () => {
 	it("sends thinking.type=disabled for budget-based reasoning models when thinking is off", async () => {
-		const payload = await capturePayload(pickModel("anthropic", budgetBasedReasoningModel));
+		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-4-5"));
 
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
 	});
 
 	it("sends thinking.type=disabled for adaptive reasoning models when thinking is off", async () => {
-		const payload = await capturePayload(pickModel("anthropic", adaptiveReasoningModel));
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-6"));
 
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
 	});
 
 	it("sends thinking.type=disabled for Claude Opus 4.8 when thinking is off", async () => {
-		const payload = await capturePayload(pickModel("anthropic", adaptiveReasoningModel));
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-8"));
 
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
@@ -155,26 +138,8 @@ describe("Anthropic thinking disable payload", () => {
 		expect(payload.output_config).toBeUndefined();
 	});
 
-	it("disables budget-based thinking when context clamp leaves no valid budget", async () => {
-		const payload = await capturePayload(
-			{ ...pickModel("anthropic", budgetBasedReasoningModel), contextWindow: 2048 },
-			{ reasoning: "high", maxTokens: 4096 },
-		);
-
-		expect(payload.max_tokens).toBe(1);
-		expect(payload.thinking).toEqual({ type: "disabled" });
-		expect(payload.output_config).toBeUndefined();
-	});
-
 	it("uses adaptive thinking for Claude Opus 4.8 when reasoning is enabled", async () => {
-		const payload = await capturePayload(pickModel("anthropic", adaptiveReasoningModel), { reasoning: "high" });
-
-		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
-		expect(payload.output_config).toEqual({ effort: "high" });
-	});
-
-	it("uses adaptive thinking for Claude Sonnet 5 when reasoning is enabled", async () => {
-		const payload = await capturePayload(getModel("anthropic", "claude-sonnet-5"), { reasoning: "high" });
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-8"), { reasoning: "high" });
 
 		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "high" });
@@ -188,7 +153,7 @@ describe("Anthropic thinking disable payload", () => {
 	});
 
 	it("maps xhigh reasoning to effort=xhigh for Claude Opus 4.8", async () => {
-		const payload = await capturePayload(pickModel("anthropic", xhighEffortReasoningModel), { reasoning: "xhigh" });
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-8"), { reasoning: "xhigh" });
 
 		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
 		expect(payload.output_config).toEqual({ effort: "xhigh" });
@@ -197,7 +162,7 @@ describe("Anthropic thinking disable payload", () => {
 
 describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic thinking disable E2E", () => {
 	it("disables thinking for Claude reasoning models", { retry: 2, timeout: 30000 }, async () => {
-		const result = await runWithoutReasoning(pickModel("anthropic", budgetBasedReasoningModel));
+		const result = await runWithoutReasoning(getModel("anthropic", "claude-sonnet-4-5"));
 
 		expect(result.thinkingEventCount).toBe(0);
 		expect(result.thinkingCharCount).toBe(0);

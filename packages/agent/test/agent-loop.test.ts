@@ -1,31 +1,23 @@
 import {
 	type AssistantMessage,
-	type AssistantMessageEvent,
-	EventStream,
+	createAssistantMessageEventStream,
 	type Message,
 	type Model,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
-import { agentLoop, agentLoopContinue, runAgentLoop } from "../src/agent-loop.ts";
+import { agentLoop, agentLoopContinue, runAgentLoop, runToolCall } from "../src/agent-loop.ts";
 import { setDefaultStreamFn } from "../src/index.ts";
-import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.ts";
-
-// Mock stream for testing - mimics MockAssistantStream
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
+import type {
+	AgentContext,
+	AgentEvent,
+	AgentLoopConfig,
+	AgentMessage,
+	AgentTool,
+	AgentToolCall,
+} from "../src/types.ts";
 
 function createUsage() {
 	return {
@@ -89,7 +81,7 @@ describe("default stream function compatibility", () => {
 		let calls = 0;
 		setDefaultStreamFn(() => {
 			calls++;
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				stream.push({
 					type: "done",
@@ -133,7 +125,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Hi there!" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -189,7 +181,7 @@ describe("agentLoop with AgentMessage", () => {
 				// The provider receives a transcript: no top-level prompt or tool fields.
 				expect(Object.keys(providerContext)).toEqual(["messages"]);
 				expect(providerContext.messages[0]).toBe(initialSystem);
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -238,7 +230,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -290,7 +282,7 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -363,7 +355,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// First call: return tool call
@@ -406,6 +398,61 @@ describe("agentLoop with AgentMessage", () => {
 		expect(toolResult?.role === "toolResult" ? toolResult.usage : undefined).toEqual(patchedToolUsage);
 	});
 
+	// #10549
+	it("records how long execute() took on the tool result, excluding hooks", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				await sleep(30);
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			beforeToolCall: async ({ toolCall }) => {
+				await sleep(100);
+				return toolCall.id === "blocked" ? { block: true, reason: "no" } : undefined;
+			},
+		};
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = createAssistantMessageEventStream();
+			queueMicrotask(() => {
+				const message =
+					callIndex === 0
+						? createAssistantMessage(
+								[
+									{ type: "toolCall", id: "ran", name: "echo", arguments: { value: "a" } },
+									{ type: "toolCall", id: "blocked", name: "echo", arguments: { value: "b" } },
+								],
+								"toolUse",
+							)
+						: createAssistantMessage([{ type: "text", text: "done" }]);
+				stream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+				callIndex++;
+			});
+			return stream;
+		};
+		const stream = agentLoop([createUserMessage("go")], { messages: [], tools: [tool] }, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// drain
+		}
+		const results = (await stream.result()).filter(
+			(message): message is ToolResultMessage => message.role === "toolResult",
+		);
+		const [ran, blocked] = results;
+		expect(ran?.durationMs).toBeGreaterThanOrEqual(25);
+		expect(ran?.durationMs).toBeLessThan(100);
+		expect(blocked?.isError).toBe(true);
+		expect(blocked).not.toHaveProperty("durationMs");
+	});
+
 	it("should not execute tool calls from a length-truncated assistant message", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
@@ -435,7 +482,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// Output hit the token limit mid tool call. The salvage parser can
@@ -514,7 +561,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -586,7 +633,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -661,7 +708,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -764,7 +811,7 @@ describe("agentLoop with AgentMessage", () => {
 				);
 			}
 
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					// First call: return two tool calls
@@ -861,7 +908,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -954,7 +1001,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -1028,7 +1075,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([userPrompt], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -1094,7 +1141,7 @@ describe("agentLoop with AgentMessage", () => {
 			},
 			undefined,
 			() => {
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					stream.push({
 						type: "done",
@@ -1145,7 +1192,7 @@ describe("agentLoop with AgentMessage", () => {
 				undefined,
 				() => {
 					providerCalls++;
-					const stream = new MockAssistantStream();
+					const stream = createAssistantMessageEventStream();
 					queueMicrotask(() => {
 						stream.push({
 							type: "error",
@@ -1202,7 +1249,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const stream = agentLoop([createUserMessage("run")], { messages: [], tools: [tool] }, config, undefined, () => {
 			providerCalls++;
-			const response = new MockAssistantStream();
+			const response = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				response.push({
 					type: "done",
@@ -1240,7 +1287,7 @@ describe("agentLoop with AgentMessage", () => {
 			undefined,
 			() => {
 				providerCalls++;
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1281,7 +1328,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		const stream = agentLoop([createUserMessage("run")], { messages: [], tools: [tool] }, config, undefined, () => {
 			providerCalls++;
-			const response = new MockAssistantStream();
+			const response = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					providerCalls === 1
@@ -1336,7 +1383,7 @@ describe("agentLoop with AgentMessage", () => {
 						),
 					);
 				}
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1393,7 +1440,7 @@ describe("agentLoop with AgentMessage", () => {
 				expect(model).toBe(replacementModel);
 				expect(context.messages).toEqual([canonicalMessage]);
 				expect(options?.reasoning).toBe("high");
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1434,7 +1481,7 @@ describe("agentLoop with AgentMessage", () => {
 			undefined,
 			(_model, context) => {
 				requestIncludedSteering.push(context.messages.includes(lateSteering));
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					response.push({
 						type: "done",
@@ -1499,7 +1546,7 @@ describe("agentLoop with AgentMessage", () => {
 					(message) => message.role === "system" && message.content === "updated guidance",
 				);
 			}
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (llmCalls === 1) {
 					mockStream.push({
@@ -1563,7 +1610,7 @@ describe("agentLoop with AgentMessage", () => {
 			(_model, context) => {
 				providerCalls++;
 				if (providerCalls === 2) secondRequestIncludedSteering = context.messages.includes(lateSteering);
-				const response = new MockAssistantStream();
+				const response = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					const message =
 						providerCalls === 1
@@ -1631,7 +1678,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (llmCalls === 1) {
 					const message = createAssistantMessage(
@@ -1682,136 +1729,6 @@ describe("agentLoop with AgentMessage", () => {
 		]);
 	});
 
-	it("reports hasMoreToolCalls to shouldStopAfterTurn, false for a terminal tool batch", async () => {
-		const toolSchema = Type.Object({ value: Type.String() });
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
-			name: "echo",
-			label: "Echo",
-			description: "Echo tool",
-			parameters: toolSchema,
-			async execute(_toolCallId, params) {
-				return {
-					content: [{ type: "text", text: `echoed: ${params.value}` }],
-					details: { value: params.value },
-				};
-			},
-		};
-		const finishTool: AgentTool<typeof toolSchema, { value: string }> = {
-			name: "finish",
-			label: "Finish",
-			description: "Terminal tool",
-			parameters: toolSchema,
-			async execute(_toolCallId, params) {
-				return {
-					content: [{ type: "text", text: "finished" }],
-					details: { value: params.value },
-					terminate: true,
-				};
-			},
-		};
-
-		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool, finishTool] };
-		const observed: boolean[] = [];
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-			shouldStopAfterTurn: async ({ hasMoreToolCalls }) => {
-				observed.push(hasMoreToolCalls);
-				return false;
-			},
-		};
-
-		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("run then finish")], context, config, undefined, () => {
-			llmCalls++;
-			const mockStream = new MockAssistantStream();
-			queueMicrotask(() => {
-				if (llmCalls === 1) {
-					mockStream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantMessage(
-							[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
-							"toolUse",
-						),
-					});
-				} else {
-					mockStream.push({
-						type: "done",
-						reason: "toolUse",
-						message: createAssistantMessage(
-							[{ type: "toolCall", id: "tool-2", name: "finish", arguments: { value: "bye" } }],
-							"toolUse",
-						),
-					});
-				}
-			});
-			return mockStream;
-		});
-
-		for await (const _event of stream) {
-			// consume
-		}
-
-		expect(llmCalls).toBe(2);
-		// Turn 1's echo batch keeps the run going; turn 2's terminal finish batch does not.
-		expect(observed).toEqual([true, false]);
-	});
-
-	it("should stop after maxTurns assistant turns even if the model keeps calling tools", async () => {
-		const toolSchema = Type.Object({ value: Type.String() });
-		const executed: string[] = [];
-		const tool: AgentTool<typeof toolSchema, { value: string }> = {
-			name: "echo",
-			label: "Echo",
-			description: "Echo tool",
-			parameters: toolSchema,
-			async execute(_toolCallId, params) {
-				executed.push(params.value);
-				return {
-					content: [{ type: "text", text: `echoed: ${params.value}` }],
-					details: { value: params.value },
-				};
-			},
-		};
-
-		const context: AgentContext = { systemPrompt: "", messages: [], tools: [tool] };
-		// maxTurns=2: the loop must stop after 2 assistant turns even though the
-		// stream below ALWAYS returns a tool call (an unbounded loop without the cap).
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-			maxTurns: 2,
-		};
-
-		let llmCalls = 0;
-		const stream = agentLoop([createUserMessage("loop forever")], context, config, undefined, () => {
-			llmCalls++;
-			const mockStream = new MockAssistantStream();
-			const callId = `tool-${llmCalls}`;
-			queueMicrotask(() => {
-				const message = createAssistantMessage(
-					[{ type: "toolCall", id: callId, name: "echo", arguments: { value: `v${llmCalls}` } }],
-					"toolUse",
-				);
-				mockStream.push({ type: "done", reason: "toolUse", message });
-			});
-			return mockStream;
-		});
-
-		const events: AgentEvent[] = [];
-		for await (const event of stream) {
-			events.push(event);
-		}
-		await stream.result();
-
-		// Exactly maxTurns LLM calls / tool executions, then a graceful agent_end.
-		expect(llmCalls).toBe(2);
-		expect(executed).toEqual(["v1", "v2"]);
-		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(2);
-		expect(events[events.length - 1]?.type).toBe("agent_end");
-	});
-
 	it("should stop after a tool batch when every tool result sets terminate=true", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
@@ -1841,7 +1758,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
 					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
@@ -1892,7 +1809,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					llmCalls === 1
@@ -1954,7 +1871,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message =
 					llmCalls === 1
@@ -2008,7 +1925,7 @@ describe("agentLoop with AgentMessage", () => {
 
 		let callIndex = 0;
 		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callIndex === 0) {
 					const message = createAssistantMessage(
@@ -2073,7 +1990,7 @@ describe("agentLoop with AgentMessage", () => {
 		let llmCalls = 0;
 		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
 			llmCalls++;
-			const mockStream = new MockAssistantStream();
+			const mockStream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage(
 					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
@@ -2125,7 +2042,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -2191,7 +2108,7 @@ describe("agentLoopContinue with AgentMessage", () => {
 		};
 
 		const streamFn = () => {
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				const message = createAssistantMessage([{ type: "text", text: "Response to custom message" }]);
 				stream.push({ type: "done", reason: "stop", message });
@@ -2213,149 +2130,105 @@ describe("agentLoopContinue with AgentMessage", () => {
 	});
 });
 
-describe("length-truncated trailing tool call guard", () => {
-	const toolSchema = Type.Object({ path: Type.String(), content: Type.String() });
+describe("runToolCall", () => {
+	const echoSchema = Type.Object({ value: Type.String() });
+	const echo: AgentTool<typeof echoSchema> = {
+		name: "echo",
+		label: "Echo",
+		description: "Echo tool",
+		parameters: echoSchema,
+		outputSchema: Type.Object({ value: Type.String() }),
+		async execute(_toolCallId, params, _signal, onUpdate) {
+			onUpdate?.({ content: [{ type: "text", text: "partial" }], details: {} });
+			return {
+				content: [{ type: "text", text: params.value }],
+				details: {},
+				structuredContent: { value: params.value },
+			};
+		},
+	};
+	const failing: AgentTool = {
+		name: "failing",
+		label: "Failing",
+		description: "Returns an error result",
+		parameters: Type.Object({}),
+		async execute() {
+			return { content: [{ type: "text", text: "bad" }], details: { partial: true }, isError: true };
+		},
+	};
+	const assistantMessage = createAssistantMessage([]);
+	const call = (id: string, name: string, args: AgentToolCall["arguments"]): AgentToolCall => ({
+		type: "toolCall",
+		id,
+		name,
+		arguments: args,
+	});
 
-	function createWriteTool(executedCalls: string[]): AgentTool<typeof toolSchema, { path: string }> {
-		return {
-			name: "write",
-			label: "Write",
-			description: "Write a file",
-			parameters: toolSchema,
-			async execute(toolCallId, params) {
-				executedCalls.push(toolCallId);
-				return {
-					content: [{ type: "text", text: `wrote ${params.path}` }],
-					details: { path: params.path },
-				};
+	it("validates, runs the hooks, and reports failures as error outcomes", async () => {
+		const hookCalls: string[] = [];
+		const updates: unknown[] = [];
+		const options = {
+			tools: [echo, failing],
+			assistantMessage,
+			context: { messages: [] },
+			beforeToolCall: async ({ toolCall, args }: { toolCall: { id: string }; args: unknown }) => {
+				hookCalls.push(`before ${toolCall.id}`);
+				if ((args as { value?: string }).value === "blocked") return { block: true, reason: "nope" };
+				return undefined;
+			},
+			afterToolCall: async ({ toolCall }: { toolCall: { id: string } }) => {
+				hookCalls.push(`after ${toolCall.id}`);
+				return undefined;
+			},
+			onUpdate: (partial: unknown) => {
+				updates.push(partial);
 			},
 		};
-	}
 
-	function runToOnlyToolResults(
-		firstMessage: AssistantMessage,
-	): Promise<{ messages: AgentMessage[]; executedCalls: string[] }> {
-		const executedCalls: string[] = [];
-		const context: AgentContext = {
-			systemPrompt: "You are helpful.",
-			messages: [],
-			tools: [createWriteTool(executedCalls)],
-		};
-		const config: AgentLoopConfig = {
-			model: createModel(),
-			convertToLlm: identityConverter,
-		};
-		let callIndex = 0;
-		const streamFn = () => {
-			const stream = new MockAssistantStream();
-			queueMicrotask(() => {
-				if (callIndex === 0) {
-					stream.push({
-						type: "done",
-						reason: firstMessage.stopReason as "length" | "toolUse",
-						message: firstMessage,
-					});
-				} else {
-					const message = createAssistantMessage([{ type: "text", text: "done" }]);
-					stream.push({ type: "done", reason: "stop", message });
-				}
-				callIndex++;
+		expect(await runToolCall(call("a", "echo", { value: "a" }), options)).toMatchObject({
+			toolCall: { id: "a" },
+			result: { structuredContent: { value: "a" } },
+			isError: false,
+		});
+		expect(await runToolCall(call("b", "echo", { value: { nested: true } }), options)).toMatchObject({
+			isError: true,
+		});
+		expect(await runToolCall(call("c", "echo", { value: "blocked" }), options)).toMatchObject({
+			result: { content: [{ type: "text", text: "nope" }] },
+			isError: true,
+		});
+		expect(await runToolCall(call("d", "missing", {}), options)).toMatchObject({
+			result: { content: [{ type: "text", text: "Tool missing not found" }] },
+			isError: true,
+		});
+		// Error results keep their details.
+		expect(await runToolCall(call("e", "failing", {}), options)).toMatchObject({
+			result: { details: { partial: true } },
+			isError: true,
+		});
+		expect(updates).toEqual([{ content: [{ type: "text", text: "partial" }], details: {} }]);
+		// Validation failures and unknown tools never reach the hooks; blocked calls skip afterToolCall.
+		expect(hookCalls).toEqual(["before a", "after a", "before c", "before e", "after e"]);
+	});
+
+	it("lets afterToolCall replace structured content and drops it when only content is replaced", async () => {
+		const redacted = [{ type: "text" as const, text: "redacted" }];
+		const results = [
+			{ content: redacted },
+			{ structuredContent: { value: "replaced" } },
+			{ content: redacted, structuredContent: { value: "both" } },
+			{ details: { note: "kept" } },
+		];
+		const seen: unknown[] = [];
+		for (const afterResult of results) {
+			const outcome = await runToolCall(call("x", "echo", { value: "original" }), {
+				tools: [echo],
+				assistantMessage,
+				context: { messages: [] },
+				afterToolCall: async () => afterResult,
 			});
-			return stream;
-		};
-		return (async () => {
-			const stream = agentLoop([createUserMessage("go")], context, config, undefined, streamFn);
-			for await (const _event of stream) {
-				// drain
-			}
-			return { messages: await stream.result(), executedCalls };
-		})();
-	}
-
-	it("does not execute the trailing tool call of a length-stopped message and returns a truncation error result", async () => {
-		// Simulates the 2026-07-09 fable incident: max_tokens exhausted mid tool
-		// call, lenient partial-JSON parse left only {path} (content missing).
-		const message = createAssistantMessage(
-			[
-				{ type: "text", text: "Cutting the new module now." },
-				{ type: "toolCall", id: "tool-truncated", name: "write", arguments: { path: "/tmp/x.ts" } },
-			],
-			"length",
-		);
-
-		const { messages, executedCalls } = await runToOnlyToolResults(message);
-
-		expect(executedCalls).toEqual([]);
-		const toolResult = messages.find((m) => m.role === "toolResult") as ToolResultMessage;
-		expect(toolResult).toBeDefined();
-		expect(toolResult.toolCallId).toBe("tool-truncated");
-		expect(toolResult.isError).toBe(true);
-		const text = toolResult.content.map((c) => (c.type === "text" ? c.text : "")).join(" ");
-		expect(text).toContain("output token limit");
-		expect(text).toContain("Do not retry the identical call");
-	});
-
-	it("blocks the trailing tool call even when truncated arguments happen to validate", async () => {
-		// Truncation inside the content string can still yield schema-valid args;
-		// a silently truncated file write must never execute.
-		const message = createAssistantMessage(
-			[
-				{
-					type: "toolCall",
-					id: "tool-valid-but-cut",
-					name: "write",
-					arguments: { path: "/tmp/x.ts", content: "trunca" },
-				},
-			],
-			"length",
-		);
-
-		const { executedCalls, messages } = await runToOnlyToolResults(message);
-
-		expect(executedCalls).toEqual([]);
-		const toolResult = messages.find((m) => m.role === "toolResult") as ToolResultMessage;
-		expect(toolResult.isError).toBe(true);
-	});
-
-	it("still executes earlier complete tool calls in a length-stopped message", async () => {
-		const message = createAssistantMessage(
-			[
-				{ type: "toolCall", id: "tool-complete", name: "write", arguments: { path: "/tmp/a.ts", content: "ok" } },
-				{ type: "toolCall", id: "tool-truncated", name: "write", arguments: { path: "/tmp/b.ts" } },
-			],
-			"length",
-		);
-
-		const { messages, executedCalls } = await runToOnlyToolResults(message);
-
-		expect(executedCalls).toEqual(["tool-complete"]);
-		const results = messages.filter((m) => m.role === "toolResult") as ToolResultMessage[];
-		expect(results).toHaveLength(2);
-		expect(results.find((r) => r.toolCallId === "tool-complete")?.isError).toBeFalsy();
-		expect(results.find((r) => r.toolCallId === "tool-truncated")?.isError).toBe(true);
-	});
-
-	it("does not block a trailing tool call when the stop reason is toolUse", async () => {
-		const message = createAssistantMessage(
-			[{ type: "toolCall", id: "tool-normal", name: "write", arguments: { path: "/tmp/a.ts", content: "ok" } }],
-			"toolUse",
-		);
-
-		const { executedCalls } = await runToOnlyToolResults(message);
-		expect(executedCalls).toEqual(["tool-normal"]);
-	});
-
-	it("does not block tool calls on a length-stopped message whose final block is text", async () => {
-		// Truncation hit during trailing text, not the tool call — the call is complete.
-		const message = createAssistantMessage(
-			[
-				{ type: "toolCall", id: "tool-complete", name: "write", arguments: { path: "/tmp/a.ts", content: "ok" } },
-				{ type: "text", text: "and now I will als" },
-			],
-			"length",
-		);
-
-		const { executedCalls } = await runToOnlyToolResults(message);
-		expect(executedCalls).toEqual(["tool-complete"]);
+			seen.push(outcome.result.structuredContent);
+		}
+		expect(seen).toEqual([undefined, { value: "replaced" }, { value: "both" }, { value: "original" }]);
 	});
 });

@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 .artifacts/
 *.log
@@ -37,12 +37,15 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
+packages/env/bin/
+packages/env/daemon/target/
 todo.md
 plans/
 .pi/workflows/
 .pi/workspaces/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/settings.json
 collect.sh
 .repowise/
 .mcp.json

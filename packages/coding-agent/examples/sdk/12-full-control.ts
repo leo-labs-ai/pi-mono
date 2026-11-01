@@ -4,16 +4,15 @@
  * Replace everything - no discovery, explicit configuration.
  */
 
-import { getModel } from "@lue-labs/pi-ai/compat";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
 import {
 	createAgentSession,
-	createEventBus,
 	createExtensionRuntime,
 	ModelRuntime,
 	type ResourceLoader,
 	SessionManager,
 	SettingsManager,
-} from "@lue-labs/pi-coding-agent";
+} from "@leo-labs-ai/pi-coding-agent";
 
 const modelRuntime = await ModelRuntime.create({
 	authPath: "/tmp/my-agent/auth.json",
@@ -35,20 +34,7 @@ const settingsManager = SettingsManager.inMemory({
 const cwd = process.cwd();
 
 const resourceLoader: ResourceLoader = {
-	getExtensions: () => ({
-		extensions: [],
-		deferredExtensions: [],
-		errors: [],
-		eventBus: createEventBus(),
-		runtime: createExtensionRuntime(),
-	}),
-	getExtensionsForRunner: () => ({
-		extensions: [],
-		deferredExtensions: [],
-		errors: [],
-		eventBus: createEventBus(),
-		runtime: createExtensionRuntime(),
-	}),
+	getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
 	getSkills: () => ({ skills: [], diagnostics: [] }),
 	getPrompts: () => ({ prompts: [], diagnostics: [] }),
 	getThemes: () => ({ themes: [], diagnostics: [] }),

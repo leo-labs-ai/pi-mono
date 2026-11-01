@@ -1,7 +1,5 @@
 # Subagent Example
 
-> **Legacy/reference:** Pi now ships a native built-in `agent` tool for single, parallel, and chain delegation. This example remains supported as an extension API reference and migration aid. Use native `agent` for new workflows unless you specifically need this example's subprocess isolation.
-
 Delegate tasks to specialized subagents with isolated context windows.
 
 ## Features
@@ -89,14 +87,6 @@ Use a chain: first have scout find the read tool, then have planner suggest impr
 /scout-and-plan refactor auth to support OAuth
 /implement-and-review add input validation to API endpoints
 ```
-
-## Migration to Native `agent`
-
-- Single: `subagent { agent, task }` → `agent { agent, task }`
-- Parallel: `subagent { tasks }` → `agent { tasks }`
-- Chain: `subagent { chain }` → `agent { chain }`
-- User/project agent Markdown locations are the same for the native subset.
-- Process isolation remains legacy-only until native worktree/subprocess isolation is added.
 
 ## Tool Modes
 

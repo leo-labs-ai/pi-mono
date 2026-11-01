@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@lue-labs/pi-ai";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BashOperations } from "../../src/core/tools/bash.ts";
@@ -111,109 +111,6 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(harness.session.hasPendingBashMessages).toBe(false);
 		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(true);
 		expect(getEntryTypes(harness).filter((type) => type === "message").length).toBeGreaterThan(0);
-	});
-
-	it("defers bash results recorded during compaction", async () => {
-		const harness = await createHarness();
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("first"), fauxAssistantMessage("second")]);
-		await harness.session.prompt("start");
-
-		harness.session.subscribe((event) => {
-			if (event.type !== "compaction_start") return;
-			expect(harness.session.isStreaming).toBe(false);
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		});
-		await harness.session.compact().catch(() => undefined);
-
-		expect(harness.session.hasPendingBashMessages).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
-
-		await harness.session.prompt("next turn");
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(true);
-	});
-
-	it("flushes bash results deferred during manual compaction", async () => {
-		const harness = await createHarness({
-			settings: { compaction: { keepRecentTokens: 1 } },
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_compact", async (event) => ({
-						compaction: {
-							summary: "summary from extension",
-							firstKeptEntryId: event.preparation.firstKeptEntryId,
-							tokensBefore: event.preparation.tokensBefore,
-						},
-					}));
-				},
-			],
-		});
-		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
-		await harness.session.prompt("one");
-		await harness.session.prompt("two");
-
-		harness.session.subscribe((event) => {
-			if (event.type !== "compaction_start") return;
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		});
-		await harness.session.compact();
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		const persisted = harness.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "message" && entry.message.role === "bashExecution");
-		expect(persisted).toBe(true);
-	});
-
-	it("persists bash results deferred during tree navigation on the originating branch", async () => {
-		let recordBash: (() => void) | undefined;
-		const harness = await createHarness({
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_tree", async () => {
-						recordBash?.();
-						return undefined;
-					});
-				},
-			],
-		});
-		harnesses.push(harness);
-		recordBash = () =>
-			harness.session.recordBashResult("echo hi", {
-				output: "hi",
-				exitCode: 0,
-				cancelled: false,
-				truncated: false,
-			});
-		harness.setResponses([fauxAssistantMessage("one"), fauxAssistantMessage("two")]);
-		await harness.session.prompt("one");
-		await harness.session.prompt("two");
-		const firstUserEntry = harness.sessionManager
-			.getEntries()
-			.find((entry) => entry.type === "message" && entry.message.role === "user");
-		if (!firstUserEntry) throw new Error("expected a user entry to navigate to");
-
-		await harness.session.navigateTree(firstUserEntry.id);
-
-		expect(harness.session.hasPendingBashMessages).toBe(false);
-		const persisted = harness.sessionManager
-			.getEntries()
-			.some((entry) => entry.type === "message" && entry.message.role === "bashExecution");
-		expect(persisted).toBe(true);
-		expect(harness.session.messages.some((message) => message.role === "bashExecution")).toBe(false);
 	});
 
 	it("executes bash commands and records the result", async () => {
@@ -332,16 +229,9 @@ describe("AgentSession bash and persistence characterization", () => {
 			"message",
 			"message",
 			"message",
-			"custom",
 			"message",
 			"message",
-			"custom",
 		]);
-		expect(
-			entries
-				.filter((entry) => entry.type === "custom")
-				.map((entry) => (entry.type === "custom" ? entry.customType : undefined)),
-		).toEqual(["cache_health", "cache_health"]);
 		expect(harness.session.messages.map((message) => message.role)).toEqual([
 			"custom",
 			"system",
@@ -391,16 +281,12 @@ describe("AgentSession bash and persistence characterization", () => {
 		await harness.session.abort();
 		await promptPromise;
 
-		const entries = harness.sessionManager.getEntries();
-		const lastEntry = entries[entries.length - 1];
-		expect(lastEntry?.type).toBe("custom");
-		if (lastEntry?.type === "custom") expect(lastEntry.customType).toBe("cache_health");
-		const lastMessage = [...entries].reverse().find((entry) => entry.type === "message");
-		expect(lastMessage?.type).toBe("message");
-		if (lastMessage?.type === "message") {
-			expect(lastMessage.message.role).toBe("assistant");
-			if (lastMessage.message.role === "assistant") {
-				expect(lastMessage.message.stopReason).toBe("aborted");
+		const lastEntry = harness.sessionManager.getEntries()[harness.sessionManager.getEntries().length - 1];
+		expect(lastEntry?.type).toBe("message");
+		if (lastEntry?.type === "message") {
+			expect(lastEntry.message.role).toBe("assistant");
+			if (lastEntry.message.role === "assistant") {
+				expect(lastEntry.message.stopReason).toBe("aborted");
 			}
 		}
 	});
@@ -450,5 +336,64 @@ describe("AgentSession bash and persistence characterization", () => {
 			{ id: "bash-1", delta: "hello " },
 			{ id: "bash-1", delta: "world" },
 		]);
+	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/10504
+	describe("escape sequences split across output chunks", () => {
+		/** Runs a user bash command whose fake shell emits the given chunks; `beforeExit` sees what was streamed by then. */
+		async function runChunks(chunks: Array<string | Buffer>, beforeExit?: (streamed: string) => void) {
+			const harness = await createHarness();
+			harnesses.push(harness);
+			const deltas: string[] = [];
+			const operations: BashOperations = {
+				exec: async (_command, _cwd, options) => {
+					for (const chunk of chunks) {
+						options.onData(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+					}
+					beforeExit?.(deltas.join(""));
+					return { exitCode: 0 };
+				},
+			};
+			const result = await harness.session.executeBash("custom", (delta) => deltas.push(delta), { operations });
+			const recorded = harness.session.messages[harness.session.messages.length - 1];
+			return {
+				output: result.output,
+				streamed: deltas.join(""),
+				recorded: recorded?.role === "bashExecution" ? recorded.output : undefined,
+			};
+		}
+
+		it("strips a color reset split inside its parameters", async () => {
+			const { output, streamed, recorded } = await runChunks(["\x1b[31mERROR: file.py:1\x1b[0", "m\n"]);
+			expect(output).toBe("ERROR: file.py:1\n");
+			expect(streamed).toBe("ERROR: file.py:1\n");
+			expect(recorded).toBe("ERROR: file.py:1\n");
+		});
+
+		it("strips a color code split right after ESC", async () => {
+			const { output, streamed } = await runChunks(["before\x1b", "[32mafter\n"]);
+			expect(output).toBe("beforeafter\n");
+			expect(streamed).toBe("beforeafter\n");
+		});
+
+		it("strips an OSC sequence split before its terminator", async () => {
+			const { output } = await runChunks(["a\x1b]0;window ", "title\x1b", "\\b\n"]);
+			expect(output).toBe("ab\n");
+		});
+
+		it("flushes an incomplete multi-byte character at the end of output", async () => {
+			const { output, streamed } = await runChunks(["ok", Buffer.from("\u00e9").subarray(0, 1)]);
+			expect(output).toBe("ok\uFFFD");
+			expect(streamed).toBe("ok\uFFFD");
+		});
+
+		it("does not hold back output behind a long unterminated sequence", async () => {
+			const long = "x".repeat(300);
+			let streamedBeforeExit = "";
+			await runChunks([`\x1b]${long}`], (streamed) => {
+				streamedBeforeExit = streamed;
+			});
+			expect(streamedBeforeExit).toBe(`]${long}`);
+		});
 	});
 });

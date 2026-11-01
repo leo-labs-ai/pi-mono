@@ -1,9 +1,9 @@
-import type * as Tui from "@lue-labs/pi-tui";
+import type * as Tui from "@leo-labs-ai/pi-tui";
 import { afterEach, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 
 const readClipboardText = vi.hoisted(() => vi.fn<() => Promise<string | null>>());
-vi.mock("@lue-labs/pi-tui", async (importOriginal) => ({
+vi.mock("@leo-labs-ai/pi-tui", async (importOriginal) => ({
 	...(await importOriginal<typeof Tui>()),
 	getNativeClipboard: () => ({
 		async getImage() {
@@ -11,7 +11,11 @@ vi.mock("@lue-labs/pi-tui", async (importOriginal) => ({
 		},
 	}),
 }));
-vi.mock("../src/utils/clipboard.ts", () => ({ copyToClipboard: vi.fn(), readClipboardText }));
+vi.mock("../src/utils/clipboard.ts", () => ({
+	copyToClipboard: vi.fn(),
+	readClipboardFilePaths: vi.fn(async () => null),
+	readClipboardText,
+}));
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: vi.fn(async () => undefined) }));
 afterEach(() => vi.unstubAllEnvs());
 
@@ -19,6 +23,7 @@ test("native image errors abort paste without reading text or changing the edito
 	vi.stubEnv("TERMUX_VERSION", "");
 	const context = {
 		editor: { insertTextAtCursor: vi.fn() },
+		showError: vi.fn(),
 		ui: { requestRender: vi.fn() },
 	};
 	const prototype = InteractiveMode.prototype as unknown as {
@@ -28,4 +33,7 @@ test("native image errors abort paste without reading text or changing the edito
 	expect(readClipboardText).not.toHaveBeenCalled();
 	expect(context.editor.insertTextAtCursor).not.toHaveBeenCalled();
 	expect(context.ui.requestRender).not.toHaveBeenCalled();
+	expect(context.showError).toHaveBeenCalledExactlyOnceWith(
+		"Failed to paste from clipboard: Native clipboard operation failed",
+	);
 });

@@ -4,7 +4,7 @@ import {
 	fauxAssistantMessage,
 	type Model,
 	type Provider,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 

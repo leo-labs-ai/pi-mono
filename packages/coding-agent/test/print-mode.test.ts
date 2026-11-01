@@ -1,4 +1,4 @@
-import type { AssistantMessage, ImageContent } from "@lue-labs/pi-ai";
+import type { AssistantMessage, ImageContent } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionShutdownEvent } from "../src/index.ts";
 import { runPrintMode } from "../src/modes/print-mode.ts";
@@ -123,27 +123,6 @@ describe("runPrintMode", () => {
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
 	});
 
-	it("forwards options.source to session.prompt for both initialMessage and follow-up messages", async () => {
-		// Regression: replaces the legacy `PI_MEMORY_SUBAGENT=1` env contract.
-		// A parent pi spawning `pi --print --source child-agent <prompt>` must
-		// forward that source through to `session.prompt({ source })`, so the
-		// child's `before_agent_start` / `input` handlers see
-		// `event.source === "child-agent"` and skip memory recall/inject.
-		const runtimeHost = createRuntimeHost(createAssistantMessage({ text: "done" }));
-		const { session } = runtimeHost;
-
-		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
-			mode: "text",
-			initialMessage: "first",
-			messages: ["second"],
-			source: "child-agent",
-		});
-
-		expect(exitCode).toBe(0);
-		expect(session.prompt).toHaveBeenNthCalledWith(1, "first", { images: undefined, source: "child-agent" });
-		expect(session.prompt).toHaveBeenNthCalledWith(2, "second", { source: "child-agent" });
-	});
-
 	it("emits session_shutdown and returns non-zero on assistant error", async () => {
 		const runtimeHost = createRuntimeHost(
 			createAssistantMessage({ stopReason: "error", errorMessage: "provider failure" }),
@@ -159,5 +138,18 @@ describe("runPrintMode", () => {
 		expect(errorSpy).toHaveBeenCalledWith("provider failure");
 		expect(session.extensionRunner.emit).toHaveBeenCalledTimes(1);
 		expect(session.extensionRunner.emit).toHaveBeenCalledWith({ type: "session_shutdown", reason: "quit" });
+	});
+
+	// #10799
+	it("warns on stderr and returns non-zero when the response was truncated", async () => {
+		const runtimeHost = createRuntimeHost(createAssistantMessage({ stopReason: "length" }));
+		const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+		const exitCode = await runPrintMode(runtimeHost as unknown as Parameters<typeof runPrintMode>[0], {
+			mode: "text",
+		});
+
+		expect(exitCode).toBe(1);
+		expect(errorSpy).toHaveBeenCalled();
 	});
 });
