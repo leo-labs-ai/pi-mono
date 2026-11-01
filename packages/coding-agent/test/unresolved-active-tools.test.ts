@@ -15,10 +15,14 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+
 const uppercaseAliases: InlineExtension = (pi) => {
 	for (const name of ["Read", "Edit", "Write", "Grep"]) {
 		pi.registerTool({
-			name, label: name, description: `Test alias ${name}`, parameters: Type.Object({}),
+			name,
+			label: name,
+			description: `Test alias ${name}`,
+			parameters: Type.Object({}),
 			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 		});
 	}
@@ -115,7 +119,10 @@ describe("unresolved initial active tools", () => {
 	it("does not confuse hidden declarations with unregistered tools", async () => {
 		const hidden: InlineExtension = (pi) => {
 			pi.registerTool({
-				name: "hidden_tool", label: "Hidden", description: "Registered hidden tool", parameters: Type.Object({}),
+				name: "hidden_tool",
+				label: "Hidden",
+				description: "Registered hidden tool",
+				parameters: Type.Object({}),
 				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
 				prepareLoadout: () => ({ hiddenDeclarations: ["hidden_tool"] }),
 			});
@@ -137,9 +144,7 @@ describe("unresolved initial active tools", () => {
 		}));
 
 		expect(active).toEqual(["read"]);
-		expect(sortedToolNames(session)).toEqual(
-			expect.arrayContaining(["read", "edit", "write", "grep"]),
-		);
+		expect(sortedToolNames(session)).toEqual(expect.arrayContaining(["read", "edit", "write", "grep"]));
 		expect(sortedToolNames(session)).not.toContain("Read");
 
 		const diagnostics = session.getStartupDiagnostics();
@@ -222,64 +227,69 @@ describe("unresolved initial active tools", () => {
 		expect(rendered).not.toContain("native-tool-overrides");
 	});
 
-	it.each([true, false])("CLI stderr reports only configured missing requests (configured=%s)", async (configured) => {
-		const tempDir = join(tmpdir(), `pi-438-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		tempDirs.push(tempDir);
-		const agentDir = join(tempDir, "agent");
-		const projectDir = join(tempDir, "project");
-		mkdirSync(agentDir, { recursive: true });
-		mkdirSync(projectDir, { recursive: true });
-		if (configured) writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: CONFIGURED_TOOLS }));
+	it.each([true, false])(
+		"CLI stderr reports only configured missing requests (configured=%s)",
+		async (configured) => {
+			const tempDir = join(tmpdir(), `pi-438-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+			tempDirs.push(tempDir);
+			const agentDir = join(tempDir, "agent");
+			const projectDir = join(tempDir, "project");
+			mkdirSync(agentDir, { recursive: true });
+			mkdirSync(projectDir, { recursive: true });
+			if (configured)
+				writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: CONFIGURED_TOOLS }));
 
-		const result = await new Promise<{
-			stdout: string;
-			stderr: string;
-			code: number | null;
-			signal: NodeJS.Signals | null;
-		}>((resolvePromise, reject) => {
-			const child = spawn(
-				process.execPath,
-				["--import", sourceResolverPath, cliPath, "--print", "--no-extensions", "--offline"],
-				{
-					cwd: projectDir,
-					env: {
-						...process.env,
-						[ENV_AGENT_DIR]: agentDir,
-						PI_OFFLINE: "1",
+			const result = await new Promise<{
+				stdout: string;
+				stderr: string;
+				code: number | null;
+				signal: NodeJS.Signals | null;
+			}>((resolvePromise, reject) => {
+				const child = spawn(
+					process.execPath,
+					["--import", sourceResolverPath, cliPath, "--print", "--no-extensions", "--offline"],
+					{
+						cwd: projectDir,
+						env: {
+							...process.env,
+							[ENV_AGENT_DIR]: agentDir,
+							PI_OFFLINE: "1",
+						},
+						stdio: ["ignore", "pipe", "pipe"],
 					},
-					stdio: ["ignore", "pipe", "pipe"],
-				},
-			);
-			let stdout = "";
-			let stderr = "";
-			child.stdout.on("data", (chunk) => {
-				stdout += chunk.toString();
+				);
+				let stdout = "";
+				let stderr = "";
+				child.stdout.on("data", (chunk) => {
+					stdout += chunk.toString();
+				});
+				child.stderr.on("data", (chunk) => {
+					stderr += chunk.toString();
+				});
+				const timeout = setTimeout(() => child.kill("SIGKILL"), 30_000);
+				child.on("error", (error) => {
+					clearTimeout(timeout);
+					reject(error);
+				});
+				child.on("close", (code, signal) => {
+					clearTimeout(timeout);
+					resolvePromise({ stdout, stderr, code, signal });
+				});
 			});
-			child.stderr.on("data", (chunk) => {
-				stderr += chunk.toString();
-			});
-			const timeout = setTimeout(() => child.kill("SIGKILL"), 30_000);
-			child.on("error", (error) => {
-				clearTimeout(timeout);
-				reject(error);
-			});
-			child.on("close", (code, signal) => {
-				clearTimeout(timeout);
-				resolvePromise({ stdout, stderr, code, signal });
-			});
-		});
 
-		expect(result.signal).toBeNull();
-		expect(result.code).toBe(0);
-		if (configured) {
-			expect(result.stderr).toContain(
-				`Warning: Requested active tools not registered: Read, Edit, Write, Grep. ${CASE_GUIDANCE}`,
-			);
-		} else {
-			expect(result.stderr).not.toContain("not registered");
-		}
-		expect(result.stderr).not.toContain("native-tool-overrides");
-		expect(result.stdout).not.toContain("not registered");
-		expect(result.stdout).not.toContain("case-sensitive");
-	}, 40_000);
+			expect(result.signal).toBeNull();
+			expect(result.code).toBe(0);
+			if (configured) {
+				expect(result.stderr).toContain(
+					`Warning: Requested active tools not registered: Read, Edit, Write, Grep. ${CASE_GUIDANCE}`,
+				);
+			} else {
+				expect(result.stderr).not.toContain("not registered");
+			}
+			expect(result.stderr).not.toContain("native-tool-overrides");
+			expect(result.stdout).not.toContain("not registered");
+			expect(result.stdout).not.toContain("case-sensitive");
+		},
+		40_000,
+	);
 });
