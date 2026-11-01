@@ -1,18 +1,11 @@
-/**
- * Startup contract for issue #438.
- *
- * The default active request includes Read/Edit/Write/Grep. Core registers
- * read/edit/write/grep. An isolated loader (temp agent dir, noExtensions) must
- * not pick up whatever global profile is installed. The session still starts
- * with the tools that did resolve. The startup warning names the misses and
- * the registered lowercase spellings. It does not mention a post-start update.
- */
+/** Startup warnings observe configured exact tool requests without changing selection. */
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { getModel } from "@lue-labs/pi-ai/compat";
-import { Container } from "@lue-labs/pi-tui";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
+import { Container } from "@leo-labs-ai/pi-tui";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import type { AgentSession } from "../src/core/agent-session.ts";
@@ -22,15 +15,23 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
-import { nativeToolAliasesFactory } from "./native-tool-aliases-factory.ts";
+const uppercaseAliases: InlineExtension = (pi) => {
+	for (const name of ["Read", "Edit", "Write", "Grep"]) {
+		pi.registerTool({
+			name, label: name, description: `Test alias ${name}`, parameters: Type.Object({}),
+			execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+		});
+	}
+};
 
-const EXTENSION_FREE_ACTIVE_TOOLS = ["Bash", "BashOutput", "KillShell", "Agent", "Task", "Glob"];
+const DEFAULT_TOOLS = ["read", "bash", "edit", "write"];
+const CONFIGURED_TOOLS = ["Read", "Edit", "Write", "Grep", "read"];
 const CASE_GUIDANCE =
 	"Registered tool names are case-sensitive. Request the available lowercase names read, edit, write, and grep, or register uppercase aliases via an extension.";
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const sourceResolverPath = resolve(__dirname, "../src/experimental/source-resolver.ts");
 
-describe("unresolved default active tools", () => {
+describe("unresolved initial active tools", () => {
 	const tempDirs: string[] = [];
 	const sessions: AgentSession[] = [];
 
@@ -44,12 +45,14 @@ describe("unresolved default active tools", () => {
 	async function createIsolatedSession(options?: {
 		extensionFactories?: InlineExtension[];
 		tools?: string[];
+		defaultTools?: string[];
+		excludeTools?: string[];
 	}): Promise<{ session: AgentSession; extensionPaths: string[] }> {
 		const tempDir = join(tmpdir(), `pi-438-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		tempDirs.push(tempDir);
 		const agentDir = join(tempDir, "agent");
 		mkdirSync(agentDir, { recursive: true });
-		const settingsManager = SettingsManager.inMemory();
+		const settingsManager = SettingsManager.inMemory({ defaultTools: options?.defaultTools });
 		const resourceLoader = new DefaultResourceLoader({
 			cwd: tempDir,
 			agentDir,
@@ -71,6 +74,7 @@ describe("unresolved default active tools", () => {
 			sessionManager: SessionManager.inMemory(tempDir),
 			resourceLoader,
 			tools: options?.tools,
+			excludeTools: options?.excludeTools,
 		});
 		sessions.push(session);
 		expect(session.model).toMatchObject({ provider: "anthropic", id: "claude-sonnet-4-5" });
@@ -88,8 +92,41 @@ describe("unresolved default active tools", () => {
 			});
 	}
 
+	it("keeps the current default startup quiet", async () => {
+		const { session } = await createIsolatedSession();
+		expect(session.getActiveToolNames()).toEqual(DEFAULT_TOOLS);
+		expect(session.getStartupDiagnostics()).toEqual([]);
+	});
+
+	it("keeps wildcard selectors quiet", async () => {
+		const { session } = await createIsolatedSession({ tools: ["r*"] });
+		expect(session.getActiveToolNames()).toEqual(["read"]);
+		expect(session.getStartupDiagnostics()).toEqual([]);
+	});
+
+	it("diagnoses resolved additions but not removals or exclusions", async () => {
+		const { session } = await createIsolatedSession({ tools: ["+Nope", "-read"] });
+		expect(session.getStartupDiagnostics()[0]?.message).toMatch(/^Requested active tool not registered: Nope\./);
+		expect(session.getActiveToolNames()).toEqual(["bash", "edit", "write"]);
+		const excluded = await createIsolatedSession({ defaultTools: ["Nope", "read"], excludeTools: ["Nope"] });
+		expect(excluded.session.getStartupDiagnostics()).toEqual([]);
+	});
+
+	it("does not confuse hidden declarations with unregistered tools", async () => {
+		const hidden: InlineExtension = (pi) => {
+			pi.registerTool({
+				name: "hidden_tool", label: "Hidden", description: "Registered hidden tool", parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+				prepareLoadout: () => ({ hiddenDeclarations: ["hidden_tool"] }),
+			});
+		};
+		const { session } = await createIsolatedSession({ tools: ["hidden_tool"], extensionFactories: [hidden] });
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("hidden_tool");
+		expect(session.getStartupDiagnostics()).toEqual([]);
+	});
+
 	it("names the unregistered default spellings and leaves prompt and schemas unchanged", async () => {
-		const { session, extensionPaths } = await createIsolatedSession();
+		const { session, extensionPaths } = await createIsolatedSession({ defaultTools: CONFIGURED_TOOLS });
 		expect(extensionPaths).toEqual([]);
 		const prompt = session.systemPrompt;
 		const active = session.getActiveToolNames();
@@ -99,9 +136,9 @@ describe("unresolved default active tools", () => {
 			parameters: tool.parameters,
 		}));
 
-		expect(active).toEqual(EXTENSION_FREE_ACTIVE_TOOLS);
+		expect(active).toEqual(["read"]);
 		expect(sortedToolNames(session)).toEqual(
-			expect.arrayContaining(["read", "edit", "write", "grep", "Bash", "Glob"]),
+			expect.arrayContaining(["read", "edit", "write", "grep"]),
 		);
 		expect(sortedToolNames(session)).not.toContain("Read");
 
@@ -128,19 +165,7 @@ describe("unresolved default active tools", () => {
 			})),
 		).toEqual(schemas);
 
-		session.setActiveToolsByName([
-			"Read",
-			"Bash",
-			"BashOutput",
-			"KillShell",
-			"Edit",
-			"Write",
-			"Agent",
-			"Task",
-			"Grep",
-			"Glob",
-			"Nope",
-		]);
+		session.setActiveToolsByName([...CONFIGURED_TOOLS, "Nope"]);
 		expect(session.getActiveToolNames()).toEqual(active);
 		expect(session.systemPrompt).toBe(prompt);
 		expect(session.getStartupDiagnostics()).toEqual(diagnostics);
@@ -148,22 +173,12 @@ describe("unresolved default active tools", () => {
 
 	it("stays quiet when an extension registers the uppercase aliases", async () => {
 		const { session, extensionPaths } = await createIsolatedSession({
-			extensionFactories: [nativeToolAliasesFactory],
+			extensionFactories: [uppercaseAliases],
+			defaultTools: CONFIGURED_TOOLS,
 		});
 		expect(extensionPaths).toEqual(["<inline:1>"]);
 
-		expect(session.getActiveToolNames()).toEqual([
-			"Read",
-			"Bash",
-			"BashOutput",
-			"KillShell",
-			"Edit",
-			"Write",
-			"Agent",
-			"Task",
-			"Grep",
-			"Glob",
-		]);
+		expect(session.getActiveToolNames()).toEqual(CONFIGURED_TOOLS);
 		expect(session.getStartupDiagnostics()).toEqual([]);
 		expect(session.systemPrompt).not.toContain("not registered");
 	});
@@ -186,7 +201,7 @@ describe("unresolved default active tools", () => {
 	});
 
 	it("renders the same startup warning on the interactive transcript", async () => {
-		const { session } = await createIsolatedSession();
+		const { session } = await createIsolatedSession({ defaultTools: CONFIGURED_TOOLS });
 		const message = session.getStartupDiagnostics()[0]?.message ?? "";
 		initTheme("dark");
 		const chatContainer = new Container();
@@ -207,13 +222,14 @@ describe("unresolved default active tools", () => {
 		expect(rendered).not.toContain("native-tool-overrides");
 	});
 
-	it("prints the startup warning on the CLI stderr operators see", async () => {
+	it.each([true, false])("CLI stderr reports only configured missing requests (configured=%s)", async (configured) => {
 		const tempDir = join(tmpdir(), `pi-438-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		tempDirs.push(tempDir);
 		const agentDir = join(tempDir, "agent");
 		const projectDir = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });
 		mkdirSync(projectDir, { recursive: true });
+		if (configured) writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultTools: CONFIGURED_TOOLS }));
 
 		const result = await new Promise<{
 			stdout: string;
@@ -255,9 +271,13 @@ describe("unresolved default active tools", () => {
 
 		expect(result.signal).toBeNull();
 		expect(result.code).toBe(0);
-		expect(result.stderr).toContain(
-			`Warning: Requested active tools not registered: Read, Edit, Write, Grep. ${CASE_GUIDANCE}`,
-		);
+		if (configured) {
+			expect(result.stderr).toContain(
+				`Warning: Requested active tools not registered: Read, Edit, Write, Grep. ${CASE_GUIDANCE}`,
+			);
+		} else {
+			expect(result.stderr).not.toContain("not registered");
+		}
 		expect(result.stderr).not.toContain("native-tool-overrides");
 		expect(result.stdout).not.toContain("not registered");
 		expect(result.stdout).not.toContain("case-sensitive");

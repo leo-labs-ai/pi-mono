@@ -1,4 +1,4 @@
-import { truncateToWidth, visibleWidth } from "@lue-labs/pi-tui";
+import { truncateToWidth, visibleWidth } from "@leo-labs-ai/pi-tui";
 import { describe, expect, it } from "vitest";
 
 /**

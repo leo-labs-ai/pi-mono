@@ -1,5 +1,3 @@
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
@@ -9,7 +7,6 @@ import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
-const identicalCollisionFixturesDir = resolve(__dirname, "fixtures/skills-identical-collision");
 
 function createTestSkill(options: {
 	name: string;
@@ -244,9 +241,10 @@ describe("skills", () => {
 
 			expect(result).toContain("<available_skills>");
 			expect(result).toContain("</available_skills>");
-			expect(result).toContain(
-				'<skill name="test-skill" description="A test skill." location="/path/to/skill/SKILL.md" />',
-			);
+			expect(result).toContain("<skill>");
+			expect(result).toContain("<name>test-skill</name>");
+			expect(result).toContain("<description>A test skill.</description>");
+			expect(result).toContain("<location>/path/to/skill/SKILL.md</location>");
 		});
 
 		it("should include intro text before XML", () => {
@@ -302,9 +300,9 @@ describe("skills", () => {
 
 			const result = formatSkillsForPrompt(skills);
 
-			expect(result).toContain('name="skill-one"');
-			expect(result).toContain('name="skill-two"');
-			expect((result.match(/<skill /g) || []).length).toBe(2);
+			expect(result).toContain("<name>skill-one</name>");
+			expect(result).toContain("<name>skill-two</name>");
+			expect((result.match(/<skill>/g) || []).length).toBe(2);
 		});
 
 		it("should exclude skills with disableModelInvocation from prompt", () => {
@@ -326,9 +324,9 @@ describe("skills", () => {
 
 			const result = formatSkillsForPrompt(skills);
 
-			expect(result).toContain('name="visible-skill"');
-			expect(result).not.toContain('name="hidden-skill"');
-			expect((result.match(/<skill /g) || []).length).toBe(1);
+			expect(result).toContain("<name>visible-skill</name>");
+			expect(result).not.toContain("<name>hidden-skill</name>");
+			expect((result.match(/<skill>/g) || []).length).toBe(1);
 		});
 
 		it("should return empty string when all skills have disableModelInvocation", () => {
@@ -393,39 +391,6 @@ describe("skills", () => {
 	});
 
 	describe("collision handling", () => {
-		it("should suppress diagnostics for byte-identical duplicate skill installs", () => {
-			const { skills, diagnostics } = loadSkills({
-				agentDir: resolve(__dirname, "fixtures/empty-agent"),
-				cwd: resolve(__dirname, "fixtures/empty-cwd"),
-				skillPaths: [join(identicalCollisionFixturesDir, "first"), join(identicalCollisionFixturesDir, "second")],
-				includeDefaults: false,
-			});
-
-			expect(skills.filter((skill) => skill.name === "linear-local-first-architecture")).toHaveLength(1);
-			expect(diagnostics.some((diagnostic) => diagnostic.type === "collision")).toBe(false);
-		});
-
-		it("should emit only one collision diagnostic for duplicate realpath aliases", () => {
-			const tempRoot = mkdtempSync(join(tmpdir(), "skill-realpath-collision-"));
-			try {
-				const firstPath = join(collisionFixturesDir, "first", "calendar", "SKILL.md");
-				const secondPath = join(collisionFixturesDir, "second", "calendar", "SKILL.md");
-				const aliasPath = join(tempRoot, "calendar-alias.md");
-				symlinkSync(secondPath, aliasPath);
-				const { skills, diagnostics } = loadSkills({
-					agentDir: resolve(__dirname, "fixtures/empty-agent"),
-					cwd: resolve(__dirname, "fixtures/empty-cwd"),
-					skillPaths: [firstPath, secondPath, aliasPath],
-					includeDefaults: false,
-				});
-
-				expect(skills.filter((skill) => skill.name === "calendar")).toHaveLength(1);
-				expect(diagnostics.filter((diagnostic) => diagnostic.type === "collision")).toHaveLength(1);
-			} finally {
-				rmSync(tempRoot, { recursive: true, force: true });
-			}
-		});
-
 		it("should detect name collisions and keep first skill", () => {
 			// Load from first directory
 			const first = loadSkillsFromDir({

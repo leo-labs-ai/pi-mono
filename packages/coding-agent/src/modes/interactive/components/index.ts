@@ -1,6 +1,4 @@
 // UI Components for extensions
-export { type AgentRunsSelectorAction, AgentRunsSelectorComponent } from "./agent-runs-selector.ts";
-export { AgentsSelectorComponent } from "./agents-selector.ts";
 export { ArminComponent } from "./armin.ts";
 export { AssistantMessageComponent } from "./assistant-message.ts";
 export { BashExecutionComponent } from "./bash-execution.ts";
@@ -9,7 +7,6 @@ export { BranchSummaryMessageComponent } from "./branch-summary-message.ts";
 export { CompactionSummaryMessageComponent } from "./compaction-summary-message.ts";
 export { CustomEditor, type CustomEditorOptions } from "./custom-editor.ts";
 export { CustomMessageComponent } from "./custom-message.ts";
-export { DaxnutsComponent } from "./daxnuts.ts";
 export { type RenderDiffOptions, renderDiff } from "./diff.ts";
 export { DynamicBorder } from "./dynamic-border.ts";
 export { ExtensionEditorComponent } from "./extension-editor.ts";
@@ -23,7 +20,6 @@ export {
 export { FooterComponent } from "./footer.ts";
 export { keyHint, keyText, rawKeyHint } from "./keybinding-hints.ts";
 export { LoginDialogComponent } from "./login-dialog.ts";
-export { MemorySavedMessageComponent, memorySavedMessageRenderer } from "./memory-saved-message.ts";
 export { ModelSelectorComponent } from "./model-selector.ts";
 export { OAuthSelectorComponent } from "./oauth-selector.ts";
 export { type ModelsCallbacks, type ModelsConfig, ScopedModelsSelectorComponent } from "./scoped-models-selector.ts";

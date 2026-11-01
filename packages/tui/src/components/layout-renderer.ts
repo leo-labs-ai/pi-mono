@@ -62,7 +62,9 @@ interface GroupInfo {
 	id: string;
 	type: "radio_group" | "checkbox_group";
 	optionCount: number;
-	firstOptionValue: string | undefined;
+	optionValues: string[];
+	/** Initial selection from the graph's `value` (validated against the options). */
+	initialSelection: string[];
 }
 
 export class LayoutRenderer implements Component {
@@ -82,6 +84,11 @@ export class LayoutRenderer implements Component {
 		this.theme = options.theme ?? identityTheme;
 		this.onSubmit = options.onSubmit;
 		this.onCancel = options.onCancel;
+		const seen = new Set<string>();
+		for (const g of this.allGroups()) {
+			if (seen.has(g.id)) throw new Error(`LayoutRenderer: duplicate group id "${g.id}"`);
+			seen.add(g.id);
+		}
 		this.initializeState();
 	}
 
@@ -346,13 +353,14 @@ export class LayoutRenderer implements Component {
 
 	private initializeState(): void {
 		for (const g of this.allGroups()) {
-			this.cursorByGroup.set(g.id, 0);
-			// Radio cursor IS selection — first option is selected by default
-			// (matches the "(Recommended)" convention from CC's AskUserQuestion).
-			if (g.type === "radio_group" && g.firstOptionValue !== undefined) {
-				this.selectionByGroup.set(g.id, [g.firstOptionValue]);
+			const initialCursor = g.initialSelection.length > 0 ? g.optionValues.indexOf(g.initialSelection[0]) : 0;
+			this.cursorByGroup.set(g.id, initialCursor);
+			// Radio cursor IS selection — without a graph value the first option is
+			// selected (matches the "(Recommended)" convention from CC's AskUserQuestion).
+			if (g.type === "radio_group" && g.initialSelection.length === 0 && g.optionValues.length > 0) {
+				this.selectionByGroup.set(g.id, [g.optionValues[0]]);
 			} else {
-				this.selectionByGroup.set(g.id, []);
+				this.selectionByGroup.set(g.id, [...g.initialSelection]);
 			}
 		}
 		this.focusedGroupIndex = 0;
@@ -378,11 +386,18 @@ export class LayoutRenderer implements Component {
 		const out: GroupInfo[] = [];
 		const visit = (n: LayoutNode): void => {
 			if (n.type === "radio_group" || n.type === "checkbox_group") {
+				const optionValues = n.options.map((o) => o.value);
+				const requested = n.type === "radio_group" ? (n.value === undefined ? [] : [n.value]) : (n.value ?? []);
+				const unknown = requested.find((v) => !optionValues.includes(v));
+				if (unknown !== undefined) {
+					throw new Error(`LayoutRenderer: group "${n.id}" value "${unknown}" is not one of its options`);
+				}
 				out.push({
 					id: n.id,
 					type: n.type,
 					optionCount: n.options.length,
-					firstOptionValue: n.options[0]?.value,
+					optionValues,
+					initialSelection: [...new Set(requested)],
 				});
 				return;
 			}

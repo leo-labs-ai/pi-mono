@@ -10,7 +10,7 @@ import {
 	streamSimple,
 	type ToolResultMessage,
 	type UserMessage,
-} from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import { Agent, type AgentEvent } from "../src/index.ts";
 import { calculateTool } from "./utils/calculate.ts";
@@ -280,7 +280,7 @@ describe("Agent.continue() with faux provider", () => {
 			await expect(agent.continue()).rejects.toThrow("No messages to continue from");
 		});
 
-		it("is a benign no-op when last message is assistant and queues are empty", async () => {
+		it("throws when last message is assistant", async () => {
 			const faux = createFauxRegistration();
 			const model = faux.getModel();
 			const agent = new Agent({
@@ -310,9 +310,7 @@ describe("Agent.continue() with faux provider", () => {
 			};
 			agent.state.messages = [assistantMessage];
 
-			// Throwing here crashed post-run loops that race queue drains; see Agent.continue().
-			await expect(agent.continue()).resolves.toBeUndefined();
-			expect(agent.state.messages).toHaveLength(1);
+			await expect(agent.continue()).rejects.toThrow("Cannot continue from message role: assistant");
 		});
 	});
 

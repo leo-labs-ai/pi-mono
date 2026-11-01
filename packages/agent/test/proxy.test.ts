@@ -1,5 +1,5 @@
-import type { AssistantMessage, AssistantMessageEvent, Model } from "@lue-labs/pi-ai";
-import { normalizeContext } from "@lue-labs/pi-ai";
+import type { AssistantMessage, AssistantMessageEvent, Model } from "@leo-labs-ai/pi-ai";
+import { normalizeContext } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ProxyAssistantMessageEvent, streamProxy } from "../src/proxy.ts";
 

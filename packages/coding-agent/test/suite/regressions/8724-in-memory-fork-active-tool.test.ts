@@ -1,5 +1,5 @@
-import type { AgentTool, AgentToolResult } from "@lue-labs/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@lue-labs/pi-ai";
+import type { AgentTool, AgentToolResult } from "@leo-labs-ai/pi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import {

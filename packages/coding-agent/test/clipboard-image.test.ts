@@ -1,4 +1,4 @@
-import type { NativeClipboard } from "@lue-labs/pi-tui";
+import type { NativeClipboard } from "@leo-labs-ai/pi-tui";
 import { writeFileSync } from "fs";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { readClipboardImage } from "../src/utils/clipboard-image.ts";
@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/utils/clipboard-command.ts", () => ({ runClipboardCommand: mocks.command }));
-vi.mock("@lue-labs/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
+vi.mock("@leo-labs-ai/pi-tui", () => ({ getNativeClipboard: mocks.getNativeClipboard }));
 
 function commandResult(stdout: Buffer, status = 0): Buffer | undefined {
 	return status === 0 ? stdout : undefined;
@@ -44,6 +44,33 @@ describe("readClipboardImage", () => {
 		});
 	}
 
+	test("X11 does not probe image types when TARGETS fails", async () => {
+		// Regression test for #9786.
+		mocks.getImage.mockResolvedValue(null);
+		mocks.command.mockImplementation(async (_command, args) =>
+			args.includes("TARGETS") ? undefined : Buffer.from("hello"),
+		);
+		expect(await readClipboardImage({ platform: "linux", env: { DISPLAY: ":0" } })).toBeNull();
+		expect(mocks.command).toHaveBeenCalledExactlyOnceWith(
+			"xclip",
+			["-selection", "clipboard", "-t", "TARGETS", "-o"],
+			{ timeoutMs: 1000 },
+		);
+		expect(mocks.getImage).toHaveBeenCalledOnce();
+	});
+
+	test("X11 does not probe unadvertised image types", async () => {
+		mocks.getImage.mockResolvedValue(null);
+		mocks.command.mockImplementation(async (_command, args) => {
+			if (args.includes("TARGETS")) return Buffer.from("image/png\n");
+			if (args.includes("image/png")) return undefined;
+			return Buffer.from("hello");
+		});
+		expect(await readClipboardImage({ platform: "linux", env: { DISPLAY: ":0" } })).toBeNull();
+		expect(mocks.command.mock.calls.map(([, args]) => args[3])).toEqual(["TARGETS", "image/png"]);
+		expect(mocks.getImage).toHaveBeenCalledOnce();
+	});
+
 	test.each([png, null, new Uint8Array()])("native X11 result %j stops fallback", async (bytes) => {
 		mocks.getImage.mockResolvedValue(bytes);
 		expect(await readClipboardImage({ platform: "linux", env: { DISPLAY: ":0" } })).toEqual(
@@ -51,7 +78,7 @@ describe("readClipboardImage", () => {
 		);
 		expect(mocks.getNativeClipboard).toHaveBeenCalledExactlyOnceWith();
 		expect(mocks.getImage).toHaveBeenCalledOnce();
-		expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(Array<string>(5).fill("xclip"));
+		expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(["xclip"]);
 	});
 	test.each(["missing module", "unavailable display"])("Wayland: falls back to X11 after %s", async (failure) => {
 		if (failure === "missing module") mocks.getNativeClipboard.mockReturnValue(undefined);
@@ -121,7 +148,7 @@ describe("readClipboardImage", () => {
 				error,
 			);
 			expect(mocks.command.mock.calls.map(([name]) => name)).toEqual(
-				platform === "linux" ? ["wl-paste", ...Array<string>(5).fill("xclip")] : [],
+				platform === "linux" ? ["wl-paste", "xclip"] : [],
 			);
 		},
 	);

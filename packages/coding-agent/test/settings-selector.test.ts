@@ -1,4 +1,4 @@
-import { setKeybindings } from "@lue-labs/pi-tui";
+import { setKeybindings } from "@leo-labs-ai/pi-tui";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import {
@@ -22,80 +22,16 @@ describe("SettingsSelectorComponent", () => {
 		harness = undefined;
 	});
 
-	it("shows extension-contributed settings and invokes their callback", () => {
-		const onChange = vi.fn();
-		const setting = {
-			id: "prompt-suggestions",
-			label: "Prompt suggestions",
-			currentValue: "disabled",
-			values: ["disabled", "enabled"],
-			onChange,
-			extensionPath: "/tmp/prompt-suggestions.ts",
-		};
-		const selector = new SettingsSelectorComponent(
-			{
-				fullscreenScrollbar: "auto",
-				warnings: {},
-				defaultModel: "not set",
-				availableDefaultModels: [],
-				availableThinkingLevels: [],
-				modelThinkingLevels: {},
-				availableThemes: [],
-				extensionSettings: [setting],
-			} as unknown as SettingsConfig,
-			{} as unknown as SettingsCallbacks,
-		);
-		const settingsList = selector.getSettingsList();
-
-		for (const character of "Prompt suggestions") settingsList.handleInput(character);
-		settingsList.handleInput("\r");
-
-		expect(onChange).toHaveBeenCalledWith("enabled");
-		expect(setting.currentValue).toBe("enabled");
-	});
-
-	it("contains extension setting callback failures and reports them", () => {
-		const onError = vi.fn();
-		const setting = {
-			id: "broken",
-			label: "Broken setting",
-			currentValue: "off",
-			values: ["off", "on"],
-			onChange: () => {
-				throw new Error("setting failed");
-			},
-			extensionPath: "/tmp/broken.ts",
-		};
-		const selector = new SettingsSelectorComponent(
-			{
-				fullscreenScrollbar: "auto",
-				warnings: {},
-				defaultModel: "not set",
-				availableDefaultModels: [],
-				availableThinkingLevels: [],
-				modelThinkingLevels: {},
-				availableThemes: [],
-				extensionSettings: [setting],
-			} as unknown as SettingsConfig,
-			{ onExtensionSettingError: onError } as unknown as SettingsCallbacks,
-		);
-		const settingsList = selector.getSettingsList();
-
-		for (const character of "Broken setting") settingsList.handleInput(character);
-		settingsList.handleInput("\r");
-
-		expect(onError).toHaveBeenCalledWith(setting, expect.any(Error));
-		expect(setting.currentValue).toBe("off");
-	});
-
 	it("cycles through fullscreen settings", () => {
 		const onExitOutputChange = vi.fn();
 		const onScrollbarChange = vi.fn();
 		const onCopyOnSelectChange = vi.fn();
+		const onWheelScrollLinesChange = vi.fn();
 		const config = {
 			fullscreenExitOutput: "transcript",
 			fullscreenScrollbar: "auto",
 			fullscreenCopyOnSelect: true,
+			fullscreenWheelScrollLines: 7,
 			warnings: {},
 			defaultModel: "not set",
 			availableDefaultModels: [],
@@ -107,6 +43,7 @@ describe("SettingsSelectorComponent", () => {
 			onFullscreenExitOutputChange: onExitOutputChange,
 			onFullscreenScrollbarChange: onScrollbarChange,
 			onFullscreenCopyOnSelectChange: onCopyOnSelectChange,
+			onFullscreenWheelScrollLinesChange: onWheelScrollLinesChange,
 		} as unknown as SettingsCallbacks;
 
 		const cycle = (label: string, count: number) => {
@@ -121,6 +58,31 @@ describe("SettingsSelectorComponent", () => {
 		expect(onScrollbarChange.mock.calls.flat()).toEqual(["always", "hidden", "auto"]);
 		cycle("Fullscreen copy on select", 2);
 		expect(onCopyOnSelectChange.mock.calls.flat()).toEqual([false, true]);
+		// #9758: custom values from settings.json stay in the cycle.
+		cycle("Fullscreen wheel scrolling", 3);
+		expect(onWheelScrollLinesChange.mock.calls.flat()).toEqual([10, "auto", 1]);
+	});
+
+	it("cycles through share destinations", () => {
+		const onSessionShareDestinationChange = vi.fn();
+		const config = {
+			sessionShareDestination: "auto",
+			warnings: {},
+			defaultModel: "not set",
+			availableDefaultModels: [],
+			availableThinkingLevels: [],
+			modelThinkingLevels: {},
+			availableThemes: [],
+		} as unknown as SettingsConfig;
+		const callbacks = {
+			onSessionShareDestinationChange,
+		} as unknown as SettingsCallbacks;
+		const list = new SettingsSelectorComponent(config, callbacks).getSettingsList();
+		list.selectItem("share-destination");
+
+		for (let i = 0; i < 3; i++) list.handleInput("\r");
+
+		expect(onSessionShareDestinationChange.mock.calls.flat()).toEqual(["gist", "radius", "auto"]);
 	});
 
 	it("keeps the configured fixed theme marked while browsing", () => {
@@ -130,7 +92,7 @@ describe("SettingsSelectorComponent", () => {
 			modelThinkingLevels: {},
 			currentTheme: "dark",
 			terminalTheme: "dark",
-			availableThemes: ["dark", "light"],
+			availableThemes: ["system", "dark", "light"],
 			warnings: {},
 		} as unknown as SettingsConfig;
 		const callbacks = { onThemePreview: vi.fn(), onCancel: () => {} } as unknown as SettingsCallbacks;
@@ -139,7 +101,9 @@ describe("SettingsSelectorComponent", () => {
 		list.selectItem("theme");
 		list.handleInput("\r");
 		let output = stripAnsi(list.render(120).join("\n"));
-		expect(output).toContain("    Automatic");
+		expect(output).toMatch(
+			/ {4}system +Theme created from your terminal's colors\n {4}automatic +Use separate themes/,
+		);
 		expect(output).toContain("→ ✓ dark");
 
 		list.handleInput("\x1b[B");

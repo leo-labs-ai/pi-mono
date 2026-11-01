@@ -27,12 +27,11 @@ describe("issue #7193 extension event-bus lifecycle", () => {
 		const loadExtensions = async () => {
 			const runtime = createExtensionRuntime();
 			const extension = await loadExtensionFromFactory(factory, process.cwd(), eventBus, runtime);
-			return { extensions: [extension], deferredExtensions: [], errors: [], eventBus, runtime };
+			return { extensions: [extension], errors: [], runtime };
 		};
 		let extensionsResult = await loadExtensions();
 		const resourceLoader: ResourceLoader = {
 			getExtensions: () => extensionsResult,
-			getExtensionsForRunner: () => extensionsResult,
 			getSkills: () => ({ skills: [], diagnostics: [] }),
 			getPrompts: () => ({ prompts: [], diagnostics: [] }),
 			getThemes: () => ({ themes: [], diagnostics: [] }),

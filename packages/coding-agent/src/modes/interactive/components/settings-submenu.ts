@@ -9,7 +9,7 @@ import {
 	type SelectListLayoutOptions,
 	Spacer,
 	Text,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { getSelectListTheme, theme } from "../theme/theme.ts";
 
 const SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {

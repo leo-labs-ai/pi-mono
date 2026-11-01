@@ -5,7 +5,7 @@
  * Useful for preventing accidental modifications to sensitive files.
  */
 
-import type { ExtensionAPI } from "@lue-labs/pi-coding-agent";
+import type { ExtensionAPI } from "@leo-labs-ai/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	const protectedPaths = [".env", ".git/", "node_modules/"];

@@ -1,4 +1,4 @@
-import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@lue-labs/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import type { BranchSummaryMessage } from "../../../core/messages.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { keyText } from "./keybinding-hints.ts";
@@ -12,8 +12,8 @@ export class BranchSummaryMessageComponent extends Box {
 	private message: BranchSummaryMessage;
 	private markdownTheme: MarkdownTheme;
 
-	constructor(message: BranchSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
-		super(1, 1, (t) => theme.bg("customMessageBg", t));
+	constructor(message: BranchSummaryMessage, markdownTheme: MarkdownTheme = getMarkdownTheme(), outputPad = 1) {
+		super(outputPad, 1, (t) => theme.bg("customMessageBg", t));
 		this.message = message;
 		this.markdownTheme = markdownTheme;
 		this.updateDisplay();
@@ -22,6 +22,10 @@ export class BranchSummaryMessageComponent extends Box {
 	setExpanded(expanded: boolean): void {
 		this.expanded = expanded;
 		this.updateDisplay();
+	}
+
+	setOutputPad(outputPad: number): void {
+		this.setPaddingX(outputPad);
 	}
 
 	override invalidate(): void {

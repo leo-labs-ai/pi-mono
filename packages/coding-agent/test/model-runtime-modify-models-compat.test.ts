@@ -8,7 +8,7 @@ import {
 	InMemoryModelsStore,
 	type Model,
 	type Provider,
-} from "@lue-labs/pi-ai";
+} from "@leo-labs-ai/pi-ai";
 import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
@@ -89,6 +89,50 @@ describe("extension provider model lifecycle", () => {
 
 		registry.unregisterProvider("extension-native");
 		expect(registry.getProvider("extension-native")).toBeUndefined();
+	});
+
+	// Regression for #9962: initial model selection reads the snapshot before the async refresh finishes.
+	it("marks a native provider with a stored credential as configured when it registers", async () => {
+		const runtime = await ModelRuntime.create({
+			credentials: AuthStorage.inMemory({
+				"extension-native": {
+					type: "oauth",
+					access: "access",
+					refresh: "refresh",
+					expires: Date.now() + 3_600_000,
+				},
+			}),
+			modelsStore: new InMemoryModelsStore(),
+			modelsPath: null,
+			allowModelNetwork: false,
+		});
+		const nativeModel = { ...model("native"), provider: "extension-native" };
+		const unused = () => {
+			throw new Error("unused");
+		};
+		const provider: Provider = {
+			id: "extension-native",
+			name: "Extension Native",
+			auth: {
+				oauth: {
+					name: "Native OAuth",
+					login: unused,
+					refresh: async (credential) => credential,
+					toAuth: async (credential) => ({ apiKey: credential.access }),
+				},
+			},
+			getModels: () => [nativeModel],
+			stream: unused,
+			streamSimple: unused,
+		};
+
+		runtime.registerNativeProvider(provider);
+
+		expect(runtime.hasConfiguredAuth("extension-native")).toBe(true);
+		expect(runtime.isUsingOAuth("extension-native")).toBe(true);
+		expect(runtime.getAvailableSnapshot().map((m) => `${m.provider}/${m.id}`)).toContain("extension-native/native");
+		await runtime.refresh({ allowNetwork: false });
+		expect(runtime.hasConfiguredAuth("extension-native")).toBe(true);
 	});
 
 	it("preserves native deferred methods through provider overlays", async () => {

@@ -6,8 +6,8 @@
  */
 
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual } from "@lue-labs/pi-ai";
-import { setCapabilityOverrides } from "@lue-labs/pi-tui";
+import { type ImageContent, modelsAreEqual } from "@leo-labs-ai/pi-ai";
+import { setCapabilityOverrides } from "@leo-labs-ai/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
@@ -33,15 +33,7 @@ import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { selectSession } from "./cli/session-picker.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
-import {
-	APP_NAME,
-	ENV_SESSION_DIR,
-	expandTildePath,
-	getAgentDir,
-	getCommandName,
-	getPackageDir,
-	VERSION,
-} from "./config.ts";
+import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -51,20 +43,9 @@ import {
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
-import {
-	extensionLoadDiagnostic,
-	FAILED_EXTENSION_PREFIX,
-	SKIPPED_EXTENSION_PREFIX,
-	STRICT_EXTENSIONS_ENV,
-} from "./core/extensions/load-diagnostics.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
-import {
-	normalizeAutoAliasString,
-	resolveCliModel,
-	resolveModelScope,
-	type ScopedModel,
-} from "./core/model-resolver.ts";
+import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
 import { type AppMode, resolveProjectTrusted } from "./core/project-trust.ts";
@@ -81,16 +62,16 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
+import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, setThemeJsonValidator, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import { validateThemeJson } from "./modes/interactive/theme/theme-json.ts";
+import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
-const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${getCommandName()} -ne".`;
-const EXTENSION_SKIP_HINT = `Hint: those extensions were auto-discovered and were skipped, not loaded. Set ${STRICT_EXTENSIONS_ENV}=1 to make this fatal.`;
+const EXTENSION_LOAD_FAILURE_HINT = `Hint: Start without extensions using "${APP_NAME} -ne".`;
 
 /**
  * Read all content from piped stdin.
@@ -467,41 +448,7 @@ export async function createSessionManager(
 	return SessionManager.create(cwd, sessionDir, { id: parsed.sessionId });
 }
 
-function isAutoModelRequest(model: string | undefined): boolean {
-	const value = model?.trim().toLowerCase();
-	return value === "auto" || value?.endsWith("/auto") === true;
-}
-
-function requestedAutoModelAlias(cliProvider: string | undefined, cliModel: string): string {
-	const model = cliModel.trim();
-	if (model.toLowerCase() === "auto") {
-		return normalizeAutoAliasString(cliProvider ?? "clawrouter", model) ?? model;
-	}
-	return normalizeAutoAliasString(undefined, model) ?? model;
-}
-
-function providerScopedAutoProvider(requestedModel: string | undefined): string | undefined {
-	const alias = normalizeAutoAliasString(undefined, requestedModel);
-	const parts = alias?.split("/");
-	return parts?.length === 2 && parts[1] === "auto" ? parts[0] : undefined;
-}
-
-function seedProviderScopedAutoModel(
-	modelRuntime: ModelRuntime,
-	requestedModel: string | undefined,
-	scopedModels: ScopedModel[] = [],
-) {
-	const provider = providerScopedAutoProvider(requestedModel);
-	if (!provider) return undefined;
-	// Prefer a model inside the user's enabledModels scope: the seed can become the
-	// session's actual model when routing resolves immediately (print mode, prompt
-	// args), and it must not silently escape an explicit provider/cost restriction.
-	const scopedSeed = scopedModels.find((scoped) => scoped.model.provider === provider)?.model;
-	return scopedSeed ?? modelRuntime.getModels().find((model) => model.provider === provider);
-}
-
-/** Exported for tests: keeps CLI-to-session option translation covered at its real seam. */
-export function buildSessionOptions(
+function buildSessionOptions(
 	parsed: Args,
 	scopedModels: ScopedModel[],
 	hasExistingSession: boolean,
@@ -519,48 +466,34 @@ export function buildSessionOptions(
 	// Model from CLI
 	// - supports --provider <name> --model <pattern>
 	// - supports --model <provider>/<pattern>
-	if (parsed.model) {
-		const isAutoRequest = isAutoModelRequest(parsed.model);
-		if (isAutoRequest) {
-			options.requestedModel = requestedAutoModelAlias(parsed.provider, parsed.model);
-			options.model = seedProviderScopedAutoModel(modelRuntime, options.requestedModel, scopedModels);
-		} else {
-			const resolved = resolveCliModel({
-				cliProvider: parsed.provider,
-				cliModel: parsed.model,
-				cliThinking: parsed.thinking,
-				modelRuntime,
-			});
-			if (resolved.warning) {
-				diagnostics.push({ type: "warning", message: resolved.warning });
-			}
-			if (resolved.error) {
-				diagnostics.push({ type: "error", message: resolved.error });
-			}
-			if (resolved.model) {
-				options.model = resolved.model;
-				// Allow "--model <pattern>:<thinking>" as a shorthand.
-				// Explicit --thinking still takes precedence (applied later).
-				if (!parsed.thinking && resolved.thinkingLevel) {
-					options.thinkingLevel = resolved.thinkingLevel;
-					cliThinkingFromModel = true;
-				}
-			}
-		}
+	if (parsed.provider && !parsed.model) {
+		diagnostics.push({
+			type: "error",
+			message: `--provider requires --model (for example: --provider ${parsed.provider} --model <pattern>)`,
+		});
 	}
-
-	// A settings-persisted auto default has no registry entry, so the scoped-models
-	// fallback below would discard the auto intent and silently land on the first
-	// scoped model without consulting `model:resolve`. Mirror the `--model auto`
-	// branch: surface the alias as requestedModel and seed a provider-scoped model.
-	if (!parsed.model && !hasExistingSession) {
-		const settingsAutoAlias = normalizeAutoAliasString(
-			settingsManager.getDefaultProvider(),
-			settingsManager.getDefaultModel(),
-		);
-		if (settingsAutoAlias) {
-			options.requestedModel = settingsAutoAlias;
-			options.model = seedProviderScopedAutoModel(modelRuntime, settingsAutoAlias, scopedModels);
+	if (parsed.model) {
+		const resolved = resolveCliModel({
+			cliProvider: parsed.provider,
+			cliModel: parsed.model,
+			cliThinking: parsed.thinking,
+			inlineApiKey: Boolean(parsed.apiKey),
+			modelRuntime,
+		});
+		if (resolved.warning) {
+			diagnostics.push({ type: "warning", message: resolved.warning });
+		}
+		if (resolved.error) {
+			diagnostics.push({ type: "error", message: resolved.error });
+		}
+		if (resolved.model) {
+			options.model = resolved.model;
+			// Allow "--model <pattern>:<thinking>" as a shorthand.
+			// Explicit --thinking still takes precedence (applied later).
+			if (!parsed.thinking && resolved.thinkingLevel) {
+				options.thinkingLevel = resolved.thinkingLevel;
+				cliThinkingFromModel = true;
+			}
 		}
 	}
 
@@ -640,6 +573,8 @@ export interface MainOptions {
 
 export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
+	// Commands and startup selectors can load user-authored themes before runtime creation.
+	setThemeJsonValidator(validateThemeJson);
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
@@ -676,6 +611,12 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	if (await handleConfigCommand(args, { extensionFactories })) {
+		return;
+	}
+
+	if (args[0] === "mcp") {
+		const { runMcpCommand } = await loadMcpCommand();
+		process.exitCode = await runMcpCommand(args.slice(1), { cwd, agentDir });
 		return;
 	}
 
@@ -844,6 +785,7 @@ export async function main(args: string[], options?: MainOptions) {
 				additionalPromptTemplatePaths: resolvedPromptTemplatePaths,
 				additionalThemePaths: resolvedThemePaths,
 				noExtensions: parsed.noExtensions,
+				disabledBuiltinExtensions: parsed.noMcp ? ["mcp"] : undefined,
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
@@ -858,7 +800,14 @@ export async function main(args: string[], options?: MainOptions) {
 			...projectTrustDiagnostics,
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager),
-			...resourceLoader.getExtensions().errors.map((failure) => extensionLoadDiagnostic(failure)),
+			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
+				type: "error" as const,
+				message: `Failed to load extension "${path}": ${error}`,
+			})),
+			...(resourceLoader.getExtensions().warnings ?? []).map(({ path, warning }) => ({
+				type: "warning" as const,
+				message: `Extension package "${path}": ${warning}`,
+			})),
 		];
 
 		const modelPatterns = parsed.models ?? settingsManager.getEnabledModels();
@@ -955,8 +904,6 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const { initialMessage, initialImages } = await prepareInitialMessage(parsed, stdinContent);
 	time("prepareInitialMessage");
-	// pi reads user-authored themes, so it opts into full validation before any theme loads.
-	setThemeJsonValidator(validateThemeJson);
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");
 
@@ -972,13 +919,10 @@ export async function main(args: string[], options?: MainOptions) {
 		reportDiagnostics(startupDiagnostics);
 	}
 	if (hasRuntimeErrors) {
-		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes(FAILED_EXTENSION_PREFIX))) {
+		if (runtime.diagnostics.some((diagnostic) => diagnostic.message.includes("Failed to load extension"))) {
 			console.error(chalk.yellow(EXTENSION_LOAD_FAILURE_HINT));
 		}
 		process.exit(1);
-	}
-	if (runtime.diagnostics.some((diagnostic) => diagnostic.message.startsWith(SKIPPED_EXTENSION_PREFIX))) {
-		console.error(chalk.yellow(EXTENSION_SKIP_HINT));
 	}
 	time("createAgentSession");
 
@@ -1051,16 +995,6 @@ export async function main(args: string[], options?: MainOptions) {
 		restoreStdout();
 		if (exitCode !== 0) {
 			process.exitCode = exitCode;
-		}
-		// One-shot --print/--mode json runs must terminate deterministically. The
-		// runtime is already disposed (runPrintMode's finally ran session_shutdown +
-		// flushed stdout), so a still-open handle here (leaked observability sockets,
-		// sidecar children, etc.) would otherwise keep the event loop alive and wedge
-		// the run. Force-exit like the package-command one-shot path so a bad
-		// extension cannot keep a one-shot command alive. On win32, process.exit()
-		// after fetch() during teardown can assert (nodejs/node#56645), so drain there.
-		if (process.platform !== "win32") {
-			process.exit(process.exitCode ?? 0);
 		}
 		return;
 	}

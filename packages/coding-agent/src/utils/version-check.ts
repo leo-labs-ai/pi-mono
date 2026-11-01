@@ -40,39 +40,7 @@ export function comparePackageVersions(leftVersion: string, rightVersion: string
 	return compare(left, right);
 }
 
-interface ParsedVersion {
-	major: number;
-	minor: number;
-	patch: number;
-	prerelease?: string;
-}
-
-function parsePackageVersion(version: string): ParsedVersion | undefined {
-	const match = version.trim().match(/^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+.*)?$/);
-	if (!match) {
-		return undefined;
-	}
-	return {
-		major: Number.parseInt(match[1], 10),
-		minor: Number.parseInt(match[2], 10),
-		patch: Number.parseInt(match[3], 10),
-		prerelease: match[4],
-	};
-}
-
 export function isNewerPackageVersion(candidateVersion: string, currentVersion: string): boolean {
-	const candidate = parsePackageVersion(candidateVersion);
-	const current = parsePackageVersion(currentVersion);
-	if (candidate && current) {
-		const sameBase =
-			candidate.major === current.major && candidate.minor === current.minor && candidate.patch === current.patch;
-		const currentIsForkPrerelease =
-			current.prerelease?.startsWith("luke.") || current.prerelease?.startsWith("valkyriweb.");
-		if (sameBase && currentIsForkPrerelease && !candidate.prerelease) {
-			return false;
-		}
-	}
-
 	const comparison = comparePackageVersions(candidateVersion, currentVersion);
 	if (comparison !== undefined) {
 		return comparison > 0;

@@ -19,8 +19,7 @@ export function getEffortThinkingLevelMap(options: readonly ModelsDevReasoningOp
 	const effortValues = options.flatMap((option) => (option.type === "effort" ? option.values : []));
 	if (effortValues.length === 0) return undefined;
 
-	// Fork: ThinkingLevel adds "ultra"/"adaptive"; widen the set so `.has(level)` typechecks.
-	const supported: ReadonlySet<ThinkingLevel | "none" | "default" | null> = new Set(effortValues);
+	const supported = new Set(effortValues);
 	if (!THINKING_LEVELS.some((level) => supported.has(level)) && !supported.has("none")) return undefined;
 
 	const map: ThinkingLevelMap = { off: supported.has("none") ? "none" : null };

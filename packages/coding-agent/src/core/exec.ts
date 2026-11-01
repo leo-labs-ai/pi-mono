@@ -4,7 +4,6 @@
 
 import { spawn } from "node:child_process";
 import { waitForChildProcess } from "../utils/child-process.ts";
-import { killProcessTree } from "../utils/shell.ts";
 
 /**
  * Options for executing shell commands.
@@ -42,10 +41,8 @@ export async function execCommand(
 		const proc = spawn(command, args, {
 			cwd,
 			shell: false,
-			detached: process.platform !== "win32",
 			stdio: ["ignore", "pipe", "pipe"],
 		});
-		proc.unref();
 
 		let stdout = "";
 		let stderr = "";
@@ -55,11 +52,13 @@ export async function execCommand(
 		const killProcess = () => {
 			if (!killed) {
 				killed = true;
-				if (proc.pid) {
-					killProcessTree(proc.pid);
-				} else {
-					proc.kill("SIGKILL");
-				}
+				proc.kill("SIGTERM");
+				// Force kill after 5 seconds if SIGTERM doesn't work
+				setTimeout(() => {
+					if (!proc.killed) {
+						proc.kill("SIGKILL");
+					}
+				}, 5000);
 			}
 		};
 

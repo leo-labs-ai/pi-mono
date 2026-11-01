@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@lue-labs/pi-ai";
-import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@lue-labs/pi-tui";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
+import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@leo-labs-ai/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
@@ -7,11 +7,6 @@ import { createMarkdownTransform } from "./markdown-transform.ts";
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
-const PI_GOAL_STALE_CONTINUATION_ABORT = "pi-goal:stale-queued-continuation-cancelled";
-
-function isSilentAbortMessage(message: AssistantMessage): boolean {
-	return message.stopReason === "aborted" && message.errorMessage === PI_GOAL_STALE_CONTINUATION_ABORT;
-}
 
 /**
  * Component that renders a complete assistant message
@@ -191,7 +186,6 @@ export class AssistantMessageComponent extends Container {
 			);
 		} else if (!hasToolCalls) {
 			if (message.stopReason === "aborted") {
-				if (isSilentAbortMessage(message)) return;
 				const abortMessage =
 					message.errorMessage && message.errorMessage !== "Request was aborted"
 						? message.errorMessage

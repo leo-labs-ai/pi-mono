@@ -34,7 +34,7 @@ type GoogleApiType = "google-generative-ai" | "google-vertex";
  * Mirrors Google's ThinkingLevel enum values.
  */
 export type GoogleApiThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max" | "ultra" | "adaptive">;
+export type ResolvedGoogleThinkingLevel = Exclude<ThinkingLevel, "xhigh" | "max">;
 
 const GOOGLE_SDK_THINKING_LEVEL_MAP: Record<GoogleApiThinkingLevel, GoogleSdkThinkingLevel> = {
 	THINKING_LEVEL_UNSPECIFIED: GoogleSdkThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
@@ -75,6 +75,8 @@ export function usesGoogleThinkingLevel<T extends GoogleApiType>(model: Model<T>
 		// Match Gemini 3 Pro/Flash IDs with or without a minor version, such as
 		// gemini-3-flash-preview, gemini-3.1-pro-preview, and gemini-3.8-flash.
 		/gemini-3(?:\.\d+)?-(?:pro|flash)/.test(id) ||
+		// Match Gemini 4 and later, such as gemini-4-argon (#10890).
+		/gemini-(?:[4-9]|[1-9]\d)/.test(id) ||
 		id === "gemini-flash-latest" ||
 		id === "gemini-flash-lite-latest" ||
 		// Match both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
@@ -289,7 +291,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				? msg.content.filter((c): c is ImageContent => c.type === "image")
 				: [];
 
-			const hasText = textResult.length > 0;
+			const hasText = textResult.trim().length > 0;
 			const hasImages = imageContent.length > 0;
 
 			// Gemini 3+ models support multimodal function responses with images nested inside

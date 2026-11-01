@@ -6,8 +6,8 @@ import {
 	type ModelsSimpleStreamOptions,
 	type SimpleStreamOptions,
 	type Usage,
-} from "@lue-labs/pi-ai";
-import { getProviderEnvValue } from "@lue-labs/pi-ai/utils/provider-env";
+} from "@leo-labs-ai/pi-ai";
+import { getProviderEnvValue } from "@leo-labs-ai/pi-ai/utils/provider-env";
 import type { ModelRuntime } from "./model-runtime.ts";
 import type { SessionEntry, SessionManager, UsageEntry } from "./session-manager.ts";
 import type { CacheWarmingMode } from "./settings-manager.ts";

@@ -1,4 +1,4 @@
-import { type TUI, visibleWidth } from "@lue-labs/pi-tui";
+import { type TUI, visibleWidth } from "@leo-labs-ai/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";

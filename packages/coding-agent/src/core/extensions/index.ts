@@ -2,10 +2,8 @@
  * Extension system for lifecycle events and custom tools.
  */
 
-export { AGENTS_ENGINE_SERVICE_ID, type AgentEngine, type AgentParentSnapshot } from "../agents/engine.ts";
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.ts";
 export type { SourceInfo } from "../source-info.ts";
-export { BASH_BG_JOBS_SERVICE_ID } from "./bash-bg-jobs.ts";
 export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
@@ -14,7 +12,6 @@ export {
 } from "./loader.ts";
 export type {
 	ExtensionErrorListener,
-	ExtensionSlotUIActions,
 	ForkHandler,
 	NavigateTreeHandler,
 	NewSessionHandler,
@@ -28,10 +25,8 @@ export type {
 	AgentBeforeSettleEvent,
 	AgentBeforeSettleEventResult,
 	AgentEndEvent,
-	AgentHandle,
 	AgentSettledEvent,
 	AgentStartEvent,
-	AgentTelemetry,
 	// Re-exports
 	AgentToolResult,
 	AgentToolUpdateCallback,
@@ -42,8 +37,10 @@ export type {
 	// Events - Tool (ToolCallEvent types)
 	BashToolCallEvent,
 	BashToolResultEvent,
+	BeforeAgentStartCustomEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeAgentStartUserEvent,
 	BeforeProviderHeadersEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
@@ -75,6 +72,7 @@ export type {
 	EntryRenderOptions,
 	ExecOptions,
 	ExecResult,
+	ExecuteToolOptions,
 	Extension,
 	ExtensionActions,
 	// API
@@ -88,30 +86,22 @@ export type {
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionFlag,
-	ExtensionFooterSpec,
 	ExtensionHandler,
-	ExtensionLoadError,
-	ExtensionMainPaneAPI,
-	ExtensionMainPaneFactory,
 	ExtensionMode,
-	ExtensionOverlayAPI,
-	ExtensionOverlayFactory,
 	// Runtime
 	ExtensionRuntime,
-	ExtensionSetting,
 	ExtensionShortcut,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
+	ExtensionVirtualModel,
 	ExtensionWidgetOptions,
-	ForkAgentOptions,
-	ForkAgentResult,
-	ForkSystemPromptTransform,
+	FindToolCallEvent,
+	FindToolResultEvent,
 	GetActiveToolsHandler,
 	GetAllToolsHandler,
 	GetCommandsHandler,
 	GetThinkingLevelHandler,
-	GlobToolCallEvent,
-	GlobToolResultEvent,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
 	InlineExtension,
@@ -125,6 +115,7 @@ export type {
 	LsToolResultEvent,
 	MarkdownTransformContext,
 	MarkdownTransformer,
+	McpServersChangeEvent,
 	// Events - Message
 	MessageEndEvent,
 	MessageEndEventResult,
@@ -145,6 +136,7 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderStreamEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
@@ -175,13 +167,12 @@ export type {
 	SessionStartEvent,
 	SessionTreeEvent,
 	SetActiveToolsHandler,
-	SetExtensionConfigValueHandler,
 	SetLabelHandler,
 	SetModelHandler,
 	SetThinkingLevelHandler,
-	TelemetryEvent,
 	TerminalInputHandler,
 	ThinkingLevelSelectEvent,
+	ToolAnnotations,
 	// Events - Tool
 	ToolCallEvent,
 	ToolCallEventResult,
@@ -193,12 +184,16 @@ export type {
 	ToolExecutionMode,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	ToolExposure,
 	ToolInfo,
+	ToolLoadout,
+	ToolLoadoutChanges,
+	ToolNamespace,
+	ToolRendererResolver,
+	ToolRenderers,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,
-	TranscriptApi,
-	TranscriptEntry,
 	TreePreparation,
 	TurnEndEvent,
 	TurnEndEventResult,
@@ -219,7 +214,7 @@ export {
 	defineTool,
 	isBashToolResult,
 	isEditToolResult,
-	isGlobToolResult,
+	isFindToolResult,
 	isGrepToolResult,
 	isLsToolResult,
 	isPowerShellToolResult,

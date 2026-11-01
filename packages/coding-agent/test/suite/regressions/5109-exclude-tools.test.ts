@@ -39,12 +39,6 @@ describe("regression #5109: exclude tools", () => {
 
 	it("filters built-in and extension tools from available and active tools", async () => {
 		const harness = await createHarness({
-			// Set the active tools explicitly: this fork diverges from upstream's
-			// default-active set (it defaults to a minimal `Bash`-only built-in set),
-			// so pinning the active names keeps the #5109 exclude assertions
-			// deterministic across the divergence while still proving exclusion
-			// applies to active tools.
-			initialActiveToolNames: ["read", "bash", "edit", "write", "ask_question", "dynamic_tool"],
 			excludedToolNames: ["read", "ask_question"],
 			extensionFactories,
 		});
@@ -80,6 +74,24 @@ describe("regression #5109: exclude tools", () => {
 			expect(harness.session.systemPrompt).toContain("- bash:");
 			expect(harness.session.systemPrompt).not.toContain("- read:");
 			expect(harness.session.systemPrompt).not.toContain("ask_question");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	it("matches allowlist and denylist patterns", async () => {
+		const harness = await createHarness({
+			allowedToolNames: ["*_tool", "ask_*", "re*"],
+			excludedToolNames: ["ask*"],
+			initialActiveToolNames: ["*_tool", "ask_*", "re*"],
+			extensionFactories,
+		});
+		try {
+			await harness.session.bindExtensions({});
+
+			// Patterns that match a tool activate it like its name.
+			expect(toolNames(harness.session.getAllTools())).toEqual(["dynamic_tool", "read"]);
+			expect(harness.session.getActiveToolNames().sort()).toEqual(["dynamic_tool", "read"]);
 		} finally {
 			harness.cleanup();
 		}

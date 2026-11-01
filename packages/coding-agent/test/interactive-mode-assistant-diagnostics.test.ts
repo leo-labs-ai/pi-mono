@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@lue-labs/pi-ai";
-import { Container } from "@lue-labs/pi-tui";
+import type { AssistantMessage } from "@leo-labs-ai/pi-ai";
+import { Container } from "@leo-labs-ai/pi-tui";
 import { describe, expect, test } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";

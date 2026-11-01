@@ -3,9 +3,9 @@ export { Type } from "typebox";
 
 // Core only, side-effect free: no generated catalogs, no provider factories,
 // no api-registry, no OAuth implementations, no compat. Provider factories
-// live under "@lue-labs/pi-ai/providers/*", API implementations under
-// "@lue-labs/pi-ai/api/*", the old global API under
-// "@lue-labs/pi-ai/compat".
+// live under "@leo-labs-ai/pi-ai/providers/*", API implementations under
+// "@leo-labs-ai/pi-ai/api/*", the old global API under
+// "@leo-labs-ai/pi-ai/compat".
 export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from "./api/anthropic-messages.ts";
 export type { AzureOpenAIResponsesOptions } from "./api/azure-openai-responses.ts";
 export type { BedrockOptions, BedrockThinkingDisplay } from "./api/bedrock-converse-stream.ts";
@@ -30,15 +30,14 @@ export type {
 	OAuthSelectOption,
 	OAuthSelectPrompt,
 } from "./compat/extension-oauth-types.ts";
-export * from "./images-models.ts";
 export * from "./models.ts";
 export * from "./models-store.ts";
 export * from "./providers/faux.ts";
 export * from "./session-resources.ts";
 export * from "./types.ts";
-export * from "./utils/assistant-message-frame.ts";
 export * from "./utils/diagnostics.ts";
 export * from "./utils/event-stream.ts";
+export * from "./utils/identity.ts";
 export * from "./utils/json-parse.ts";
 export * from "./utils/overflow.ts";
 export * from "./utils/retry.ts";
@@ -47,3 +46,4 @@ export * from "./utils/transcript.ts";
 export * from "./utils/typebox-helpers.ts";
 export { uuidv7 } from "./utils/uuid.ts";
 export * from "./utils/validation.ts";
+export { PI_AI_VERSION } from "./utils/version.ts";

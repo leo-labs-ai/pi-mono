@@ -1,30 +1,16 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent, type AgentEvent, type AgentTool } from "@lue-labs/pi-agent-core";
-import { type AssistantMessage, type AssistantMessageEvent, EventStream } from "@lue-labs/pi-ai";
+import { Agent, type AgentEvent, type AgentTool } from "@leo-labs-ai/pi-agent-core";
+import { type AssistantMessage, createAssistantMessageEventStream, getModel } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { pickModel } from "./helpers/models.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
 import { createTestResourceLoader } from "./utilities.ts";
-
-class MockAssistantStream extends EventStream<AssistantMessageEvent, AssistantMessage> {
-	constructor() {
-		super(
-			(event) => event.type === "done" || event.type === "error",
-			(event) => {
-				if (event.type === "done") return event.message;
-				if (event.type === "error") return event.error;
-				throw new Error("Unexpected event type");
-			},
-		);
-	}
-}
 
 function createAssistantMessage(text: string, overrides?: Partial<AssistantMessage>): AssistantMessage {
 	return {
@@ -81,13 +67,13 @@ describe("AgentSession retry", () => {
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
 		let callCount = 0;
 
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
 			streamFn: () => {
 				callCount++;
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					if (callCount <= failCount) {
 						const msg = createAssistantMessage("", {
@@ -118,7 +104,6 @@ describe("AgentSession retry", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});
@@ -196,7 +181,7 @@ describe("AgentSession retry", () => {
 		let callCount = 0;
 		const streamFn = () => {
 			callCount++;
-			const stream = new MockAssistantStream();
+			const stream = createAssistantMessageEventStream();
 			queueMicrotask(() => {
 				if (callCount === 1) {
 					const msg = createAssistantMessage("", {
@@ -216,7 +201,7 @@ describe("AgentSession retry", () => {
 		};
 		created.session.dispose();
 
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
@@ -233,7 +218,6 @@ describe("AgentSession retry", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 		});
@@ -269,13 +253,13 @@ describe("AgentSession retry", () => {
 			},
 		};
 
-		const model = pickModel("anthropic");
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const agent = new Agent({
 			getApiKey: () => "test-key",
 			initialState: { model, systemPrompt: "Test", tools: [] },
 			streamFn: () => {
 				callCount++;
-				const stream = new MockAssistantStream();
+				const stream = createAssistantMessageEventStream();
 				queueMicrotask(() => {
 					if (callCount === 1) {
 						// First call: overloaded error
@@ -320,7 +304,6 @@ describe("AgentSession retry", () => {
 			sessionManager,
 			settingsManager,
 			cwd: tempDir,
-			modelRegistry,
 			modelRuntime: getModelRuntime(modelRegistry),
 			resourceLoader: createTestResourceLoader(),
 			baseToolsOverride: { echo: echoTool },

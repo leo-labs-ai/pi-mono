@@ -1,5 +1,3 @@
-import type * as NodeFs from "node:fs";
-import type * as NodeOs from "node:os";
 import type * as NodeZlib from "node:zlib";
 import type {
 	Tool as OpenAITool,
@@ -7,30 +5,11 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
-
-type ProcessWithNodeBuiltinModule = typeof process & {
-	getBuiltinModule?: {
-		(id: "node:fs"): typeof NodeFs;
-		(id: "node:os"): typeof NodeOs;
-	};
-};
-
-function loadNodeOs(): typeof NodeOs | null {
-	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
-		return null;
-	}
-	return (process as ProcessWithNodeBuiltinModule).getBuiltinModule?.("node:os") ?? null;
-}
-
-// NEVER convert to top-level runtime imports - breaks browser/Vite builds
-const _os: typeof NodeOs | null = loadNodeOs();
-
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
 	Api,
 	AssistantMessage,
-	Context,
 	Model,
 	ProviderEnv,
 	ProviderHeaders,
@@ -41,8 +20,6 @@ import type {
 	Usage,
 } from "../types.ts";
 import { combineAbortSignals } from "../utils/abort-signals.ts";
-import { resolveCacheRetention } from "../utils/cache-retention.ts";
-import { splitDeferredTools } from "../utils/deferred-tools.ts";
 import {
 	appendAssistantMessageDiagnostic,
 	createAssistantMessageDiagnostic,
@@ -51,8 +28,8 @@ import {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getIdentityHeaders } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import {
 	getDeclaredTools,
@@ -61,15 +38,15 @@ import {
 	resolveTranscript,
 	resolveTranscriptTools,
 } from "../utils/transcript.ts";
+import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
+	CONFIGURATION_UPDATE_REQUEST_EFFORT,
 	convertResponsesMessages,
 	convertResponsesTools,
-	effectiveRequestEffort,
-	insertConfigurationUpdates,
+	getResponsesToolSupport,
 	processResponsesStream,
-	resolveMidConvoEffort,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -105,7 +82,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 // ============================================================================
 
 export interface OpenAICodexResponsesOptions extends StreamOptions {
-	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
+	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
@@ -130,7 +107,6 @@ interface RequestBody {
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
-	max_output_tokens?: number;
 	[key: string]: unknown;
 }
 
@@ -260,7 +236,7 @@ function usesZstdRequestCompression(model: Model<"openai-codex-responses">): boo
 // Returns the zstd-compressed body bytes, or null when compression is
 // unavailable (browser/Vite builds). Callers fall back to sending the
 // uncompressed JSON when this returns null.
-function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
+function compressRequestBodyZstd(bodyJson: string): Uint8Array<ArrayBuffer> | null {
 	const zlib = loadNodeZlib();
 	if (!zlib || typeof zlib.zstdCompressSync !== "function") {
 		return null;
@@ -269,7 +245,8 @@ function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
 		const compressed = zlib.zstdCompressSync(bodyJson, {
 			params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
 		});
-		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+		// A copy owns a plain ArrayBuffer, which fetch accepts as a body under every lib.
+		return new Uint8Array(compressed);
 	} catch {
 		return null;
 	}
@@ -312,72 +289,58 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
+			// Opaque gateway credentials (ClawRouter and friends) carry no ChatGPT
+			// account claim; `compat.sendChatgptAccountId: false` skips the JWT parse.
 			const accountId = model.compat?.sendChatgptAccountId === false ? undefined : extractAccountId(apiKey);
 			const grammarToolInputProperties = createGrammarToolInputProperties(
 				getDeclaredTools(normalizedContext.messages),
 				model.compat?.supportsOpenAIGrammarTools ?? false,
 			);
-			const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-			const localSessionId = options?.sessionId;
-			const cacheSessionId = cacheRetention === "none" ? undefined : localSessionId;
-			let body = buildRequestBody(model, normalizedContext, options, grammarToolInputProperties);
+			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
+			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
+			const configurationUpdateEffort = getConfigurationUpdateEffort(model, options);
+			if (configurationUpdateEffort !== undefined) output.providerThinkingLevel = configurationUpdateEffort;
+			let body = buildRequestBody(
+				model,
+				normalizedContext,
+				options,
+				codexSessionId,
+				grammarToolInputProperties,
+				configurationUpdateEffort,
+			);
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
-			// Recorded after onPayload so a hook that rewrites effort cannot desync replay from the wire.
-			const providerThinkingLevel = effectiveRequestEffort(model, body);
-			if (providerThinkingLevel !== undefined) output.providerThinkingLevel = providerThinkingLevel;
-			// ChatGPT Codex Responses rejects `prompt_cache_retention` ("Unsupported
-			// parameter: prompt_cache_retention") — same backend constraint as
-			// `store: true` / `max_output_tokens`. Server-side prefix caching is keyed on
-			// the `session-id` header + `prompt_cache_key` (set below), which we still
-			// send; the explicit retention window must never be forwarded or every
-			// request 400s. Was a fork-only addition; the backend now refuses it.
-			const cacheAffinitySessionId =
-				cacheSessionId === undefined
-					? undefined
-					: codexPromptCacheKey(options?.cacheAffinityKey, cacheSessionId, body) || cacheSessionId;
-			body.prompt_cache_key = cacheAffinitySessionId;
-
-			// ChatGPT Codex keys server-side prefix caching on the session-id header.
-			// thread-id / x-client-request-id are provider-visible affinity, so they
-			// derive from the retention-gated id: under cacheRetention "none" the
-			// request must carry no handle the provider can correlate or retain.
-			const codexThreadId = clampOpenAIPromptCacheKey(cacheSessionId);
-			const codexSessionHeader = cacheAffinitySessionId;
-			// The provider-visible Codex session-id may be shared across same-shape
-			// sessions for prefix-cache reuse, so it is deliberately not the Pi session id.
-			const requestedTransport = options?.transport || "auto";
-			let transport = model.compat?.supportsWebSocketTransport === false ? "sse" : requestedTransport;
-			// previous_response_id continuation is provider-retained context, so
-			// cacheRetention "none" downgrades to a plain socket rather than reusing it.
-			if (cacheRetention === "none" && transport !== "sse") transport = "websocket";
-			const transportOptions: OpenAICodexResponsesOptions = { ...options, transport };
+			const websocketRequestId = codexSessionId || uuidv7();
+			// Codex expects an originator on every request; it is not attribution.
+			const identityHeaders = { originator: "pi", ...getIdentityHeaders(model, options?.identity) };
 			const sseHeaders = buildSSEHeaders(
+				identityHeaders,
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
-				codexSessionHeader,
-				codexThreadId,
+				codexSessionId,
 			);
-			await writeCodexCacheDebugSnapshot(model, body, transportOptions, sseHeaders);
 			const websocketHeaders = buildWebSocketHeaders(
+				identityHeaders,
 				model.headers,
 				options?.headers,
 				accountId,
 				apiKey,
-				codexSessionHeader || createCodexRequestId(),
-				codexThreadId,
+				websocketRequestId,
 			);
 			const bodyJson = JSON.stringify(body);
 			const httpTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
 			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
+			const requestedTransport = options?.transport || "auto";
+			// Gateways that only speak the SSE wire contract opt out of the WebSocket upgrade.
+			const transport = model.compat?.supportsWebSocketTransport === false ? "sse" : requestedTransport;
 			let startEmitted = false;
-			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(localSessionId);
+			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(cacheSessionId);
 			if (websocketDisabledForSession) {
-				recordWebSocketSseFallback(localSessionId);
+				recordWebSocketSseFallback(cacheSessionId);
 			}
 
 			if (transport !== "sse" && !websocketDisabledForSession) {
@@ -406,7 +369,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 							cacheSessionId,
 							accountId,
 							grammarToolInputProperties,
-							transportOptions,
+							options,
 						);
 
 						if (options?.signal?.aborted) {
@@ -445,11 +408,11 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 								requestBytes: new TextEncoder().encode(bodyJson).byteLength,
 							}),
 						);
-						recordWebSocketFailure(localSessionId, error);
+						recordWebSocketFailure(cacheSessionId, error);
 						if (websocketStarted) {
 							throw error;
 						}
-						recordWebSocketSseFallback(localSessionId);
+						recordWebSocketSseFallback(cacheSessionId);
 						break;
 					}
 				}
@@ -464,7 +427,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			} else {
 				sseHeaders.delete("content-encoding");
 			}
-			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
+			const sseBody: Uint8Array<ArrayBuffer> | string = compressedBody ?? bodyJson;
 
 			// Fetch with retry logic for rate limits and transient errors
 			let response: Response | undefined;
@@ -596,8 +559,7 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 		toolChoice: options?.toolChoice,
 	} satisfies OpenAICodexResponsesOptions;
 	const clampedReasoning = options?.reasoning ? clampThinkingLevel(model, options.reasoning) : undefined;
-	// "adaptive" is Anthropic-only; OpenAI Codex has no equivalent. Drop it here.
-	const reasoningEffort = clampedReasoning === "off" || clampedReasoning === "adaptive" ? undefined : clampedReasoning;
+	const reasoningEffort = clampedReasoning === "off" ? undefined : clampedReasoning;
 
 	return stream(model, context, {
 		...base,
@@ -609,78 +571,40 @@ export const streamSimple: StreamFunction<"openai-codex-responses", SimpleStream
 // Request Building
 // ============================================================================
 
-// Exposed for unit tests; not part of the public package API.
-export {
-	buildRequestBody as _buildRequestBodyForTests,
-	buildSSEHeaders as _buildSSEHeadersForTests,
-	buildWebSocketHeaders as _buildWebSocketHeadersForTests,
-};
-
-/** Wire `reasoning.effort` for the requested level; `null` = disabled, `undefined` = no level requested. */
-function resolveReasoningEffort(
-	model: Model<"openai-codex-responses">,
-	options: OpenAICodexResponsesOptions | undefined,
-): string | null | undefined {
-	if (options?.reasoningEffort === undefined) return undefined;
-	const configuredEffort =
-		options.reasoningEffort === "none"
-			? model.thinkingLevelMap?.off === undefined
-				? "none"
-				: model.thinkingLevelMap.off
-			: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
-	return typeof configuredEffort === "string" &&
-		(configuredEffort.toLowerCase() === "ultra" || configuredEffort.toLowerCase() === "max")
-		? "max"
-		: configuredEffort;
-}
-
 function buildRequestBody(
 	model: Model<"openai-codex-responses">,
-	context: Context | TranscriptContext,
+	context: TranscriptContext,
 	options: OpenAICodexResponsesOptions | undefined,
-	grammarToolInputProperties?: ReadonlyMap<string, string>,
+	cacheSessionId: string | undefined,
+	grammarToolInputProperties: ReadonlyMap<string, string> = createGrammarToolInputProperties(
+		getDeclaredTools(context.messages),
+		model.compat?.supportsOpenAIGrammarTools ?? false,
+	),
+	configurationUpdateEffort: string | undefined = undefined,
 ): RequestBody {
-	const normalizedContext =
-		"systemPrompt" in context || "tools" in context ? normalizeContext(context as Context) : context;
-	// Client-side tool search (same mechanism as openai-responses.ts): supported
-	// Codex models can defer a tool's definition until the tool result that
-	// surfaces it, keeping the cached prompt prefix stable. Unsupported models
-	// fall back to sending every tool immediately.
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const resolvedGrammarToolInputProperties =
-		grammarToolInputProperties ??
-		createGrammarToolInputProperties(getDeclaredTools(normalizedContext.messages), supportsOpenAIGrammarTools);
 	const transcriptTools = resolveTranscriptTools(
-		normalizedContext.messages,
-		supportsAdditionalTools || supportsToolSearch,
+		context.messages,
+		getResponsesToolSupport({
+			supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+			supportsAdditionalTools,
+			supportsToolSearch,
+		}),
 	);
-	const deferredToolsMode = supportsAdditionalTools
-		? "additional-tools"
-		: supportsToolSearch
-			? "tool-search"
-			: undefined;
-	const toolPlacement = splitDeferredTools(
-		{ messages: normalizedContext.messages, tools: transcriptTools.requestTools },
-		deferredToolsMode !== undefined,
-	);
-	const effort = resolveReasoningEffort(model, options);
-	const midConvoEffort = resolveMidConvoEffort(model, effort);
-	const messages = convertResponsesMessages(model, normalizedContext, CODEX_TOOL_CALL_PROVIDERS, {
+	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
+		configurationUpdateEffort,
 		includeSystemPrompt: false,
-		midConvoEffort: midConvoEffort !== undefined,
-		grammarToolInputProperties: resolvedGrammarToolInputProperties,
-		deferredTools: toolPlacement.deferred,
-		deferredToolsMode,
+		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
 		supportsAdditionalTools,
 		supportsToolSearch,
 		toolOptions: { strict: null, supportsStrictMode, supportsOpenAIGrammarTools },
 	});
 
-	const initialSystemMessage = getInitialSystemMessage(normalizedContext.messages);
+	const initialSystemMessage = getInitialSystemMessage(context.messages);
 	const instructions = initialSystemMessage ? getSystemMessageText(initialSystemMessage) : "";
 	const body: RequestBody = {
 		model: model.id,
@@ -690,18 +614,10 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: undefined,
-		// prompt_cache_retention intentionally omitted: the ChatGPT Codex backend
-		// rejects it (see stream()). Cache affinity is carried by prompt_cache_key.
+		prompt_cache_key: cacheSessionId,
 		tool_choice: options?.toolChoice ?? "auto",
 		parallel_tool_calls: true,
 	};
-
-	// ChatGPT Codex Responses rejects `max_output_tokens` ("Unsupported parameter:
-	// max_output_tokens") — same backend constraint as `store: true`. Never forward
-	// an output-token cap: summarization/compaction is the only caller that sets
-	// `options.maxTokens`, so forwarding it 400'd every compaction on Codex sessions.
-	// The model's server-side default bounds output (matches codex-rs, which omits it).
 
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
@@ -711,33 +627,24 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (toolPlacement.immediate.length > 0) {
-		const convertedTools = convertResponsesTools(toolPlacement.immediate, {
+	if (transcriptTools.requestTools.length > 0) {
+		body.tools = convertResponsesTools(transcriptTools.requestTools, {
 			strict: null,
 			supportsStrictMode,
 			supportsOpenAIGrammarTools,
-			deterministic: true,
-			emitDeferLoading: true,
 		});
-		// OpenAI Responses API rule: any tool with `defer_loading: true` requires a
-		// sibling `{ type: "tool_search" }` entry in the same `tools` array. Without
-		// it the API returns 400 `Invalid Value: 'tools.defer_loading'. Deferred
-		// tools require tools.tool_search.` Observed 2026-05-21 on BER-72 corrective
-		// wake (Kael OpenClaw via openclaw_gateway adapter, Codex 0.130.0).
-		const hasDeferredTool = convertedTools.some((t) => (t as { defer_loading?: boolean }).defer_loading === true);
-		body.tools = hasDeferredTool
-			? [{ type: "tool_search" } as unknown as OpenAITool, ...convertedTools]
-			: convertedTools;
 	}
 
-	if (midConvoEffort !== undefined) {
-		const plan = insertConfigurationUpdates(messages, midConvoEffort);
-		body.input = plan.input;
-		body.reasoning = { effort: plan.requestEffort, summary: options?.reasoningSummary ?? "auto" };
-	} else if (options?.reasoningEffort !== undefined) {
-		if (effort !== null && effort !== undefined) {
+	if (options?.reasoningEffort !== undefined) {
+		const effort =
+			options.reasoningEffort === "none"
+				? model.thinkingLevelMap?.off === undefined
+					? "none"
+					: model.thinkingLevelMap.off
+				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
+		if (effort !== null) {
 			body.reasoning = {
-				effort,
+				effort: configurationUpdateEffort === undefined ? effort : CONFIGURATION_UPDATE_REQUEST_EFFORT,
 				summary: options.reasoningSummary ?? "auto",
 			};
 		}
@@ -745,11 +652,21 @@ function buildRequestBody(
 		body.reasoning = { effort: model.thinkingLevelMap?.off ?? "none" };
 	}
 
-	const cacheRetention = resolveCacheRetention(options?.cacheRetention, options?.env);
-	body.prompt_cache_key =
-		cacheRetention === "none" ? undefined : codexPromptCacheKey(options?.cacheAffinityKey, options?.sessionId, body);
-
 	return body;
+}
+
+/**
+ * Effort to send in `configuration_update` items, or undefined to send it as `reasoning.effort`.
+ * Opt-in per model through `compat.supportsMidConvoEffort`; switching reasoning off is not covered.
+ */
+function getConfigurationUpdateEffort(
+	model: Model<"openai-codex-responses">,
+	options: OpenAICodexResponsesOptions | undefined,
+): string | undefined {
+	if (model.compat?.supportsMidConvoEffort !== true) return undefined;
+	const level = options?.reasoningEffort;
+	if (level === undefined || level === "none") return undefined;
+	return model.thinkingLevelMap?.[level] ?? level;
 }
 
 function getServiceTierCostMultiplier(
@@ -818,12 +735,18 @@ async function processStream(
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response, options?.signal), output), output, stream, model, {
-		serviceTier: options?.serviceTier,
-		grammarToolInputProperties,
-		resolveServiceTier: resolveCodexServiceTier,
-		applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
-	});
+	await processResponsesStream(
+		mapCodexEvents(parseSSE(response, options?.signal), output, model, options?.onProviderStreamEvent),
+		output,
+		stream,
+		model,
+		{
+			serviceTier: options?.serviceTier,
+			grammarToolInputProperties,
+			resolveServiceTier: resolveCodexServiceTier,
+			applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
+		},
+	);
 }
 
 class CodexApiError extends Error {
@@ -850,8 +773,20 @@ class CodexProtocolError extends Error {
 	}
 }
 
+class ProviderStreamEventCallbackError extends Error {
+	constructor(cause: unknown) {
+		super(formatThrownValue(cause));
+		this.name = "ProviderStreamEventCallbackError";
+		this.cause = cause;
+	}
+}
+
 function isCodexNonTransportError(error: unknown): boolean {
-	return error instanceof CodexApiError || error instanceof CodexProtocolError;
+	return (
+		error instanceof CodexApiError ||
+		error instanceof CodexProtocolError ||
+		error instanceof ProviderStreamEventCallbackError
+	);
 }
 
 function isWebSocketConnectionLimitReachedError(error: unknown): boolean {
@@ -878,8 +813,16 @@ function extractCodexEventError(event: Record<string, unknown>): { code?: string
 async function* mapCodexEvents(
 	events: AsyncIterable<Record<string, unknown>>,
 	output: AssistantMessage,
+	model: Model<"openai-codex-responses">,
+	onProviderStreamEvent: StreamOptions["onProviderStreamEvent"] | undefined,
 ): AsyncGenerator<ResponseStreamEvent> {
 	for await (const event of events) {
+		try {
+			await onProviderStreamEvent?.(event, model);
+		} catch (error) {
+			// Keep callback failures out of Codex's WebSocket retry and SSE fallback path.
+			throw new ProviderStreamEventCallbackError(error);
+		}
 		const type = typeof event.type === "string" ? event.type : undefined;
 		if (!type) continue;
 
@@ -1009,14 +952,12 @@ interface CachedWebSocketContinuationState {
 	lastResponseItems: ResponseInput;
 }
 
-const MAX_CACHED_WEBSOCKET_CONTINUATIONS = 2;
-
 interface CachedWebSocketConnection {
 	socket: WebSocketLike;
 	busy: boolean;
 	createdAt: number;
 	idleTimer?: ReturnType<typeof setTimeout>;
-	continuations: CachedWebSocketContinuationState[];
+	continuation?: CachedWebSocketContinuationState;
 }
 
 export interface OpenAICodexWebSocketDebugStats {
@@ -1028,9 +969,6 @@ export interface OpenAICodexWebSocketDebugStats {
 	fullContextRequests: number;
 	deltaRequests: number;
 	lastInputItems: number;
-	lastInputBytes: number;
-	lastToolsBytes: number;
-	lastInstructionsBytes: number;
 	lastDeltaInputItems?: number;
 	lastPreviousResponseId?: string;
 	websocketFailures: number;
@@ -1039,7 +977,7 @@ export interface OpenAICodexWebSocketDebugStats {
 	lastWebSocketError?: string;
 }
 
-const websocketSessionCache = new Map<string, Map<string | undefined, CachedWebSocketConnection>>();
+const websocketSessionCache = new Map<string, Map<string, CachedWebSocketConnection>>();
 const websocketDebugStats = new Map<string, OpenAICodexWebSocketDebugStats>();
 const websocketSseFallbackSessions = new Set<string>();
 
@@ -1055,9 +993,6 @@ function getOrCreateWebSocketDebugStats(sessionId: string): OpenAICodexWebSocket
 			fullContextRequests: 0,
 			deltaRequests: 0,
 			lastInputItems: 0,
-			lastInputBytes: 0,
-			lastToolsBytes: 0,
-			lastInstructionsBytes: 0,
 			websocketFailures: 0,
 			sseFallbacks: 0,
 		};
@@ -1194,11 +1129,7 @@ function closeWebSocketSilently(socket: WebSocketLike, code = 1000, reason = "do
 	} catch {}
 }
 
-function scheduleSessionWebSocketExpiry(
-	sessionId: string,
-	accountId: string | undefined,
-	entry: CachedWebSocketConnection,
-): void {
+function scheduleSessionWebSocketExpiry(sessionId: string, cacheKey: string, entry: CachedWebSocketConnection): void {
 	if (entry.idleTimer) {
 		clearTimeout(entry.idleTimer);
 	}
@@ -1206,7 +1137,7 @@ function scheduleSessionWebSocketExpiry(
 		if (entry.busy) return;
 		closeWebSocketSilently(entry.socket, 1000, "idle_timeout");
 		const accountEntries = websocketSessionCache.get(sessionId);
-		if (accountEntries?.get(accountId) === entry) accountEntries.delete(accountId);
+		if (accountEntries?.get(cacheKey) === entry) accountEntries.delete(cacheKey);
 		if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 	}, SESSION_WEBSOCKET_CACHE_TTL_MS);
 }
@@ -1303,6 +1234,9 @@ async function acquireWebSocket(
 	reused: boolean;
 	release: (options?: { keep?: boolean }) => void;
 }> {
+	// Opaque gateway credentials carry no account ID, so key those connections by endpoint instead of one shared
+	// `undefined` slot; otherwise two gateways on one session ID could reuse each other's socket.
+	const cacheKey = accountId ?? url;
 	if (!sessionId) {
 		const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
 		return {
@@ -1313,7 +1247,7 @@ async function acquireWebSocket(
 	}
 
 	let accountEntries = websocketSessionCache.get(sessionId);
-	const cached = accountEntries?.get(accountId);
+	const cached = accountEntries?.get(cacheKey);
 	if (cached) {
 		if (cached.idleTimer) {
 			clearTimeout(cached.idleTimer);
@@ -1321,7 +1255,7 @@ async function acquireWebSocket(
 		}
 		if (!cached.busy && isWebSocketSessionExpired(cached)) {
 			closeWebSocketSilently(cached.socket, 1000, "connection_age_limit");
-			accountEntries?.delete(accountId);
+			accountEntries?.delete(cacheKey);
 			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 		} else if (!cached.busy && isWebSocketReusable(cached.socket)) {
 			cached.busy = true;
@@ -1333,12 +1267,12 @@ async function acquireWebSocket(
 					if (!keep || !isWebSocketReusable(cached.socket)) {
 						closeWebSocketSilently(cached.socket);
 						const currentEntries = websocketSessionCache.get(sessionId);
-						if (currentEntries?.get(accountId) === cached) currentEntries.delete(accountId);
+						if (currentEntries?.get(cacheKey) === cached) currentEntries.delete(cacheKey);
 						if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 						return;
 					}
 					cached.busy = false;
-					scheduleSessionWebSocketExpiry(sessionId, accountId, cached);
+					scheduleSessionWebSocketExpiry(sessionId, cacheKey, cached);
 				},
 			};
 		}
@@ -1354,19 +1288,19 @@ async function acquireWebSocket(
 		}
 		if (!isWebSocketReusable(cached.socket)) {
 			closeWebSocketSilently(cached.socket);
-			accountEntries?.delete(accountId);
+			accountEntries?.delete(cacheKey);
 			if (accountEntries?.size === 0) websocketSessionCache.delete(sessionId);
 		}
 	}
 
 	const socket = await connectWebSocket(url, headers, signal, connectTimeoutMs, env);
-	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now(), continuations: [] };
+	const entry: CachedWebSocketConnection = { socket, busy: true, createdAt: Date.now() };
 	accountEntries = websocketSessionCache.get(sessionId);
 	if (!accountEntries) {
 		accountEntries = new Map();
 		websocketSessionCache.set(sessionId, accountEntries);
 	}
-	accountEntries.set(accountId, entry);
+	accountEntries.set(cacheKey, entry);
 	return {
 		socket,
 		entry,
@@ -1376,12 +1310,12 @@ async function acquireWebSocket(
 				closeWebSocketSilently(entry.socket);
 				if (entry.idleTimer) clearTimeout(entry.idleTimer);
 				const currentEntries = websocketSessionCache.get(sessionId);
-				if (currentEntries?.get(accountId) === entry) currentEntries.delete(accountId);
+				if (currentEntries?.get(cacheKey) === entry) currentEntries.delete(cacheKey);
 				if (currentEntries?.size === 0) websocketSessionCache.delete(sessionId);
 				return;
 			}
 			entry.busy = false;
-			scheduleSessionWebSocketExpiry(sessionId, accountId, entry);
+			scheduleSessionWebSocketExpiry(sessionId, cacheKey, entry);
 		},
 	};
 }
@@ -1597,18 +1531,22 @@ function getCachedWebSocketInputDelta(
 }
 
 function buildCachedWebSocketRequestBody(entry: CachedWebSocketConnection, body: RequestBody): RequestBody {
-	for (const continuation of entry.continuations) {
-		const delta = getCachedWebSocketInputDelta(body, continuation);
-		if (delta && continuation.lastResponseId) {
-			return {
-				...body,
-				previous_response_id: continuation.lastResponseId,
-				input: delta,
-			};
-		}
+	const continuation = entry.continuation;
+	if (!continuation) {
+		return body;
 	}
 
-	return body;
+	const delta = getCachedWebSocketInputDelta(body, continuation);
+	if (!delta || !continuation.lastResponseId) {
+		entry.continuation = undefined;
+		return body;
+	}
+
+	return {
+		...body,
+		previous_response_id: continuation.lastResponseId,
+		input: delta,
+	};
 }
 
 async function* startWebSocketOutputOnFirstEvent(
@@ -1635,13 +1573,7 @@ async function processWebSocketStream(
 	onStart: () => void,
 	idleTimeoutMs: number | undefined,
 	websocketConnectTimeoutMs: number | undefined,
-	// Governs socket pooling and the pooled-connection debug stats. A reused socket
-	// carries provider-side conversation state (connection-scoped
-	// previous_response_id), so this is the retention-gated id, not the local Pi
-	// session id: undefined makes acquireWebSocket open a one-shot socket and close
-	// it on release. SSE-fallback and failure bookkeeping stay on the real session
-	// id at the call site.
-	socketSessionId: string | undefined,
+	cacheSessionId: string | undefined,
 	accountId: string | undefined,
 	grammarToolInputProperties: ReadonlyMap<string, string>,
 	options?: OpenAICodexResponsesOptions,
@@ -1649,7 +1581,7 @@ async function processWebSocketStream(
 	const { socket, entry, reused, release } = await acquireWebSocket(
 		url,
 		headers,
-		socketSessionId,
+		cacheSessionId,
 		accountId,
 		options?.signal,
 		websocketConnectTimeoutMs,
@@ -1661,7 +1593,7 @@ async function processWebSocketStream(
 	// WebSocket continuation still works via connection-scoped previous_response_id state.
 	const fullBody = body;
 	const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
-	const stats = socketSessionId ? getOrCreateWebSocketDebugStats(socketSessionId) : undefined;
+	const stats = cacheSessionId ? getOrCreateWebSocketDebugStats(cacheSessionId) : undefined;
 	if (stats) {
 		stats.requests++;
 		if (reused) stats.connectionsReused++;
@@ -1669,9 +1601,6 @@ async function processWebSocketStream(
 		if (useCachedContext) stats.cachedContextRequests++;
 		if (requestBody.store === true) stats.storeTrueRequests++;
 		stats.lastInputItems = requestBody.input?.length ?? 0;
-		stats.lastInputBytes = JSON.stringify(requestBody.input ?? []).length;
-		stats.lastToolsBytes = JSON.stringify(requestBody.tools ?? []).length;
-		stats.lastInstructionsBytes = requestBody.instructions?.length ?? 0;
 		if (requestBody.previous_response_id) {
 			stats.deltaRequests++;
 			stats.lastDeltaInputItems = requestBody.input?.length ?? 0;
@@ -1686,7 +1615,12 @@ async function processWebSocketStream(
 		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
-				mapCodexEvents(parseWebSocket(socket, options?.signal, idleTimeoutMs), output),
+				mapCodexEvents(
+					parseWebSocket(socket, options?.signal, idleTimeoutMs),
+					output,
+					model,
+					options?.onProviderStreamEvent,
+				),
 				onStart,
 			),
 			output,
@@ -1711,16 +1645,15 @@ async function processWebSocketStream(
 					grammarToolInputProperties,
 				},
 			).filter((item) => item.type !== "function_call_output" && item.type !== "custom_tool_call_output");
-			entry.continuations.unshift({
+			entry.continuation = {
 				lastRequestBody: fullBody,
 				lastResponseId: output.responseId,
 				lastResponseItems: responseItems,
-			});
-			entry.continuations.length = Math.min(entry.continuations.length, MAX_CACHED_WEBSOCKET_CONTINUATIONS);
+			};
 		}
 	} catch (error) {
 		if (entry) {
-			entry.continuations = [];
+			entry.continuation = undefined;
 		}
 		keepConnection = false;
 		throw error;
@@ -1777,109 +1710,18 @@ function extractAccountId(token: string): string {
 	}
 }
 
-function createCodexRequestId(): string {
-	if (typeof globalThis.crypto?.randomUUID === "function") {
-		return globalThis.crypto.randomUUID();
-	}
-	return `codex_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
-async function writeCodexCacheDebugSnapshot(
-	model: Model<"openai-codex-responses">,
-	body: RequestBody,
-	options: OpenAICodexResponsesOptions | undefined,
-	headers: Headers,
-): Promise<void> {
-	if (typeof process === "undefined") return;
-	const input = Array.isArray(body.input) ? body.input : [];
-	const tools = Array.isArray(body.tools) ? body.tools : [];
-	const inputJson = JSON.stringify(input) ?? "";
-	const toolsJson = JSON.stringify(tools) ?? "";
-	const snapshot = {
-		timestamp: new Date().toISOString(),
-		provider: model.provider,
-		api: "openai-codex-responses",
-		model: `${model.provider}/${model.id}`,
-		sessionId: options?.sessionId,
-		cacheAffinityKey: options?.cacheAffinityKey,
-		promptCacheKey: body.prompt_cache_key,
-		transport: options?.transport,
-		sseSessionId: headers.get("session-id"),
-		sseThreadId: headers.get("thread-id"),
-		sseClientRequestId: headers.get("x-client-request-id"),
-		inputItems: input.length,
-		inputHash: stableSnapshotHash(input),
-		inputBytes: Buffer.byteLength(inputJson),
-		instructionHash: stableSnapshotHash(body.instructions ?? ""),
-		instructionBytes: Buffer.byteLength(body.instructions ?? ""),
-		toolCount: tools.length,
-		toolsHash: stableSnapshotHash(tools),
-		toolsBytes: Buffer.byteLength(toolsJson),
-		deferredToolCount: tools.filter(
-			(tool) => !!tool && typeof tool === "object" && (tool as { defer_loading?: unknown }).defer_loading === true,
-		).length,
-	};
-	try {
-		const fs = (process as ProcessWithNodeBuiltinModule).getBuiltinModule?.("node:fs");
-		if (!fs) return;
-		fs.appendFileSync(
-			`${process.env.HOME ?? "."}/.pi/agent/logs/codex-cache-debug.jsonl`,
-			`${JSON.stringify(snapshot)}\n`,
-		);
-	} catch {
-		// Debug-only; never fail provider requests.
-	}
-}
-
-function fnv1a64(input: string, seed: bigint): bigint {
-	let hash = seed;
-	for (let index = 0; index < input.length; index++) {
-		hash ^= BigInt(input.charCodeAt(index));
-		hash = BigInt.asUintN(64, hash * 0x100000001b3n);
-	}
-	return hash;
-}
-
-function stableCodexThreadId(input: string): string {
-	const first = fnv1a64(input, 0xcbf29ce484222325n).toString(16).padStart(16, "0");
-	const second = fnv1a64(input, 0x84222325cbf29ce4n).toString(16).padStart(16, "0");
-	const hex = `${first}${second}`;
-	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-${((Number.parseInt(hex.slice(16, 18), 16) & 0x3f) | 0x80).toString(16).padStart(2, "0")}${hex.slice(18, 20)}-${hex.slice(20, 32)}`;
-}
-
-function stableSnapshotHash(value: unknown): string {
-	let serialized: string;
-	try {
-		serialized = JSON.stringify(value) ?? "";
-	} catch {
-		serialized = "<unserializable>";
-	}
-	return stableCodexThreadId(serialized);
-}
-
-function codexPromptCacheKey(
-	cacheAffinityKey: string | undefined,
-	sessionId: string | undefined,
-	body?: RequestBody,
-): string | undefined {
-	if (cacheAffinityKey) {
-		if (body) {
-			const instructionHash = stableSnapshotHash(body.instructions ?? "");
-			const toolsHash = stableSnapshotHash(body.tools ?? []);
-			return stableCodexThreadId(`${cacheAffinityKey}:shape:${instructionHash}:${toolsHash}`);
-		}
-		return stableCodexThreadId(cacheAffinityKey);
-	}
-	return clampOpenAIPromptCacheKey(sessionId);
-}
-
 function buildBaseCodexHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 ): Headers {
-	const headers = new Headers(initHeaders);
+	// Defaults first so model and caller headers can override them, matching the other providers.
+	const headers = new Headers(defaultHeaders);
+	for (const [key, value] of Object.entries(initHeaders || {})) {
+		headers.set(key, value);
+	}
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
 		if (value === null) {
 			headers.delete(key);
@@ -1893,56 +1735,45 @@ function buildBaseCodexHeaders(
 	} else {
 		headers.delete("chatgpt-account-id");
 	}
-	headers.set("originator", "pi");
-	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
 
 function buildSSEHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	sessionId?: string,
-	threadId?: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
 
-	const clampedSessionId = clampOpenAIPromptCacheKey(sessionId);
-	if (clampedSessionId) {
-		headers.set("session-id", clampedSessionId);
-	}
-	if (threadId) {
-		headers.set("thread-id", threadId);
-		headers.set("x-client-request-id", threadId);
-	} else if (clampedSessionId) {
-		headers.set("x-client-request-id", clampedSessionId);
+	if (sessionId) {
+		headers.set("session-id", sessionId);
+		headers.set("x-client-request-id", sessionId);
 	}
 
 	return headers;
 }
 
 function buildWebSocketHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	requestId: string,
-	threadId?: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");
 	headers.delete("openai-beta");
 	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
-	headers.set("x-client-request-id", threadId ?? requestId);
+	headers.set("x-client-request-id", requestId);
 	headers.set("session-id", requestId);
-	if (threadId) {
-		headers.set("thread-id", threadId);
-	}
 	return headers;
 }

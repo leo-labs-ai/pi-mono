@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";
 export const THINKING_LEVEL_OPTIONS: readonly ThinkingLevel[] = [

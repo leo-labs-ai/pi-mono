@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@lue-labs/pi-agent-core";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	fauxAssistantMessage,
 	fauxToolCall,
@@ -9,8 +9,8 @@ import {
 	getCurrentSystemPrompt,
 	getSystemMessageText,
 	type TranscriptContext,
-} from "@lue-labs/pi-ai";
-import { getModel } from "@lue-labs/pi-ai/compat";
+} from "@leo-labs-ai/pi-ai";
+import { getModel } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
 import { describe, expect, test } from "vitest";
 import { createAgentSession } from "../src/core/sdk.ts";
@@ -46,7 +46,7 @@ describe("system prompt updates", () => {
 			if (head?.role !== "system") throw new Error("expected system message");
 			expect(head.content).toBe("");
 			expect(Object.keys(head.sections ?? {})).toEqual(["preamble", "tools", "rules", "docs", "cwd"]);
-			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(["Bash", "Glob"]);
+			expect(head.toolsAdded?.map((tool) => tool.name)).toEqual(["read", "bash", "edit", "write"]);
 			expect(getSystemMessageText(head)).toBe(harness.session.systemPrompt);
 		} finally {
 			harness.cleanup();
@@ -79,7 +79,37 @@ describe("system prompt updates", () => {
 		}
 	});
 
+	test("omitCwdSection gives sessions in different cwds byte-identical system prompts", async () => {
+		const root = mkdtempSync(join(tmpdir(), "pi-omit-cwd-"));
+		const create = (name: string, omitCwdSection?: boolean) => {
+			const cwd = join(root, name);
+			mkdirSync(cwd);
+			return createAgentSession({
+				cwd,
+				agentDir: join(root, "agent"),
+				model: getModel("anthropic", "claude-sonnet-4-5")!,
+				settingsManager: SettingsManager.inMemory(),
+				sessionManager: SessionManager.inMemory(cwd),
+				noTools: "all",
+				...(omitCwdSection === undefined ? {} : { omitCwdSection }),
+			});
+		};
+		const sessions = [await create("wt-a", true), await create("wt-b", true), await create("wt-c")];
+		try {
+			const [a, b, c] = sessions.map((created) => created.session.systemPrompt);
+			expect(a).toBe(b);
+			expect(a).not.toContain("<cwd>");
+			expect(a).not.toContain(root.replace(/\\/g, "/"));
+			// Default stays unchanged: the cwd section is still present.
+			expect(c).toContain(`<cwd>\n${join(root, "wt-c").replace(/\\/g, "/")}\n</cwd>`);
+		} finally {
+			for (const created of sessions) created.session.dispose();
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("diffs sections into a patch", () => {
+		expect(buildSystemPromptSections({ cwd: "/tmp", omitCwdSection: true }).cwd).toBeUndefined();
 		const previous = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Plan only." } });
 		const current = buildSystemPromptSections({ cwd: "/tmp", sections: { plan_mode: "Implementation allowed." } });
 		expect(diffSystemPromptSections(previous, current)).toEqual({
@@ -162,6 +192,52 @@ describe("system prompt updates", () => {
 				{ plan_mode: null },
 			]);
 			expect(getCurrentSystemPrompt(harness.session.messages)).toBe(harness.session.systemPrompt);
+		} finally {
+			harness.cleanup();
+		}
+	});
+
+	test("a run started by a custom message keeps sections added in an earlier before_agent_start", async () => {
+		const extension: ExtensionFactory = (pi) => {
+			pi.registerTool({
+				name: "probe",
+				label: "probe",
+				description: "probe",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+			});
+			pi.on("before_agent_start", (event) => {
+				event.systemPromptOptions.sections.addendum = "Extension addendum.";
+			});
+		};
+		const harness = await createHarness({ extensionFactories: [extension] });
+		try {
+			const requests: TranscriptContext[] = [];
+			const respond = (message: ReturnType<typeof fauxAssistantMessage>) => (providerContext: TranscriptContext) => {
+				requests.push(providerContext);
+				return message;
+			};
+			harness.setResponses([
+				respond(fauxAssistantMessage("first")),
+				// The wake run calls a tool so the next-turn refresh runs without before_agent_start.
+				respond(fauxAssistantMessage([fauxToolCall("probe", {})], { stopReason: "toolUse" })),
+				respond(fauxAssistantMessage("done")),
+			]);
+			await harness.session.prompt("first");
+			// A loadout change while idle must not discard the retained sections.
+			harness.session.setActiveToolsByName(["probe"]);
+			await harness.session.sendCustomMessage(
+				{ customType: "wake", content: "wake up", display: false },
+				{ triggerTurn: true },
+			);
+			await harness.session.agent.waitForIdle();
+			expect(requests).toHaveLength(3);
+
+			const systemMessages = harness.session.messages.filter((message) => message.role === "system");
+			expect(systemMessages[0]?.sections?.addendum).toContain("Extension addendum.");
+			// The only later patch is the tool loadout change; it never touches the addendum.
+			for (const message of systemMessages.slice(1)) expect(message.sections ?? {}).not.toHaveProperty("addendum");
+			expect(harness.session.messages.some((message) => message.role === "custom")).toBe(true);
 		} finally {
 			harness.cleanup();
 		}

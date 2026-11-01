@@ -6,8 +6,8 @@ import {
 	type ModelsSimpleStreamOptions,
 	normalizeContext,
 	type Usage,
-} from "@lue-labs/pi-ai";
-import { getBuiltinModel } from "@lue-labs/pi-ai/providers/all";
+} from "@leo-labs-ai/pi-ai";
+import { getBuiltinModel } from "@leo-labs-ai/pi-ai/providers/all";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import {

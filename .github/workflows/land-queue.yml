@@ -22,8 +22,8 @@ name: Land Queue
 # create-github-app-token's permission-* inputs) so update-branch merge commits
 # re-run checks with auto-approval — GITHUB_TOKEN pushes would suppress them.
 # Minted fresh every run — replaces the fine-grained CRAFT_PUSH_PAT user PAT,
-# which the lue-labs org's 366-day PAT lifetime policy rejected after the
-# valkyriweb -> lue-labs transfer (#498). App installation tokens are exempt
+# which the leo-labs-ai org's 366-day PAT lifetime policy rejected after the
+# valkyriweb -> leo-labs-ai transfer (#498). App installation tokens are exempt
 # from that policy and expire in ~1h regardless, so this never needs rotation.
 # Docs: docs/land-queue.md
 
@@ -84,7 +84,7 @@ jobs:
       - name: Require Land Queue write-token GitHub App secret
         if: env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY != 'true'
         run: |
-          echo "::error::CLAWSWEEPER_APP_PRIVATE_KEY is required to mint the Land Queue's write token (contents+pull-requests, scoped to this repo). See lue-labs/pi-mono#498."
+          echo "::error::CLAWSWEEPER_APP_PRIVATE_KEY is required to mint the Land Queue's write token (contents+pull-requests, scoped to this repo). See leo-labs-ai/pi-mono#498."
           exit 1
 
       - name: Mint Land Queue write token (GitHub App)

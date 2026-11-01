@@ -1,10 +1,16 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-// TS7 stable ships no programmatic compiler API until 7.1. This checker parses
-// with oxc-parser (the same Rust TS parser oxlint uses) instead of the TS
-// compiler API, so the toolchain needs only native `typescript@7` — avoiding
-// the TS6-API alias whose transitive `tsc` bin shadows native tsc@7 under npm.
-import { parseSync } from "oxc-parser";
+import { readdirSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import { SyntaxKind } from "typescript/unstable/ast";
+import {
+	isCallExpression,
+	isExportDeclaration,
+	isImportDeclaration,
+	isImportTypeNode,
+	isLiteralTypeNode,
+	isNoSubstitutionTemplateLiteral,
+	isStringLiteral,
+} from "typescript/unstable/ast/is";
+import { API } from "typescript/unstable/sync";
 
 const ignoredDirectories = new Set([".git", "coverage", "dist", "node_modules"]);
 const files = [];
@@ -12,88 +18,84 @@ const files = [];
 function collectTypescriptFiles(directory) {
 	for (const entry of readdirSync(directory, { withFileTypes: true })) {
 		if (entry.isDirectory()) {
-			if (!ignoredDirectories.has(entry.name)) collectTypescriptFiles(join(directory, entry.name));
+			if (!ignoredDirectories.has(entry.name)) {
+				collectTypescriptFiles(join(directory, entry.name));
+			}
 			continue;
 		}
+
 		if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")) {
 			files.push(join(directory, entry.name));
 		}
 	}
 }
 
+function isStringLiteralLike(node) {
+	return node !== undefined && (isStringLiteral(node) || isNoSubstitutionTemplateLiteral(node));
+}
+
 function isRelativeJavaScriptSpecifier(specifier) {
 	return /^\.\.?\//.test(specifier) && /\.js(?:[?#].*)?$/.test(specifier);
 }
 
-// Precompute line-start offsets so a node's start offset maps to line:column
-// (both 1-based, matching the previous ts.getLineAndCharacterOfPosition output).
-function makeLineLookup(source) {
-	const lineStarts = [0];
-	for (let i = 0; i < source.length; i++) if (source.charCodeAt(i) === 10) lineStarts.push(i + 1);
-	return (offset) => {
-		let lo = 0;
-		let hi = lineStarts.length - 1;
-		while (lo < hi) {
-			const mid = (lo + hi + 1) >> 1;
-			if (lineStarts[mid] <= offset) lo = mid;
-			else hi = mid - 1;
-		}
-		return { line: lo + 1, column: offset - lineStarts[lo] + 1 };
-	};
+function getImportTypeSpecifier(node) {
+	if (!isLiteralTypeNode(node.argument)) return undefined;
+	if (!isStringLiteralLike(node.argument.literal)) return undefined;
+	return node.argument.literal;
 }
 
 const failures = [];
-const parseErrors = [];
 
 collectTypescriptFiles(".");
 
-for (const file of files.sort()) {
-	const sourceText = readFileSync(file, "utf8");
-	const result = parseSync(file, sourceText);
-	if (result.errors && result.errors.length > 0) {
-		parseErrors.push(`${file}: ${result.errors[0].message ?? "parse error"}`);
-		continue;
-	}
-	const locate = makeLineLookup(sourceText);
+// Parse every file through one synthetic project. noResolve keeps the program to exactly these files.
+const configPath = resolve("tsconfig.check-ts-relative-imports.json");
+const config = JSON.stringify({
+	compilerOptions: { noResolve: true, noLib: true, types: [] },
+	files: files.map((file) => resolve(file)),
+});
+const api = new API({
+	cwd: process.cwd(),
+	fs: {
+		fileExists: (fileName) => (resolve(fileName) === configPath ? true : undefined),
+		readFile: (fileName) => (resolve(fileName) === configPath ? config : undefined),
+	},
+});
 
-	const check = (literal) => {
-		if (!literal || typeof literal.value !== "string") return;
-		if (!isRelativeJavaScriptSpecifier(literal.value)) return;
-		const { line, column } = locate(literal.start);
-		failures.push(`${file}:${line}:${column}: ${literal.value}`);
-	};
+try {
+	const program = api.updateSnapshot({ openProjects: [configPath] }).getProject(configPath).program;
+	for (const file of files.sort()) {
+		const sourceFile = program.getSourceFile(resolve(file));
 
-	// oxc exposes the module specifier under `source` for import/export/dynamic
-	// import AND for `import("x")` type nodes (TSImportType), so one branch covers all.
-	const specifierBearingTypes = new Set([
-		"ImportDeclaration",
-		"ExportNamedDeclaration",
-		"ExportAllDeclaration",
-		"ImportExpression",
-		"TSImportType",
-	]);
-
-	const visit = (node) => {
-		if (!node || typeof node.type !== "string") return;
-		if (specifierBearingTypes.has(node.type) && node.source) check(node.source);
-		for (const key in node) {
-			if (key === "start" || key === "end" || key === "range" || key === "loc" || key === "parent") continue;
-			const value = node[key];
-			if (Array.isArray(value)) {
-				for (const child of value) if (child && typeof child.type === "string") visit(child);
-			} else if (value && typeof value.type === "string") {
-				visit(value);
-			}
+		function checkSpecifier(node) {
+			if (!isRelativeJavaScriptSpecifier(node.text)) return;
+			const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile));
+			failures.push(`${relative(".", file)}:${line + 1}:${character + 1}: ${node.text}`);
 		}
-	};
 
-	visit(result.program);
-}
+		function visit(node) {
+			if (isImportDeclaration(node) && isStringLiteralLike(node.moduleSpecifier)) {
+				checkSpecifier(node.moduleSpecifier);
+			} else if (isExportDeclaration(node) && isStringLiteralLike(node.moduleSpecifier)) {
+				checkSpecifier(node.moduleSpecifier);
+			} else if (
+				isCallExpression(node) &&
+				node.expression.kind === SyntaxKind.ImportKeyword &&
+				isStringLiteralLike(node.arguments[0])
+			) {
+				checkSpecifier(node.arguments[0]);
+			} else if (isImportTypeNode(node)) {
+				const specifier = getImportTypeSpecifier(node);
+				if (specifier) checkSpecifier(specifier);
+			}
 
-if (parseErrors.length > 0) {
-	console.error("Failed to parse .ts files (oxc-parser):");
-	for (const error of parseErrors) console.error(`  ${error}`);
-	process.exit(1);
+			node.forEachChild(visit);
+		}
+
+		visit(sourceFile);
+	}
+} finally {
+	api.close();
 }
 
 if (failures.length > 0) {

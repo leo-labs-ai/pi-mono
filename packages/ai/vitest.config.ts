@@ -13,7 +13,7 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: [
-			{ find: /^@lue-labs\/pi-telemetry$/, replacement: telemetrySrcIndex },
+			{ find: /^@leo-labs-ai\/pi-telemetry$/, replacement: telemetrySrcIndex },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
 		],
 	},

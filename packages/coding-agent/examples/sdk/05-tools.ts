@@ -10,11 +10,11 @@
  * extensions system using pi.registerTool().
  */
 
-import { createAgentSession, SessionManager } from "@lue-labs/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@leo-labs-ai/pi-coding-agent";
 
 // Read-only mode (no edit/write)
 const { session: readOnlySession } = await createAgentSession({
-	tools: ["read", "grep", "Glob", "ls"],
+	tools: ["read", "grep", "find", "ls"],
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Read-only session created");

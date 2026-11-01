@@ -1,4 +1,3 @@
-import { arch, platform, release } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import type { OpenAIResponsesOptions } from "../src/api/openai-responses.ts";
@@ -7,9 +6,10 @@ import { getSupportedThinkingLevels } from "../src/models.ts";
 import { XAI_MODELS } from "../src/providers/xai.models.ts";
 import { xaiProvider } from "../src/providers/xai.ts";
 import type { Context, Model } from "../src/types.ts";
+import { formatUserAgent } from "../src/utils/identity.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
-const PI_USER_AGENT = `pi (${platform()} ${release()}; ${arch()})`;
+const PI_USER_AGENT = formatUserAgent();
 
 type CapturedRequest = {
 	url: string;
@@ -130,10 +130,10 @@ describe("xAI Responses provider", () => {
 		for (const model of Object.values(XAI_MODELS)) {
 			expect(model.api, model.id).toBe("openai-responses");
 		}
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high"]);
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.5"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.6"])).toEqual(["low", "medium", "high", "xhigh"]);
 		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.7"])).toEqual(["low", "medium", "high", "xhigh"]);
-		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high"]);
+		expect(getSupportedThinkingLevels(XAI_MODELS["grok-4.3"])).toEqual(["off", "low", "medium", "high", "xhigh"]);
 	});
 
 	it("includes Grok 4.7 capabilities and long-context pricing", () => {
@@ -214,31 +214,28 @@ describe("xAI Responses provider", () => {
 		expect(captured.body).not.toHaveProperty("reasoning");
 	});
 
-	it.each(["grok-4.6", "grok-4.7"] as const)(
-		"uses /responses for %s with xhigh effort and encrypted reasoning",
-		async (modelId) => {
-			const captured = await captureRequest(
-				XAI_MODELS[modelId],
-				{
-					systemPrompt: "You are a careful coding assistant.",
-					messages: [{ role: "user", content: "hello", timestamp: 1 }],
-				},
-				{
-					apiKey: "xai-test-token",
-					reasoningEffort: "xhigh",
-				},
-			);
+	it("uses /responses for Grok 4.7 with xhigh effort and encrypted reasoning", async () => {
+		const captured = await captureRequest(
+			XAI_MODELS["grok-4.7"],
+			{
+				systemPrompt: "You are a careful coding assistant.",
+				messages: [{ role: "user", content: "hello", timestamp: 1 }],
+			},
+			{
+				apiKey: "xai-test-token",
+				reasoningEffort: "xhigh",
+			},
+		);
 
-			expect(captured.url).toBe("https://api.x.ai/v1/responses");
-			expect(captured.body).toMatchObject({
-				model: modelId,
-				store: false,
-				stream: true,
-				reasoning: { effort: "xhigh" },
-				include: ["reasoning.encrypted_content"],
-			});
-		},
-	);
+		expect(captured.url).toBe("https://api.x.ai/v1/responses");
+		expect(captured.body).toMatchObject({
+			model: "grok-4.7",
+			store: false,
+			stream: true,
+			reasoning: { effort: "xhigh" },
+			include: ["reasoning.encrypted_content"],
+		});
+	});
 
 	it("uses /responses for Grok 4.3", async () => {
 		const captured = await captureRequest(

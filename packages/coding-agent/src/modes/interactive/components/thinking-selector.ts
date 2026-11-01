@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@lue-labs/pi-agent-core";
+import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 import {
 	Container,
 	type Focusable,
@@ -10,7 +10,7 @@ import {
 	type SelectListLayoutOptions,
 	Spacer,
 	Text,
-} from "@lue-labs/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyDisplayText } from "./keybinding-hints.ts";
@@ -22,19 +22,13 @@ const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 
 const LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
-	adaptive: "Model self-regulates (Claude 4.6+)",
 	minimal: "Very brief reasoning (~1k tokens)",
 	low: "Light reasoning (~2k tokens)",
 	medium: "Moderate reasoning (~8k tokens)",
 	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Maximum reasoning (~32k tokens)",
-	max: "Extended reasoning beyond xhigh (GPT-5.6+)",
-	ultra: "Maximum reasoning + orchestration signal (GPT-5.6 Sol/Terra)",
+	xhigh: "Extra-high reasoning (~32k tokens)",
+	max: "Maximum reasoning",
 };
-
-// Display order: off → adaptive → ladder. Adaptive sits near the top because it's a mode,
-// not a budget rung; the rest are ordered low→high effort.
-const DISPLAY_ORDER: ThinkingLevel[] = ["off", "adaptive", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
 /**
  * Component that renders a thinking level selector with borders
@@ -71,8 +65,7 @@ export class ThinkingSelectorComponent extends Container implements Focusable {
 		this.onCancel = onCancel;
 		this.onSelectAsDefault = onSelectAsDefault;
 
-		const orderedLevels = DISPLAY_ORDER.filter((level) => availableLevels.includes(level));
-		this.allItems = orderedLevels.map((level) => ({
+		this.allItems = availableLevels.map((level) => ({
 			value: level,
 			label: `${level === currentLevel ? "✓ " : "  "}${level}`,
 			description:

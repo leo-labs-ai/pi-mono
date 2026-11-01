@@ -79,31 +79,25 @@ describe("compaction prompt grounding", () => {
 });
 
 describe("compaction request does not double-pay", () => {
-	it("cache-safe paths never serialize the conversation into the prompt", () => {
+	it("cache-safe contexts carry the live transcript plus one instruction, never a serialized copy", () => {
 		// The cache-safe request replays the live conversation as structured messages.
 		// Embedding a serialized copy too would bill the same bytes twice in one call --
 		// as a cache WRITE outside the cached prefix, never read back.
-		const cacheSafeBranch = compactionSrc.slice(
-			compactionSrc.indexOf("const context: Context = cacheSafeContext"),
-			compactionSrc.indexOf(
-				"const response = await completeSummarization",
-				compactionSrc.indexOf("const context: Context = cacheSafeContext"),
-			),
-		);
-		expect(cacheSafeBranch.length).toBeGreaterThan(0);
-		const cacheSafeArm = cacheSafeBranch.slice(0, cacheSafeBranch.indexOf(": buildSummarizationContext"));
-		expect(cacheSafeArm).not.toContain("serializeConversation");
-		expect(cacheSafeArm).not.toContain("<split-turn-prefix>");
+		const start = compactionSrc.indexOf("function buildCacheSafeSummarizationContext");
+		expect(start).toBeGreaterThan(-1);
+		const fn = compactionSrc.slice(start, compactionSrc.indexOf("\n}\n", start));
+		expect(fn).toContain("...cacheSafeContext.messages");
+		expect(fn).not.toContain("serializeConversation");
+		expect(fn).not.toContain("systemPrompt");
 	});
 
 	it("legacy serialization only feeds standalone contexts", () => {
 		// buildSummarizationContext builds a ONE-message context with no history, so the
 		// serialized text is the only copy -- not duplication. If it ever gained history,
 		// every legacy call would start double-paying.
-		const fn = compactionSrc.slice(
-			compactionSrc.indexOf("function buildSummarizationContext"),
-			compactionSrc.indexOf("function buildSummarizationContext") + 500,
-		);
+		const start = compactionSrc.indexOf("function buildSummarizationContext");
+		expect(start).toBeGreaterThan(-1);
+		const fn = compactionSrc.slice(start, start + 500);
 		expect(fn).toContain("messages: [");
 		expect(fn).not.toContain("...");
 	});

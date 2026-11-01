@@ -18,16 +18,13 @@ export interface BuiltinSlashCommand {
 
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
-	{ name: "agents", description: "List native child agents, run native agent workflows, or open selector" },
-	{ name: "agents-doctor", description: "Diagnose native agent configuration and runtime availability" },
-	{ name: "agents-status", description: "Show native child-agent runs and background controls" },
 	{ name: "model", description: "Select model (opens selector UI)", argumentHint: "<provider/model>" },
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
 	{ name: "thinking", description: "Set thinking level", argumentHint: "<level>" },
 	{ name: "scoped-models", description: "Enable/disable models for Ctrl+P cycling" },
 	{ name: "export", description: "Export session (HTML default, or specify path: .html/.jsonl)" },
 	{ name: "import", description: "Import and resume a session from a JSONL file" },
-	{ name: "share", description: "Share session as a secret GitHub gist" },
+	{ name: "share", description: "Share session via a Radius artifact or a GitHub gist" },
 	{ name: "bug", description: "Report a bug to the Pi developers", argumentHint: "<description>" },
 	{ name: "copy", description: "Copy last agent message to clipboard" },
 	{ name: "name", description: "Set session display name" },

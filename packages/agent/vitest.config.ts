@@ -17,11 +17,11 @@ export default defineConfig({
 	resolve: {
 		conditions: ["source"],
 		alias: [
-			{ find: /^@lue-labs\/pi-telemetry$/, replacement: telemetrySrcIndex },
+			{ find: /^@leo-labs-ai\/pi-telemetry$/, replacement: telemetrySrcIndex },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
-			{ find: /^@lue-labs\/pi-ai$/, replacement: aiSrcIndex },
-			{ find: /^@lue-labs\/pi-ai\/compat$/, replacement: aiSrcCompat },
-			{ find: /^@lue-labs\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@leo-labs-ai\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@leo-labs-ai\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@leo-labs-ai\/pi-agent-core$/, replacement: agentSrcIndex },
 			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
 			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
 			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },

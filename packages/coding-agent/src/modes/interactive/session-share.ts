@@ -3,8 +3,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { DEFAULT_RADIUS_GATEWAY } from "@lue-labs/pi-ai/providers/radius-config";
-import { type Container, type EditorComponent, hyperlink, type TUI } from "@lue-labs/pi-tui";
+import { DEFAULT_RADIUS_GATEWAY } from "@leo-labs-ai/pi-ai/providers/radius-config";
+import { type Container, type EditorComponent, hyperlink, type TUI } from "@leo-labs-ai/pi-tui";
 import { getAuthCredential } from "../../cli/auth-command.ts";
 import { getShareViewerUrl } from "../../config.ts";
 import type { AgentSession } from "../../core/agent-session.ts";
@@ -66,7 +66,14 @@ export async function shareSession(context: SessionShareContext): Promise<void> 
 			context.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
 			return;
 		}
-		if (await tryShareViaRadius(jsonlFile, context)) return;
+		const destination = context.session.settingsManager.getSessionShareDestination();
+		if (destination !== "gist") {
+			if (await tryShareViaRadius(jsonlFile, context)) return;
+			if (destination === "radius") {
+				context.showError("Radius authentication is not configured. Run '/login radius' first.");
+				return;
+			}
+		}
 
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });

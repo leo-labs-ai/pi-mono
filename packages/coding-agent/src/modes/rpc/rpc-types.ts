@@ -5,9 +5,9 @@
  * Responses and events are emitted as JSON lines on stdout.
  */
 
-import type { AgentMessage, ThinkingLevel } from "@lue-labs/pi-agent-core";
-import type { ImageContent, Model } from "@lue-labs/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { AgentMessage, ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
+import type { ImageContent, Model } from "@leo-labs-ai/pi-ai";
+import type { PromptDisposition, QueuedInputDisposition, SessionStats } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -114,10 +114,16 @@ export interface RpcSessionState {
 
 // Success responses with data
 export type RpcResponse =
-	// Prompting (async - events follow)
-	| { id?: string; type: "response"; command: "prompt"; success: true }
-	| { id?: string; type: "response"; command: "steer"; success: true }
-	| { id?: string; type: "response"; command: "follow_up"; success: true }
+	// Prompting
+	| { id?: string; type: "response"; command: "prompt"; success: true; data: { disposition: PromptDisposition } }
+	| { id?: string; type: "response"; command: "steer"; success: true; data: { disposition: QueuedInputDisposition } }
+	| {
+			id?: string;
+			type: "response";
+			command: "follow_up";
+			success: true;
+			data: { disposition: QueuedInputDisposition };
+	  }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| {
 			id?: string;
