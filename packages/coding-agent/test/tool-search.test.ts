@@ -80,6 +80,20 @@ describe("Bm25Ranker", () => {
 		expect(ranker.rank("tickets", documents, 8)).toEqual([]);
 	});
 
+	it("requires every + term in matching metadata (#653)", () => {
+		const ranker = new Bm25Ranker();
+		const cloudflare = createToolSearchDocument(tool("mcp__cloudflare__execute", "Search messages and update resources."));
+		const slack = createToolSearchDocument(tool("mcp__slack__search", "Search Slack messages."));
+		expect(ranker.rank("+slack search messages", [cloudflare], 1)).toEqual([]);
+		expect(ranker.rank("+slack search messages", [cloudflare, slack], 8).map((match) => match.name)).toEqual([
+			"mcp__slack__search",
+		]);
+		expect(ranker.rank("+slack +missing search", [slack], 8)).toEqual([]);
+		expect(ranker.rank("+the search", [slack], 8)).toEqual([]);
+		expect(ranker.rank("+ search", [slack], 8)).toEqual([]);
+		expect(new Bm25Ranker({ genericShare: 0, genericMinDocuments: 1 }).rank("+slack", [slack], 8)).toHaveLength(1);
+	});
+
 	it("includes the namespace in the search text", () => {
 		const document = createToolSearchDocument(tool("mcp__x__run", "Run it."), {
 			name: "mcp__x",

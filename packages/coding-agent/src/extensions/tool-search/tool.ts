@@ -138,6 +138,10 @@ export class Bm25Ranker implements ToolRanker {
 
 	rank(query: string, documents: readonly ToolSearchDocument[], limit: number): ToolSearchMatch[] {
 		const queryTerms = [...new Set(tokenize(query))];
+		const requiredParts = query.split(/\s+/).filter((part) => part.startsWith("+"));
+		const requiredTokens = requiredParts.map((part) => tokenize(part.slice(1)));
+		if (requiredTokens.some((tokens) => tokens.length === 0)) return [];
+		const requiredTerms = new Set(requiredTokens.flat());
 		if (queryTerms.length === 0 || documents.length === 0 || limit <= 0) return [];
 		const termCounts = documents.map((document) => {
 			const counts = new Map<string, number>();
@@ -159,11 +163,12 @@ export class Bm25Ranker implements ToolRanker {
 		const nameTerms = documents.map((document) => new Set(tokenize(document.name)));
 		const matches: ToolSearchMatch[] = [];
 		documents.forEach((document, index) => {
+			if ([...requiredTerms].some((term) => !termCounts[index].has(term))) return;
 			let score = 0;
 			for (const term of queryTerms) {
 				const count = termCounts[index].get(term);
 				if (!count) continue;
-				if (generic.has(term) && document.name.startsWith("mcp__") && !nameTerms[index].has(term)) continue;
+				if (generic.has(term) && !requiredTerms.has(term) && document.name.startsWith("mcp__") && !nameTerms[index].has(term)) continue;
 				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
 				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
 			}
@@ -229,7 +234,7 @@ function searchAndLoad(
  * The `tool_search` description. It does not list the searchable tools or their namespaces, so it
  * stays the same while tools are registered, for example when MCP servers connect.
  */
-export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
+export const TOOL_SEARCH_DESCRIPTION = `# Tool discovery\n\nSearches over deferred tool metadata with BM25 and exposes matching tools for the next model call. Prefix a term with + to require it in matching tool metadata.\n\nSome of the tools, such as tools of MCP servers, may not have been provided to you upfront, and you should use this tool (\`${TOOL_SEARCH_TOOL_NAME}\`) to search for the required tools. For MCP tool discovery, always use \`${TOOL_SEARCH_TOOL_NAME}\`.`;
 
 export function createToolSearchToolDefinition(
 	options: ToolSearchToolOptions = {},
