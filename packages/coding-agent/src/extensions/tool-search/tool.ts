@@ -168,7 +168,13 @@ export class Bm25Ranker implements ToolRanker {
 			for (const term of queryTerms) {
 				const count = termCounts[index].get(term);
 				if (!count) continue;
-				if (generic.has(term) && !requiredTerms.has(term) && document.name.startsWith("mcp__") && !nameTerms[index].has(term)) continue;
+				if (
+					generic.has(term) &&
+					!requiredTerms.has(term) &&
+					document.name.startsWith("mcp__") &&
+					!nameTerms[index].has(term)
+				)
+					continue;
 				const norm = this.k1 * (1 - this.b + (this.b * lengths[index]) / averageLength);
 				score += (idf.get(term) ?? 0) * ((count * (this.k1 + 1)) / (count + norm));
 			}

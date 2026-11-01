@@ -82,7 +82,9 @@ describe("Bm25Ranker", () => {
 
 	it("requires every + term in matching metadata (#653)", () => {
 		const ranker = new Bm25Ranker();
-		const cloudflare = createToolSearchDocument(tool("mcp__cloudflare__execute", "Search messages and update resources."));
+		const cloudflare = createToolSearchDocument(
+			tool("mcp__cloudflare__execute", "Search messages and update resources."),
+		);
 		const slack = createToolSearchDocument(tool("mcp__slack__search", "Search Slack messages."));
 		expect(ranker.rank("+slack search messages", [cloudflare], 1)).toEqual([]);
 		expect(ranker.rank("+slack search messages", [cloudflare, slack], 8).map((match) => match.name)).toEqual([
