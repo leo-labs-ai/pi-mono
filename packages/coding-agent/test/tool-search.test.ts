@@ -87,13 +87,16 @@ describe("Bm25Ranker", () => {
 		);
 		const slack = createToolSearchDocument(tool("mcp__slack__search", "Search Slack messages."));
 		expect(ranker.rank("+slack search messages", [cloudflare], 1)).toEqual([]);
+		expect(ranker.rank("search (+slack) messages", [cloudflare], 1)).toEqual([]);
+		expect(ranker.rank("search,+slack messages", [cloudflare], 1)).toEqual([]);
 		expect(ranker.rank("+slack search messages", [cloudflare, slack], 8).map((match) => match.name)).toEqual([
 			"mcp__slack__search",
 		]);
 		expect(ranker.rank("+slack +missing search", [slack], 8)).toEqual([]);
 		expect(ranker.rank("+the search", [slack], 8)).toEqual([]);
 		expect(ranker.rank("+ search", [slack], 8)).toEqual([]);
-		expect(new Bm25Ranker({ genericShare: 0, genericMinDocuments: 1 }).rank("+slack", [slack], 8)).toHaveLength(1);
+		const neutralName = createToolSearchDocument(tool("mcp__x__run", "Search Slack messages."));
+		expect(new Bm25Ranker({ genericShare: 0, genericMinDocuments: 1 }).rank("+slack", [neutralName], 8)).toHaveLength(1);
 	});
 
 	it("includes the namespace in the search text", () => {

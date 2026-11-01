@@ -138,8 +138,7 @@ export class Bm25Ranker implements ToolRanker {
 
 	rank(query: string, documents: readonly ToolSearchDocument[], limit: number): ToolSearchMatch[] {
 		const queryTerms = [...new Set(tokenize(query))];
-		const requiredParts = query.split(/\s+/).filter((part) => part.startsWith("+"));
-		const requiredTokens = requiredParts.map((part) => tokenize(part.slice(1)));
+		const requiredTokens = Array.from(query.matchAll(/(?<![a-z0-9_+])\+([a-z0-9_-]*)/gi), (match) => tokenize(match[1]));
 		if (requiredTokens.some((tokens) => tokens.length === 0)) return [];
 		const requiredTerms = new Set(requiredTokens.flat());
 		if (queryTerms.length === 0 || documents.length === 0 || limit <= 0) return [];
