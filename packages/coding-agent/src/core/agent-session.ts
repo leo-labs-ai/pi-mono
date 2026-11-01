@@ -1660,11 +1660,8 @@ export class AgentSession {
 			this._startupToolDiagnostic = undefined;
 			return;
 		}
-		const available = [...this._toolRegistry.keys()].sort((left, right) => {
-			if (left < right) return -1;
-			if (left > right) return 1;
-			return 0;
-		});
+		// Default string sort is UTF-16 code-unit order; the registry keys are always strings.
+		const available = [...this._toolRegistry.keys()].sort();
 		this._startupToolDiagnostic = {
 			type: "warning",
 			message: formatUnresolvedActiveToolsDiagnostic(unresolved, available),
