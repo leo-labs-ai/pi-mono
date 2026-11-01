@@ -56,6 +56,7 @@ export interface Keybindings {
 	"tui.altScreen.searchClose": true;
 	"tui.altScreen.top": true;
 	"tui.altScreen.bottom": true;
+	"tui.altScreen.copy": true;
 }
 
 export type Keybinding = keyof Keybindings;
@@ -207,6 +208,7 @@ export const TUI_KEYBINDINGS = {
 	},
 	"tui.altScreen.top": { defaultKeys: "ctrl+home", description: "Scroll viewport to top" },
 	"tui.altScreen.bottom": { defaultKeys: "ctrl+end", description: "Scroll viewport to bottom" },
+	"tui.altScreen.copy": { defaultKeys: "super+c", description: "Copy the active viewport selection" },
 } as const satisfies KeybindingDefinitions;
 
 export interface KeybindingConflict {
