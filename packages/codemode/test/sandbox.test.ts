@@ -222,7 +222,17 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			if (result.ok) return;
 			expect(result.error.kind).toBe("script");
 			expect(result.error.name).toBe("SyntaxError");
+			expect(result.error.phase).toBe("parse");
 			expect(result.error.stack).toMatch(/codemode\.js:2/);
+		});
+
+		it("does not classify runtime syntax errors as parse failures", async () => {
+			const sandbox = createSandbox();
+			const result = await sandbox.execute("JSON.parse('not-json')");
+			expect(result.ok).toBe(false);
+			if (result.ok) return;
+			expect(result.error.name).toBe("SyntaxError");
+			expect(result.error.phase).toBeUndefined();
 		});
 
 		it("reports thrown errors with the script's line number", async () => {

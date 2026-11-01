@@ -15,14 +15,17 @@ describe("codemode syntax diagnostics", () => {
 		expect(output).toContain("escaped backticks");
 	});
 
-	it("does not suggest template fixes for unrelated syntax errors", async () => {
-		const result = await executeCodemode("syntax", { code: "const = ;" }, undefined, undefined, undefined);
-		const output = result.content
-			.filter((item) => item.type === "text")
-			.map((item) => item.text)
-			.join("\n");
-		expect(result.isError).toBe(true);
-		expect(output).toContain("SyntaxError");
-		expect(output).not.toContain("escaped backticks");
-	});
+	it.each(["const value = '\x60'; const = ;", "JSON.parse('\x60not-json\x60')", "const content = '\x60'; const = ;"])(
+		"does not suggest template fixes for unrelated error: %s",
+		async (code) => {
+			const result = await executeCodemode("syntax", { code }, undefined, undefined, undefined);
+			const output = result.content
+				.filter((item) => item.type === "text")
+				.map((item) => item.text)
+				.join("\n");
+			expect(result.isError).toBe(true);
+			expect(output).toContain("SyntaxError");
+			expect(output).not.toContain("escaped backticks");
+		},
+	);
 });

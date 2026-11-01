@@ -147,7 +147,12 @@ function discardOutput(memory: { readonly buffer: ArrayBufferLike }) {
 function describeException(error: JSException): string {
 	const head = error.message ? `${error.name}: ${error.message}` : error.name;
 	const stack = error.stack?.trimEnd();
-	return JSON.stringify({ name: error.name, message: error.message, stack: stack ? `${head}\n${stack}` : head });
+	return JSON.stringify({
+		phase: "parse",
+		name: error.name,
+		message: error.message,
+		stack: stack ? `${head}\n${stack}` : head,
+	});
 }
 
 /** Promise jobs run between two `shouldInterrupt` polls while draining the job queue. */

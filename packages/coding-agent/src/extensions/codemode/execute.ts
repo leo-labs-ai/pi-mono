@@ -391,7 +391,10 @@ function formatError(
 					? `Script aborted: ${error.message}`
 					: `Script sandbox failed: ${error.message}`;
 	const hint =
-		error.kind === "script" && error.name === "SyntaxError" && code.includes("`")
+		error.kind === "script" &&
+		error.phase === "parse" &&
+		error.name === "SyntaxError" &&
+		/\b(?:content|markdown)\s*[:=]\s*`/i.test(code)
 			? "\n\nA template literal may contain unescaped backticks or ${. Put file contents in a separate string with escaped backticks and \\${, or use the write tool directly when available."
 			: "";
 	return `${head}${hint}\n\n${formatCallSummary(calls)}`;
