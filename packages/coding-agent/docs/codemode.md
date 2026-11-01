@@ -6,6 +6,14 @@ The `codemode` tool lets the model write a JavaScript script that calls pi's oth
 
 The tool input is raw JavaScript source, not JSON and not a markdown code fence. It runs as the body of an async function in a QuickJS sandbox, so top-level `await` and `return` work. The sandbox has no Node APIs, file system, network, or timers; scripts reach the outside world only through tools and `models`.
 
+For markdown containing backticks, use a quoted JavaScript string rather than a template literal. Escape newlines as `\n` and any quotes or backslashes in the content:
+
+```js
+await tools.write({ path: "notes.md", content: "# Notes\nUse `code` here.\n" });
+```
+
+If using a template literal instead, escape both backticks and literal `${` sequences. When available, the direct `write` tool also accepts file content without embedding it in JavaScript.
+
 A script may start with an options line. It must be the first line; an options line anywhere else fails the call before the script runs:
 
 ```js
