@@ -195,6 +195,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Scroll viewport to bottom"
     },
+    "tui.altScreen.copy": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Copy the active viewport selection"
+    },
     "app.interrupt": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Cancel or abort"
