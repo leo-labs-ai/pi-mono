@@ -1,6 +1,6 @@
 {
-	"name": "@earendil-works/pi-telemetry",
-	"version": "0.84.1",
+	"name": "@leo-labs-ai/pi-telemetry",
+	"version": "1.4.0",
 	"description": "Vendor-neutral telemetry contracts and typed schema utilities for pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -9,6 +9,11 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
+		},
+		"./render": {
+			"source": "./src/render.ts",
+			"types": "./dist/render.d.ts",
+			"import": "./dist/render.js"
 		},
 		"./testing": {
 			"types": "./dist/testing/index.d.ts",
@@ -21,7 +26,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "tsgo -p tsconfig.build.json",
+		"build": "tsc -p tsconfig.build.json",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
@@ -34,14 +39,18 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
+		"url": "git+https://github.com/leo-labs-ai/pi-mono.git",
 		"directory": "packages/telemetry"
 	},
 	"engines": {
 		"node": ">=22.19.0"
 	},
 	"devDependencies": {
-		"@types/node": "24.12.4",
-		"vitest": "4.1.9"
+		"@types/node": "22.19.19",
+		"vitest": "4.1.11"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com",
+		"access": "restricted"
 	}
 }

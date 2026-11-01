@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# pi-update — bump the local pi install to the latest fork release.
+#
+# Thin wrapper around install-mini-pi. Resolves the latest release on
+# leo-labs-ai/pi-mono and reinstalls. Safe to run repeatedly (idempotent).
+#
+# Usage:
+#   pi-update              # install latest release
+#   pi-update v0.74.0-valk.2   # pin to a specific tag
+# Auto-detects best installer: tries the binary first, falls back to source
+# if the binary install fails to verify (e.g. macOS <16 Bun-compile bug).
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if "$here/install-mini-pi" "$@"; then
+  exit 0
+fi
+
+printf '[pi-update] binary install failed; falling back to source build\n' >&2
+exec "$here/install-mini-pi-source" "$@"

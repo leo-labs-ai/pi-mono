@@ -124,4 +124,17 @@ describe("visibleWidth", () => {
 		assert.strictEqual(visibleWidth(normalizeTerminalOutput("ำabc")), visibleWidth("ำabc"));
 		assert.strictEqual(visibleWidth(normalizeTerminalOutput("ຳabc")), visibleWidth("ຳabc"));
 	});
+
+	it("normalizes tabs to 3 spaces so emitted buffer matches visibleWidth", () => {
+		// visibleWidth() counts \t as 3 columns; terminal expands to next 8-col
+		// tab stop. Without normalization, box layouts crash with width drift.
+		assert.strictEqual(normalizeTerminalOutput("9,9M\t."), "9,9M   .");
+		assert.strictEqual(normalizeTerminalOutput("a\tb\tc"), "a   b   c");
+		assert.strictEqual(normalizeTerminalOutput("no tabs here"), "no tabs here");
+		// Width invariant: post-normalization, the literal-rendered width
+		// (string length for ASCII) equals what visibleWidth() predicted.
+		const raw = "9,9M\t.";
+		const normalized = normalizeTerminalOutput(raw);
+		assert.strictEqual(visibleWidth(raw), normalized.length);
+	});
 });

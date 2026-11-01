@@ -1,0 +1,31 @@
+name: Workflow Sanity
+
+# Lints the GitHub Actions workflows themselves (syntax, expressions, and
+# embedded shell via shellcheck). Runs only when workflow files change so it
+# stays fast. actionlint is pinned to a released Docker image to avoid a
+# third-party action in the supply chain.
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workflow-sanity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12
+        with:
+          args: -color

@@ -1,9 +1,15 @@
+import type { AgentMessage, AgentTool } from "@leo-labs-ai/pi-agent-core";
 import {
 	type AssistantMessage,
 	createAssistantMessageEventStream,
 	fauxAssistantMessage,
+	fauxToolCall,
+	getCurrentTools,
 	type Model,
-} from "@earendil-works/pi-ai";
+	type SimpleStreamOptions,
+	type TranscriptContext,
+} from "@leo-labs-ai/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
@@ -47,10 +53,15 @@ function createAssistant(
 	};
 }
 
-function useSummaryStreamFn(harness: Harness, summary: string): () => number {
+function useSummaryStreamFn(
+	harness: Harness,
+	summary: string,
+	onRequest?: (context: TranscriptContext, options: SimpleStreamOptions | undefined) => void,
+): () => number {
 	let callCount = 0;
-	harness.session.agent.streamFunction = (model) => {
+	harness.session.agent.streamFunction = (model, context, options) => {
 		callCount++;
+		onRequest?.(context, options);
 		const stream = createAssistantMessageEventStream();
 		queueMicrotask(() => {
 			const message: AssistantMessage = {
@@ -83,6 +94,31 @@ function seedCompactableSession(harness: Harness): void {
 	assistant.content = [{ type: "text", text: "assistant response to compact" }];
 	harness.sessionManager.appendMessage(assistant);
 	harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+}
+
+async function createAbortableCompactionHarness(): Promise<{
+	harness: Harness;
+	compactionStarted: Promise<void>;
+}> {
+	let markCompactionStarted = () => {};
+	const compactionStarted = new Promise<void>((resolve) => {
+		markCompactionStarted = resolve;
+	});
+	const harness = await createHarness({
+		settings: { compaction: { keepRecentTokens: 1 } },
+		extensionFactories: [
+			(pi) => {
+				pi.on("session_before_compact", async (event) => {
+					return await new Promise<{ cancel: true }>((resolve) => {
+						event.signal.addEventListener("abort", () => resolve({ cancel: true }), { once: true });
+						markCompactionStarted();
+					});
+				});
+			},
+		],
+	});
+	seedCompactableSession(harness);
+	return { harness, compactionStarted };
 }
 
 describe("AgentSession compaction characterization", () => {
@@ -145,7 +181,57 @@ describe("AgentSession compaction characterization", () => {
 		expect(statsAfter.tokens.cacheRead).toBe(statsBefore.tokens.cacheRead + summaryUsage.cacheRead);
 		expect(statsAfter.tokens.cacheWrite).toBe(statsBefore.tokens.cacheWrite + summaryUsage.cacheWrite);
 		expect(statsAfter.cost).toBe(statsBefore.cost + summaryUsage.cost.total);
-		expect(harness.session.messages[0]?.role).toBe("compactionSummary");
+		expect(harness.session.messages[0]?.role).toBe("system");
+		expect(harness.session.messages[1]?.role).toBe("compactionSummary");
+	});
+
+	it("checkpoints the replayed system state and folds summarized and retained system patches into it", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("declared")]);
+		await harness.session.prompt("declare the prompt");
+		const declared = harness.session.messages[0];
+		if (declared?.role !== "system") throw new Error("expected declared system message");
+
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "summarized instruction",
+			sections: { early: "<early>1</early>" },
+			toolsRemoved: [{ name: "bash" }],
+			timestamp: Date.now(),
+		});
+		const firstKeptEntryId = harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept before patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "system",
+			content: "retained instruction",
+			sections: { extra: "<extra>late</extra>" },
+			toolsRemoved: [{ name: "read" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "kept after patch" }],
+			timestamp: Date.now(),
+		});
+		harness.sessionManager.appendCompaction("compacted", firstKeptEntryId, 100);
+
+		const messages = harness.sessionManager.buildSessionContext().messages;
+		expect(messages.map((message) => message.role)).toEqual(["system", "compactionSummary", "user", "user"]);
+		const checkpoint = messages[0];
+		if (checkpoint?.role !== "system") throw new Error("expected checkpoint system message");
+		expect(checkpoint.content).toBe("summarized instruction\n\nretained instruction");
+		expect(checkpoint.sections).toEqual({
+			...declared.sections,
+			early: "<early>1</early>",
+			extra: "<extra>late</extra>",
+		});
+		expect(checkpoint.toolsAdded?.map((tool) => tool.name)).toEqual(
+			harness.session.getActiveToolNames().filter((name) => name !== "read" && name !== "bash"),
+		);
 	});
 
 	it("allows a queued prompt to start when manual compaction ends", async () => {
@@ -195,6 +281,8 @@ describe("AgentSession compaction characterization", () => {
 	it("throws when compacting without configured auth", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
+		// Auth is resolved only when Pi summarizes itself, after checking there is something to compact.
+		seedCompactableSession(harness);
 
 		await expect(harness.session.compact()).rejects.toThrow(`No API key found for ${harness.getModel().provider}.`);
 	});
@@ -232,18 +320,98 @@ describe("AgentSession compaction characterization", () => {
 			streamSimple: () => createAssistantMessageEventStream(),
 		});
 		seedCompactableSession(harness);
-		harness.setResponses([
-			(_context, options) => {
-				expect(options?.apiKey).toBeUndefined();
-				expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
-				return fauxAssistantMessage("summary with bearer auth");
-			},
-		]);
+		const summaryResponse = (_context: TranscriptContext, options: SimpleStreamOptions | undefined) => {
+			expect(options?.apiKey).toBeUndefined();
+			expect(options?.headers).toEqual({ Authorization: "Bearer ambient-token" });
+			return fauxAssistantMessage("summary with bearer auth");
+		};
+		harness.setResponses([summaryResponse]);
 
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("summary with bearer auth");
 		expect(harness.faux.state.callCount).toBe(1);
+	});
+
+	it("keeps the session's thinking level for compaction summaries, with no reserve-based output cap", async () => {
+		// Summaries used to force thinking "off" because thinking could use up the
+		// 0.8 × reserveTokens output cap and fail compaction with a length stop. The cap is gone
+		// (pi-ai applies the model limit, clamped to the context window), so the summary keeps the
+		// session's level and the same thinking settings as the turn that wrote the cached prefix.
+		const harness = await createHarness({
+			models: [{ id: "faux-reasoning", reasoning: true }],
+			settings: { compaction: { keepRecentTokens: 1 } },
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.session.setThinkingLevel("high");
+		expect(harness.session.thinkingLevel).toBe("high");
+
+		const requestOptions: Array<SimpleStreamOptions | undefined> = [];
+		useSummaryStreamFn(harness, "summary with reasoning", (_context, options) => {
+			requestOptions.push(options);
+		});
+
+		await harness.session.compact();
+
+		expect(requestOptions.length).toBeGreaterThan(0);
+		for (const options of requestOptions) {
+			expect(options?.reasoning).toBe("high");
+			expect(options?.maxTokens).toBeUndefined();
+		}
+	});
+
+	it("uses the cache-safe compaction request context without the active agent transport", async () => {
+		const harness = await createHarness({ settings: { compaction: { keepRecentTokens: 1 } } });
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		// The live request runs the agent's transformContext before convertToLlm, so the summary
+		// request must too: a projection that hides tool declarations or rewrites a message
+		// changes the replayed bytes, and a prefix that differs from the live one is cached nowhere.
+		const transformContext = vi.fn(async (messages: AgentMessage[]) =>
+			messages.map((message) =>
+				message.role === "user"
+					? { ...message, content: [{ type: "text" as const, text: "PROJECTED message to compact" }] }
+					: message,
+			),
+		);
+		harness.session.agent.transformContext = transformContext;
+		harness.session.agent.sessionId = "active-routing-session";
+		harness.session.agent.transport = "websocket";
+		const liveMessages = await harness.session.agent.convertToLlm(
+			await transformContext(harness.session.agent.state.messages),
+		);
+
+		let requestContext: TranscriptContext | undefined;
+		let requestOptions: SimpleStreamOptions | undefined;
+		useSummaryStreamFn(harness, "cache-safe summary", (context, options) => {
+			requestContext = context;
+			requestOptions = options;
+		});
+
+		await harness.session.compact();
+
+		// Fork: the summary request replays the live transcript verbatim (system message, tool
+		// declarations, conversation) and appends only the summary instruction. That prefix is
+		// already cached by the main loop, so the request keeps caching on to read it and keeps the
+		// live routing session so it lands on the node holding it. Asserting "none" here would
+		// assert the bug: build a cache-reusable prefix, then forbid the reuse and cold-write it.
+		expect(transformContext).toHaveBeenCalledTimes(2);
+		expect(requestContext?.messages.slice(0, liveMessages.length)).toEqual(liveMessages);
+		expect(requestContext?.messages).toHaveLength(liveMessages.length + 1);
+		expect(JSON.stringify(requestContext?.messages)).toContain("PROJECTED message to compact");
+		expect(getCurrentTools(requestContext?.messages ?? [])).toEqual(getCurrentTools(liveMessages));
+		// The split-turn prefix is already in the replayed messages; the request must not
+		// re-serialize it as a text blob after the cached prefix (see generateTurnPrefixSummary).
+		const summaryAsk = JSON.stringify(requestContext?.messages.at(-1));
+		expect(summaryAsk).toContain("active session context");
+		expect(summaryAsk).toContain("<boundary>");
+		expect(summaryAsk).not.toContain("# Conversation");
+		expect(summaryAsk).not.toContain("[User]:");
+		expect(requestOptions?.cacheRetention).not.toBe("none");
+		expect(requestOptions?.sessionId).toBe("active-routing-session");
+		expect(requestOptions?.transport).toBeUndefined();
 	});
 
 	it("persists usage from pi-generated manual compaction", async () => {
@@ -278,6 +446,50 @@ describe("AgentSession compaction characterization", () => {
 		expect(getStreamCallCount()).toBe(1);
 	});
 
+	it("notifies extensions when auto-compaction fails", async () => {
+		const failedEvents: Array<{
+			reason: "manual" | "threshold" | "overflow";
+			errorMessage?: string;
+			aborted: boolean;
+			willRetry: boolean;
+			fromExtension: boolean;
+		}> = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_compact_failed", async (event) => {
+						failedEvents.push(event);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+		harness.session.agent.streamFunction = () => {
+			throw new Error("summary generator blew up");
+		};
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "threshold",
+			aborted: false,
+			willRetry: false,
+			errorMessage: "Auto-compaction failed: summary generator blew up",
+		});
+		expect(failedEvents).toEqual([
+			expect.objectContaining({
+				type: "session_compact_failed",
+				reason: "threshold",
+				aborted: false,
+				willRetry: false,
+				fromExtension: false,
+				errorMessage: "Auto-compaction failed: summary generator blew up",
+			}),
+		]);
+	});
+
 	it("compacts and resumes after a length stop below the desired output limit", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
@@ -310,6 +522,192 @@ describe("AgentSession compaction characterization", () => {
 			willRetry: true,
 		});
 		expect(harness.session.getLastAssistantText()).toBe("completed response");
+	});
+
+	// Regression coverage for #8133: model overrides must also apply between assistant turns.
+	// Regression coverage for #9740: an oversized trailing tool result must still produce a cut point.
+	it.each([false, true])(
+		"compacts after an oversized tool result in the same run (model override: %s)",
+		async (modelOverride) => {
+			const toolResult = `large-tool-result:${"x".repeat(8000)}`;
+			const largeTool: AgentTool = {
+				name: "large_result",
+				label: "Large result",
+				description: "Returns enough content to cross the compaction threshold",
+				parameters: Type.Object({}),
+				execute: async () => ({ content: [{ type: "text", text: toolResult }], details: {} }),
+			};
+			const order: string[] = [];
+			const observedSettings: unknown[] = [];
+			const harness = await createHarness({
+				models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+				settings: {
+					compaction: modelOverride
+						? {
+								enabled: true,
+								reserveTokens: 0,
+								keepRecentTokens: 20000,
+								modelOverrides: { "faux/faux-1": { reserveTokens: 400, keepRecentTokens: 1750 } },
+							}
+						: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 },
+				},
+				tools: [largeTool],
+				extensionFactories: [
+					(pi) => {
+						pi.on("session_before_compact", (event) => {
+							order.push("compaction");
+							observedSettings.push(event.preparation.settings);
+							return {
+								compaction: {
+									summary: "compacted history",
+									firstKeptEntryId: event.preparation.firstKeptEntryId,
+									tokensBefore: event.preparation.tokensBefore,
+									details: {},
+								},
+							};
+						});
+					},
+				],
+			});
+			harnesses.push(harness);
+			let resumedRequest = "";
+			harness.setResponses([
+				fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
+				fauxAssistantMessage(`recent-history:${"b".repeat(800)}`),
+				fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+				(context) => {
+					order.push("provider");
+					resumedRequest = JSON.stringify(context.messages);
+					return fauxAssistantMessage("finished after compaction");
+				},
+			]);
+
+			await harness.session.prompt("seed old history");
+			await harness.session.prompt("seed recent history");
+			const agentStartsBefore = harness.eventsOfType("agent_start").length;
+			await harness.session.prompt("run the large tool");
+
+			expect(order.slice(0, 2)).toEqual(["compaction", "provider"]);
+			expect(observedSettings[0]).toEqual({ enabled: true, reserveTokens: 400, keepRecentTokens: 1750 });
+			expect(harness.eventsOfType("agent_start")).toHaveLength(agentStartsBefore + 1);
+			expect(harness.eventsOfType("compaction_start").at(-1)).toEqual({
+				type: "compaction_start",
+				reason: "threshold",
+			});
+			expect(resumedRequest).toContain("compacted history");
+			expect(resumedRequest).toContain("large-tool-result");
+			expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
+		},
+	);
+
+	it("includes steering queued during compaction in the resumed assistant request", async () => {
+		const largeTool: AgentTool = {
+			name: "large_result",
+			label: "Large result",
+			description: "Returns enough content to cross the compaction threshold",
+			parameters: Type.Object({}),
+			execute: async () => ({
+				content: [{ type: "text", text: `large-tool-result:${"x".repeat(6800)}` }],
+				details: {},
+			}),
+		};
+		let markCompactionStarted = () => {};
+		const compactionStarted = new Promise<void>((resolve) => {
+			markCompactionStarted = resolve;
+		});
+		let releaseCompaction = () => {};
+		const compactionReleased = new Promise<void>((resolve) => {
+			releaseCompaction = resolve;
+		});
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			tools: [largeTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => {
+						markCompactionStarted();
+						await compactionReleased;
+						return {
+							compaction: {
+								summary: "compacted history",
+								firstKeptEntryId: event.preparation.firstKeptEntryId,
+								tokensBefore: event.preparation.tokensBefore,
+								details: {},
+							},
+						};
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		let resumedRequest = "";
+		harness.setResponses([
+			fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
+			fauxAssistantMessage(`recent-history:${"b".repeat(800)}`),
+			fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+			(context) => {
+				resumedRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("finished after compaction");
+			},
+			fauxAssistantMessage("finished after delayed steering"),
+		]);
+
+		await harness.session.prompt("seed old history");
+		await harness.session.prompt("seed recent history");
+		const promptPromise = harness.session.prompt("run the large tool");
+		await compactionStarted;
+		await harness.session.steer("change direction");
+		releaseCompaction();
+		await promptPromise;
+
+		expect(resumedRequest).toContain("change direction");
+		expect(harness.faux.state.callCount).toBe(4);
+	});
+
+	it("does not compact after a terminating tool result", async () => {
+		const terminatingTool: AgentTool = {
+			name: "terminate_with_large_result",
+			label: "Terminate with large result",
+			description: "Returns enough content to cross the compaction threshold, then terminates",
+			parameters: Type.Object({}),
+			execute: async () => ({
+				content: [{ type: "text", text: `large-tool-result:${"x".repeat(6800)}` }],
+				details: {},
+				terminate: true,
+			}),
+		};
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 2600, maxTokens: 100 }],
+			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+			tools: [terminatingTool],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", (event) => ({
+						compaction: {
+							summary: "unexpected compaction",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(`old-history:${"a".repeat(800)}`),
+			fauxAssistantMessage(`recent-history:${"b".repeat(800)}`),
+			fauxAssistantMessage(fauxToolCall("terminate_with_large_result", {}), { stopReason: "toolUse" }),
+		]);
+
+		await harness.session.prompt("seed old history");
+		await harness.session.prompt("seed recent history");
+		await harness.session.prompt("run the terminating tool");
+
+		expect(harness.eventsOfType("compaction_start")).toEqual([]);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction")).toEqual([]);
+		expect(harness.getPendingResponseCount()).toBe(0);
 	});
 
 	it("does not compact when a length stop reaches the desired output limit", async () => {
@@ -353,33 +751,71 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(2);
 		expect(harness.eventsOfType("compaction_start").filter((event) => event.reason === "overflow")).toHaveLength(1);
 		expect(harness.eventsOfType("compaction_end").at(-1)?.errorMessage).toBe(
+			"Truncated response recovery failed after one compact-and-retry attempt.",
+		);
+	});
+
+	it("keeps overflow wording when a repeated length stop fills the context window", async () => {
+		const harness = await createHarness({
+			models: [{ id: "faux-1", contextWindow: 100, maxTokens: 100 }],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const lengthOverflowMessage = createAssistant(harness, {
+			stopReason: "length",
+			totalTokens: 100,
+			timestamp: Date.now(),
+		});
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
+		const compactionErrors: string[] = [];
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_end" && event.errorMessage) {
+				compactionErrors.push(event.errorMessage);
+			}
+		});
+
+		await sessionInternals._checkCompaction(lengthOverflowMessage);
+		await sessionInternals._checkCompaction({ ...lengthOverflowMessage, timestamp: Date.now() + 1 });
+
+		expect(runAutoCompactionSpy).toHaveBeenCalledTimes(1);
+		expect(compactionErrors).toContain(
 			"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
 		);
 	});
 
 	it("cancels in-progress manual compaction when abortCompaction is called", async () => {
-		const harness = await createHarness({
-			settings: { compaction: { keepRecentTokens: 1 } },
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_compact", async (event) => {
-						return await new Promise<{ cancel: true }>((resolve) => {
-							event.signal.addEventListener("abort", () => resolve({ cancel: true }), { once: true });
-						});
-					});
-				},
-			],
-		});
+		const { harness, compactionStarted } = await createAbortableCompactionHarness();
 		harnesses.push(harness);
 
-		await harness.session.prompt("one");
-		await harness.session.prompt("two");
-
 		const compactPromise = harness.session.compact();
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		const compactExpectation = expect(compactPromise).rejects.toThrow("Compaction cancelled");
+		await compactionStarted;
 		harness.session.abortCompaction();
 
-		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
+		await compactExpectation;
+	});
+
+	// Regression test for #8920.
+	it("aborts an in-progress manual compaction and waits until the session is idle", async () => {
+		const { harness, compactionStarted } = await createAbortableCompactionHarness();
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("continued")]);
+
+		const compactPromise = harness.session.compact();
+		const compactExpectation = expect(compactPromise).rejects.toThrow("Compaction cancelled");
+		await compactionStarted;
+		await harness.session.abort();
+		await compactExpectation;
+
+		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
+			reason: "manual",
+			aborted: true,
+		});
+		expect(harness.session.isCompacting).toBe(false);
+		expect(harness.session.isIdle).toBe(true);
+
+		await expect(harness.session.prompt("next prompt")).resolves.toBeUndefined();
+		expect(harness.session.getLastAssistantText()).toBe("continued");
 	});
 
 	it("resumes after threshold compaction when only agent-level queued messages exist", async () => {

@@ -1,0 +1,29 @@
+name: Labeler
+
+# Applies path-based labels (.github/labeler.yml) to PRs. Uses
+# pull_request_target so PRs from forks still receive a write token, matching
+# the existing pr-gate.yml trigger model.
+#
+# NOTE: the pkg:* labels referenced in .github/labeler.yml must exist in the
+# repo before this runs — see the header of that file for the create commands.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Apply path labels
+        uses: actions/labeler@v5
+        with:
+          sync-labels: false

@@ -1,0 +1,29 @@
+version: 2
+
+# Dependency update cadence for the fork. The fork pins exact versions and
+# gates lockfile commits (see AGENTS.md "Dependency and Install Security"), so
+# updates are batched weekly and capped to keep review load low. Dependabot
+# applies its default `dependencies` label automatically; pr-gate.yml already
+# skips the contributor check for dependabot[bot].
+updates:
+  # First-party GitHub Actions — keep action major tags current. Low risk.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 3
+
+  # npm workspace deps — batch minor/patch into one PR for review. Major bumps
+  # come as separate PRs so they get individual scrutiny.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]

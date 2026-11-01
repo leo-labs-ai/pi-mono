@@ -1,5 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
@@ -53,6 +53,7 @@ describe("regressions #1717/#2113: agent session event settlement", () => {
 			.filter((entry) => entry.type === "message")
 			.map((entry) => entry.message);
 		expect(branchMessages.map((message) => message.role)).toEqual([
+			"system",
 			"user",
 			"assistant",
 			"toolResult",
@@ -90,6 +91,6 @@ describe("regressions #1717/#2113: agent session event settlement", () => {
 
 		await harness.session.prompt("run tool");
 
-		expect(branchRolesAtToolCall).toEqual([["user", "assistant"]]);
+		expect(branchRolesAtToolCall).toEqual([["system", "user", "assistant"]]);
 	});
 });

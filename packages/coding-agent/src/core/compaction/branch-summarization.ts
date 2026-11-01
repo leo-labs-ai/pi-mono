@@ -5,10 +5,10 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
-import type { RetryCallbacks, RetryPolicy } from "@earendil-works/pi-ai";
-import { contentText } from "@earendil-works/pi-ai";
-import type { Model, SimpleStreamOptions, Usage } from "@earendil-works/pi-ai/compat";
+import type { AgentMessage, StreamFn } from "@leo-labs-ai/pi-agent-core";
+import type { RetryCallbacks, RetryPolicy } from "@leo-labs-ai/pi-ai";
+import { contentText, normalizeContext } from "@leo-labs-ai/pi-ai";
+import type { Model, SimpleStreamOptions, Usage } from "@leo-labs-ai/pi-ai/compat";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
@@ -16,7 +16,7 @@ import {
 	createCustomMessage,
 } from "../messages.ts";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.ts";
-import { completeSummarization, estimateTokens } from "./compaction.ts";
+import { completeSummarization, estimateTokens, getSummarizationFailure } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -79,7 +79,7 @@ export interface GenerateBranchSummaryOptions {
 	customInstructions?: string;
 	/** If true, customInstructions replaces the default prompt instead of being appended */
 	replaceInstructions?: boolean;
-	/** Tokens reserved for prompt + LLM response (default 16384) */
+	/** Tokens reserved when selecting branch history (default 16384) */
 	reserveTokens?: number;
 	/** Optional session stream function. Used to preserve SDK request behavior without mutating agent state. */
 	streamFn?: StreamFn;
@@ -161,7 +161,15 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 			return entry.message;
 
 		case "custom_message":
-			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
+			if (entry.modelVisible === false) return undefined;
+			return createCustomMessage(
+				entry.customType,
+				entry.content,
+				entry.display,
+				entry.details,
+				entry.timestamp,
+				entry.modelVisible,
+			);
 
 		case "branch_summary":
 			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
@@ -276,13 +284,21 @@ Use this EXACT format:
 ### Blocked
 - [Issues preventing progress, if any]
 
+## Errors & Failed Approaches
+- **[What was tried]**: [Why it failed, and the correction]
+- [If this branch was abandoned, why -- so the approach is not blindly retried]
+- [Or "(none)" if nothing failed]
+
 ## Key Decisions
 - **[Decision]**: [Brief rationale]
 
 ## Next Steps
 1. [What should happen next to continue this work]
+[ONLY steps the user actually asked for or explicitly approved. If the next step is unknown, say so rather than inventing one.]
 
-Keep each section concise. Preserve exact file paths, function names, and error messages.`;
+Record only what actually happened in this branch. If a section has no real content, write "(none)" rather than inventing plausible content. Preserve the user's instructions and corrections in their own words.
+
+Keep each section concise. Preserve exact file paths, function names, error messages, and key code identifiers verbatim.`;
 
 /**
  * Generate a summary of abandoned branch entries.
@@ -346,16 +362,20 @@ export async function generateBranchSummary(
 	// request behavior (timeouts, retries, attribution headers) stays consistent
 	// without running through agent state/events. Retried via completeSummarization
 	// so transient stream drops reuse the configured retry policy.
-	const context = { systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages };
-	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal, maxTokens: 2048 };
+	const context = normalizeContext({ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages });
+	const requestOptions: SimpleStreamOptions = { apiKey, headers, env, signal };
 	const response = await completeSummarization(model, context, requestOptions, streamFn, retry, callbacks);
 
 	// Check if aborted or errored
 	if (response.stopReason === "aborted") {
 		return { aborted: true };
 	}
-	if (response.stopReason === "error") {
-		return { error: response.errorMessage || "Summarization failed" };
+	const failure = getSummarizationFailure(response, "Branch summarization");
+	if (failure) {
+		return { error: failure };
+	}
+	if (response.content.some((block) => block.type === "toolCall")) {
+		return { error: "Branch summarization attempted to call a tool" };
 	}
 
 	let summary = contentText(response.content);

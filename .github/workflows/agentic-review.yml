@@ -1,0 +1,387 @@
+name: Agentic PR Review
+
+# Runs the three-stage agentic review (rusty-review correctness + code-craft-pr
+# craft/architecture + docs-freshness) on code PRs and posts ONE native GitHub
+# review (inline P0/P1 comments + summary), failing the check on any P0.
+#
+# This is the pi-mono (fork) port of my-pi's reviewer. Differences from my-pi:
+#   - pi-mono builds the `pi` binary in place (no "checkout pi fork" + symlink).
+#   - The reviewer's `actions` profile is built from my-pi@main SOURCE (checked
+#     out below) against the fork under test — never a frozen npm pin — so a
+#     bundled-extension source fix or a fork-core API change can't leave the
+#     reviewer booting a stale/incompatible profile. @valkyriweb/agentic-review
+#     (GitHub Packages) still provides the pipeline scripts.
+#
+# SECURITY — this uses `pull_request_target`, so it runs with repo secrets and a
+# writable token, and (in the review job) checks out PR HEAD code. That is unsafe
+# for untrusted contributors. Mitigation: the `review` job runs ONLY when the PR
+# author has collaborator write+ access (the `authorized` gate). Forks from
+# non-collaborators never reach it. Collaborator fork PRs run in advisory mode
+# (no commits/issues — we can't push to a fork head branch anyway).
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write       # push autofix commits to same-repo PR branches
+  pull-requests: write  # post the review + inline comments
+  issues: write         # code-craft-pr files Tier-3 issues
+  packages: read        # @leo-labs-ai/pi-* plus @valkyriweb/agentic-review from GitHub Packages
+
+concurrency:
+  group: agentic-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.scope.outputs.should_run }}
+      advisory_only: ${{ steps.scope.outputs.advisory_only }}
+      authorized: ${{ steps.auth.outputs.authorized }}
+    steps:
+      - name: Authorize author (collaborator write+)
+        id: auth
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const author = context.payload.pull_request.user.login;
+            if (author.endsWith('[bot]')) { core.setOutput('authorized', 'false'); return; }
+            let perm = null;
+            try {
+              const r = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner, repo: context.repo.repo, username: author,
+              });
+              perm = r.data.permission;
+            } catch { /* not a collaborator */ }
+            core.setOutput('authorized', ['admin', 'maintain', 'write'].includes(perm) ? 'true' : 'false');
+
+      - name: Decide scope (code changed? fork?)
+        id: scope
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            // Fork PRs degrade to advisory: a base-repo token can't push to a fork head.
+            core.setOutput('advisory_only', pr.head.repo.full_name !== pr.base.repo.full_name ? 'true' : 'false');
+            // Skip the changesets "Version Packages" branch.
+            if (pr.head.ref === 'changeset-release/main') { core.setOutput('should_run', 'false'); return; }
+            // Skip docs-only / version-bump PRs.
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: pr.number,
+            });
+            const isDocOrMeta = (p) =>
+              p.endsWith('.md') || p.startsWith('docs/') || p.startsWith('.changeset/') || p.endsWith('CHANGELOG.md');
+            const code = files.filter((f) => !isDocOrMeta(f.filename));
+            core.setOutput('should_run', code.length > 0 ? 'true' : 'false');
+
+  review:
+    needs: gate
+    # Always RUN (no job-level `if`) so the required `review` check always
+    # resolves. A required job skipped via job-level `if` stays Pending forever
+    # and BLOCKs docs/changeset-only or unauthorized PRs (the admin-merge trap).
+    # Heavy work is guarded per-step by RUN_REVIEW; on a no-code/unauthorized PR
+    # every step skips and the job still concludes success.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # GitHub Packages read auth for both organization and legacy user scopes. GITHUB_TOKEN cannot read
+      # user-owned restricted packages (E403), so use a classic read:packages PAT.
+      NODE_AUTH_TOKEN: ${{ secrets.GH_PACKAGES_TOKEN }}
+      RUN_REVIEW: ${{ needs.gate.outputs.should_run == 'true' && needs.gate.outputs.authorized == 'true' }}
+    steps:
+      - name: Checkout PR head
+        if: env.RUN_REVIEW == 'true'
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        if: env.RUN_REVIEW == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+      - if: env.RUN_REVIEW == 'true'
+        run: npm ci --ignore-scripts
+      - name: Build pi packages
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          # Mirror the root `npm run build` dependency order, with chord first.
+          # chord ships no committed dist/ and has only prepublishOnly (no
+          # prepare), so `npm ci` never builds it; packages/agent, protocol,
+          # client, server and coding-agent all import its type declarations.
+          # coding-agent additionally imports protocol/client/server, which
+          # `npm ci --ignore-scripts` leaves without a dist/ as well.
+          # Tolerant: skip packages absent from the PR head tree (e.g. protocol/
+          # client/server removed by the v1.3.0 sync).
+          for p in telemetry chord tui codemode mcp ai durable env agent protocol client server; do
+            if [ -f "packages/$p/package.json" ]; then
+              npm --prefix "packages/$p" run build
+            else
+              echo "skip packages/$p (not present)"
+            fi
+          done
+          npm --prefix packages/coding-agent run build:ts
+      # rusty-review --engine pi execs `pi` by name; CI only built the fork as a
+      # node entrypoint. Expose a `pi` shim on PATH so the Correctness stage runs
+      # the real engine instead of degrading to a manual diff review.
+      - name: Put pi on PATH (rusty-review --engine pi shim)
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          cat > "$HOME/.local/bin/pi" <<EOF
+          #!/usr/bin/env bash
+          exec node "$GITHUB_WORKSPACE/packages/coding-agent/dist/cli.js" "\$@"
+          EOF
+          chmod +x "$HOME/.local/bin/pi"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure GitHub Packages auth
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          # ${NODE_AUTH_TOKEN} is written LITERALLY into .npmrc on purpose — npm
+          # expands it from the environment at read time, so single quotes are
+          # correct here. Silence shellcheck's "expressions don't expand" warning.
+          # shellcheck disable=SC2016
+          printf '@leo-labs-ai:registry=https://npm.pkg.github.com\n@valkyriweb:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
+
+      - name: Install agentic-review pipeline (GitHub Packages)
+        if: env.RUN_REVIEW == 'true'
+        run: npm install --prefix "$RUNNER_TEMP/ar" @valkyriweb/agentic-review@0.1.0
+
+      # Skills (private) + bridge (private) — need a PAT with repo read.
+      - name: Checkout skills (agent-scripts)
+        if: env.RUN_REVIEW == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: valkyriweb/agent-scripts
+          path: agent-scripts
+          token: ${{ secrets.GH_CLONE_TOKEN }}
+      # rusty-review (the Correctness engine) lives in the valkyriweb/skills SoT,
+      # NOT in agent-scripts. agent-scripts HEAD ships `agent-skills/` (harness
+      # system prompts only) and no `skills/rusty-review/`, so the old
+      # `agent-scripts/skills/rusty-review/...` path resolved to nothing and the
+      # Correctness stage silently degraded to a manual diff pass (issue #318).
+      - name: Checkout skills SoT (rusty-review engine)
+        if: env.RUN_REVIEW == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: valkyriweb/skills
+          path: skills-sot
+          token: ${{ secrets.GH_CLONE_TOKEN }}
+      - name: Checkout claude-bridge
+        if: env.RUN_REVIEW == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: leo-labs-ai/pi-claude-bridge
+          path: pi-claude-bridge
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
+
+      # Detect the rusty-review engine across the SoT layouts instead of hardcoding
+      # one path, and FAIL LOUDLY if it is absent — a missing engine must break the
+      # required check, never silently pass as a manual review (issue #318).
+      - name: Resolve rusty-review engine
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          set -euo pipefail
+          CANDIDATES=(
+            "$GITHUB_WORKSPACE/skills-sot/rusty-review/scripts/rusty-review"
+            "$GITHUB_WORKSPACE/skills-sot/review/scripts/rusty-review"
+            "$GITHUB_WORKSPACE/agent-scripts/skills/rusty-review/scripts/rusty-review"
+            "$GITHUB_WORKSPACE/agent-scripts/agent-skills/rusty-review/scripts/rusty-review"
+          )
+          for c in "${CANDIDATES[@]}"; do
+            if [ -f "$c" ]; then
+              chmod +x "$c" || true
+              echo "RUSTY_REVIEW_BIN=$c" >> "$GITHUB_ENV"
+              echo "resolved rusty-review engine: $c"
+              exit 0
+            fi
+          done
+          echo "::error::rusty-review engine not found in any known location — Correctness stage cannot run. Searched: ${CANDIDATES[*]}"
+          exit 1
+
+      # Build the `actions` profile from my-pi@main SOURCE against the fork under
+      # test — not a frozen `npm:@valkyriweb/my-pi-actions@<pin>`. A pinned tarball
+      # bundles extensions frozen at publish time, so it skews two ways: a bundled
+      # extension fixed in source but not yet republished (the run-store drop), or a
+      # fork-core export it consumes being removed/renamed (createTaskOutput-
+      # ToolDefinition). Source can't predate itself and resolves against this fork,
+      # so both skew classes vanish and there is no pin to keep current.
+      - name: Checkout my-pi (actions profile source)
+        if: env.RUN_REVIEW == 'true'
+        uses: actions/checkout@v7
+        with:
+          repository: leo-labs-ai/my-pi
+          ref: main
+          path: my-pi
+          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
+      - name: Install my-pi workspace deps (extension imports must resolve)
+        if: env.RUN_REVIEW == 'true'
+        # Source extensions (pi-workflow etc.) import third-party + @valkyriweb
+        # deps; they must resolve from my-pi/node_modules at load time. The global
+        # ~/.npmrc configured above provides GitHub Packages auth. --ignore-scripts:
+        # pi loads the .ts extensions directly (jiti), so no build postinstall.
+        run: npm --prefix my-pi ci --ignore-scripts
+      - name: Stage pi agent config (bridge provider + actions profile source + skills)
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          mkdir -p "$HOME/.pi/agent"
+          cp "$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review/ci-models.json" "$HOME/.pi/agent/models.json"
+          # Load the actions profile's extension list minus native-tool-overrides
+          # and tool-search: they call fork extension APIs (pi.hooks, pi.harness,
+          # pi.getExtensionConfig, pi.tools deferral) that fork 1.0.x does not have,
+          # and the review does not use them (#591).
+          PROFILE="$GITHUB_WORKSPACE/my-pi/packages/my-pi-actions"
+          EXTENSIONS=$(jq -ec --arg base "$PROFILE/" \
+            '(.pi.extensions | if type == "array" then . else error("my-pi-actions package.json has no pi.extensions array") end)
+             | [.[] | select(test("(^|/)(native-tool-overrides|tool-search)(/|$)") | not) | $base + .]' \
+            "$PROFILE/package.json")
+          cat > "$HOME/.pi/agent/settings.json" <<EOF
+          {
+            "defaultProvider": "claude-bridge",
+            "defaultModel": "claude-opus-4-8",
+            "enabledModels": ["claude-bridge/*"],
+            "defaultTools": ["+Workflow"],
+            "extensions": $EXTENSIONS
+          }
+          EOF
+          # Check the staged list, so a manifest change or a bad filter cannot
+          # let the boot smoke pass without the Workflow tool.
+          STAGED=$(jq -c '.extensions' "$HOME/.pi/agent/settings.json")
+          echo "staged review extensions:"
+          jq -r '.[]' <<<"$STAGED"
+          if ! jq -e 'type == "array" and length > 0' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list is empty"; exit 1
+          fi
+          if jq -e 'any(.[]; test("native-tool-overrides|tool-search"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list still contains native-tool-overrides or tool-search"; exit 1
+          fi
+          if ! jq -e 'any(.[]; test("/pi-workflow/"))' <<<"$STAGED" >/dev/null; then
+            echo "::error::staged extension list lacks pi-workflow (the review's Workflow tool)"; exit 1
+          fi
+          while IFS= read -r ext; do
+            [ -f "$ext" ] || { echo "::error::staged extension not found: $ext"; exit 1; }
+          done < <(jq -r '.[]' <<<"$STAGED")
+          ln -sfn "$GITHUB_WORKSPACE/skills-sot" "$HOME/.pi/agent/skills"
+          # The extensions load in place from my-pi@main source (including the
+          # Workflow tool). Local paths need no `pi install`/download.
+
+      - name: Start claude-bridge sidecar
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          cd pi-claude-bridge
+          # The bridge repo intentionally has no committed lockfile (gitignored),
+          # so `npm ci` (which requires one) fails — use `npm install`.
+          npm install
+          printf '_BRIDGE_OAUTH_TOKEN=%s\n' '${{ secrets._BRIDGE_OAUTH_TOKEN }}' > .env
+          nohup npm start > /tmp/bridge.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9100/health >/dev/null; then echo "bridge up"; exit 0; fi
+            sleep 1
+          done
+          echo "bridge failed to start"; cat /tmp/bridge.log; exit 1
+
+      - name: Boot smoke (actions profile loads against this fork)
+        if: env.RUN_REVIEW == 'true'
+        # Fail loudly and specifically if the profile can't boot against this fork,
+        # instead of the cryptic "no review result produced" from a crashed pi.
+        run: |
+          # Explicit activation is smaller than adding discovery extensions: this
+          # reviewer always needs the same tool. Check the actual model loadout,
+          # not just the extension path or a model claiming it can use Workflow.
+          timeout 60 node --input-type=module <<'JS'
+          import assert from "node:assert/strict";
+          import { createAgentSession, SessionManager } from "./packages/coding-agent/dist/index.js";
+          const { session, extensionsResult } = await createAgentSession({
+            sessionManager: SessionManager.inMemory(),
+          });
+          try {
+            assert.deepEqual(extensionsResult.errors, [], "actions profile extension load errors");
+            const errors = [];
+            await session.bindExtensions({ onError: (error) => errors.push(error) });
+            assert.deepEqual(errors, [], "actions profile startup errors");
+            const active = session.getActiveToolNames();
+            console.log("review model tools:", active.join(", "));
+            assert.ok(active.includes("Workflow"), "Workflow is not declared to the review model");
+          } finally {
+            session.dispose();
+          }
+          JS
+          # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
+          set -e
+          if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
+            STATUS=0
+          else
+            STATUS=$?
+          fi
+          echo "$OUT"
+          if [ "$STATUS" -ne 0 ]; then
+            echo "::error::boot smoke CLI failed (exit $STATUS) — see output above"
+            exit "$STATUS"
+          fi
+          if printf '%s' "$OUT" | grep -qiE "Failed to load extension|is not a function"; then
+            echo "::error::actions profile failed to load against this fork (extension/API skew) — see output above"; exit 1
+          fi
+          if ! printf '%s' "$OUT" | grep -q "READY"; then
+            echo "::error::boot smoke got no model reply (bridge/model issue) — see output above"; exit 1
+          fi
+          echo "boot smoke OK"
+
+      - name: Configure git identity (autofix commits)
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          git config user.name "rusty-review[bot]"
+          git config user.email "rusty-review@users.noreply.github.com"
+
+      - name: Run agentic review
+        if: env.RUN_REVIEW == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          ADVISORY: ${{ needs.gate.outputs.advisory_only }}
+        run: |
+          mkdir -p /tmp/agentic-review
+          AR="$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review"
+          ARGS=$(jq -nc \
+            --argjson pr "$PR_NUMBER" \
+            --arg base "origin/$BASE_REF" \
+            --arg root "$GITHUB_WORKSPACE" \
+            --arg rusty "$RUSTY_REVIEW_BIN" \
+            --arg poster "$AR/post-review.mjs" \
+            --argjson advisory "$([ "$ADVISORY" = "true" ] && echo true || echo false)" \
+            '{pr:$pr, base:$base, repoRoot:$root, rustyReviewBin:$rusty, posterScript:$poster, advisoryOnly:$advisory, blockPriority:0}')
+          echo "workflow args: $ARGS"
+          # Bound the run: the poster writes result.json before pi's final turn,
+          # and pi -p has been seen to linger after printing, so a timeout can't
+          # lose the gate result — the Enforce step reads result.json regardless.
+          timeout 1500 node packages/coding-agent/dist/cli.js -p \
+            "Use the Workflow tool to run the workflow at scriptPath \"$AR/pr-review-gate.mjs\" with args $ARGS . Output ONLY the workflow's returned JSON." \
+            2>&1 | tee /tmp/agentic-review/pi.log || true
+
+      - name: Push autofix commits (same-repo only)
+        if: env.RUN_REVIEW == 'true' && needs.gate.outputs.advisory_only == 'false'
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ -n "$(git log "origin/$BASE_REF..HEAD" --oneline 2>/dev/null)" ]; then
+            git push origin "HEAD:$HEAD_REF" || echo "nothing to push / push rejected"
+          fi
+
+      - name: Enforce gate (fail on P0)
+        if: env.RUN_REVIEW == 'true'
+        run: |
+          RESULT=/tmp/agentic-review/result.json
+          if [ ! -f "$RESULT" ]; then
+            echo "::error::no review result produced — see pi.log"; tail -50 /tmp/agentic-review/pi.log || true; exit 1
+          fi
+          cat "$RESULT"
+          if [ "$(jq -r '.blocking' "$RESULT")" = "true" ]; then
+            echo "::error::BLOCKING findings: $(jq -r '.blockingReasons | join("; ")' "$RESULT")"
+            exit 1
+          fi
+          echo "no blocking findings"

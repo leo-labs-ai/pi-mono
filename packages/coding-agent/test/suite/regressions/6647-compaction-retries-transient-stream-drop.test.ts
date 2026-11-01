@@ -1,5 +1,5 @@
-import type { StreamFn } from "@earendil-works/pi-agent-core";
-import { type AssistantMessage, createAssistantMessageEventStream, fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { StreamFn } from "@leo-labs-ai/pi-agent-core";
+import { type AssistantMessage, createAssistantMessageEventStream, fauxAssistantMessage } from "@leo-labs-ai/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "../harness.ts";
 
@@ -99,7 +99,7 @@ describe("#6647 compaction retries transient summarization failures", () => {
 		const result = await harness.session.compact();
 
 		expect(result.summary).toContain("recovered summary");
-		expect(getCallCount()).toBe(3); // 1 initial + 2 retries
+		expect(getCallCount()).toBe(3); // 1 prefix-summary attempt + 2 retries
 		const starts = harness.eventsOfType("summarization_retry_scheduled");
 		const ends = harness.eventsOfType("summarization_retry_finished");
 		expect(starts).toHaveLength(2);

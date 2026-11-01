@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../src/types.ts";
 import { isContextOverflow, isRecoverableLength } from "../src/utils/overflow.ts";
 
-function createErrorMessage(errorMessage: string): AssistantMessage {
+function createErrorMessage(errorMessage: string, provider = "ollama"): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
 		api: "openai-completions",
-		provider: "ollama",
+		provider,
 		model: "qwen3.5:35b",
 		usage: {
 			input: 0,
@@ -30,9 +30,90 @@ function createErrorMessage(errorMessage: string): AssistantMessage {
 }
 
 describe("isContextOverflow", () => {
+	// Captured from gemini-2.5-flash (2026-10) when the live context-overflow test exhausted the
+	// per-minute input-token quota. It names "input_token_count" and "exceeded" but is a 429, not
+	// an overflow; treating it as one would compact a session that only needs to wait.
+	it("does not treat Gemini 429 RESOURCE_EXHAUSTED input-token quota as overflow", () => {
+		const errorMessage = JSON.stringify({
+			error: {
+				message: JSON.stringify({
+					error: {
+						code: 429,
+						message:
+							"You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_paid_tier_2_input_token_count, limit: 3000000, model: gemini-2.5-flash\nPlease retry in 27.636918293s.",
+						status: "RESOURCE_EXHAUSTED",
+					},
+				}),
+				code: 429,
+				status: "",
+			},
+		});
+		expect(isContextOverflow(createErrorMessage(errorMessage, "google"), 1048576)).toBe(false);
+	});
+
+	it("detects the current Gemini overflow message, which no longer includes the token count", () => {
+		const errorMessage = "The input token count exceeds the maximum number of tokens allowed (1048576).";
+		expect(isContextOverflow(createErrorMessage(errorMessage, "google"), 1048576)).toBe(true);
+	});
+
+	// The 413 pattern is provider-agnostic, so a single Copilot-prefixed string and a single
+	// non-Copilot string cover both branches of the regex; the bare forms cover the raw SDK output.
+	it.each([
+		'github-copilot API error (413): {"message":"failed to parse request","code":""}', // formatProviderError prefix
+		"custom-provider API error (413): Payload Too Large", // any provider, not just Copilot
+		'413 {"error":{"message":"failed to parse request","code":""}}', // raw SDK error
+		"413", // bare status at end of string
+	])("detects provider-independent request-size overflow: %s", (errorMessage) => {
+		// The request can exceed the byte limit even with zero usage and a large token window.
+		expect(isContextOverflow(createErrorMessage(errorMessage), 1_000_000)).toBe(true);
+		expect(isContextOverflow(createErrorMessage(errorMessage))).toBe(true);
+	});
+
+	it.each([
+		'github-copilot API error (400): {"message":"failed to parse request","code":""}', // other status, same body
+		"custom-provider API error (429): Too many requests",
+		'github-copilot API error (400): {"message":"failed to parse request: invalid value 413"}', // 413 in the body only
+		"custom-provider API error (400): upstream mentioned OpenAI API error (413): invalid input", // 413 not at start
+		"custom-provider API error (4130): invalid input", // 413 is a prefix, not the status
+		"4130 failed to parse request", // bare 4130 is not 413
+	])("does not mistake unrelated errors for request-size overflow: %s", (errorMessage) => {
+		expect(isContextOverflow(createErrorMessage(errorMessage))).toBe(false);
+	});
+
+	it("limits HTTP-status matching to failed responses", () => {
+		const message = createErrorMessage('OpenAI API error (413): {"message":"failed to parse request"}');
+		expect(isContextOverflow({ ...message, stopReason: "aborted" })).toBe(false);
+		expect(isContextOverflow({ ...message, stopReason: "stop" })).toBe(false);
+	});
+
 	it("detects explicit Ollama prompt-too-long errors", () => {
 		const message = createErrorMessage("400 `prompt too long; exceeded max context length by 100918 tokens`");
 		expect(isContextOverflow(message, 32768)).toBe(true);
+	});
+
+	it("detects Anthropic input-plus-max_tokens context limit errors", () => {
+		// Returned when the prompt fits but prompt + max_tokens does not; it is context
+		// pressure and must route to compaction like "prompt is too long".
+		expect(
+			isContextOverflow(
+				createErrorMessage(
+					"input length and `max_tokens` exceed context limit: 196721 + 8000 > 200000, decrease input length or `max_tokens` and try again",
+					"anthropic",
+				),
+			),
+		).toBe(true);
+	});
+
+	it("detects z.ai prompt-too-long errors", () => {
+		// Regression for #9805.
+		const message = createErrorMessage('400 {"code":"1261","message":"Prompt too long"}', "zai");
+		expect(isContextOverflow(message, 1048576)).toBe(true);
+	});
+
+	it("detects z.ai CN endpoint prompt-exceeds-max-length errors", () => {
+		// Regression for #10208.
+		const message = createErrorMessage('400 {"code":"1261","message":"Prompt exceeds max length"}', "zai");
+		expect(isContextOverflow(message, 1048576)).toBe(true);
 	});
 
 	it("detects Together AI context length errors", () => {
@@ -78,6 +159,14 @@ describe("isContextOverflow", () => {
 	it("does not treat generic non-overflow Ollama errors as overflow", () => {
 		const message = createErrorMessage("500 `model runner crashed unexpectedly`");
 		expect(isContextOverflow(message, 32768)).toBe(false);
+	});
+
+	it("only treats bodyless 400 errors as overflow for Cerebras", () => {
+		// Regression for #9482. HTTP 413 is a request-size error for every provider,
+		// but a bodyless HTTP 400 is only known to indicate overflow for Cerebras.
+		const errorMessage = "400 status code (no body)";
+		expect(isContextOverflow(createErrorMessage(errorMessage, "cerebras"), 131072)).toBe(true);
+		expect(isContextOverflow(createErrorMessage(errorMessage, "opencode-go"), 1000000)).toBe(false);
 	});
 
 	it("does not treat Bedrock throttling 'Too many tokens' as overflow", () => {
@@ -137,7 +226,7 @@ describe("isContextOverflow", () => {
 			cacheRead: 1048512,
 			output: 0,
 			provider: "xiaomi",
-			model: "mimo-v2.5-pro",
+			model: "mimo-v2.6-pro",
 		});
 		expect(isContextOverflow(message, 1048576)).toBe(true);
 	});

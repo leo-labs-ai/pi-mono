@@ -1,0 +1,300 @@
+name: Upstream Sync
+
+# Checks for new commits on the upstream fork daily and surfaces them as a PR.
+# NEVER auto-merges to main — Luke's rule: fork divergence is intentional; always
+# cherry-pick upstream changes explicitly after review.
+#
+# Behavior:
+#   - Runs daily at 06:00 SAST (04:00 UTC).
+#   - If fork is up-to-date → no-op (notices logged, no PR).
+#   - If upstream has new commits → creates/refreshes branch sync/upstream-YYYY-MM-DD,
+#     attempts git merge --no-ff. Clean merge → ready-for-review PR. Conflicts → draft PR
+#     with conflict report + manual resolution instructions.
+#   - Idempotent: re-running on the same day reuses the same branch and updates the PR.
+#   - Stale same-day-less sync branches without an open PR are deleted on each run.
+#
+# Dry-run via workflow_dispatch:
+#   - Navigate to Actions → Upstream Sync → Run workflow.
+#   - Set "dry_run" input to "true".
+#   - The job reports what it would do (commits behind, merge outcome) but skips
+#     the push and PR steps entirely. Safe to run at any time.
+#
+# Secrets:
+#   - UPSTREAM_SYNC_TOKEN (optional): fine-grained PAT with contents:write +
+#     pull-requests:write. Falls back to GITHUB_TOKEN when absent.
+#
+# Labels expected on the repo (create if missing):
+#   gh label create upstream-sync   --color 0075ca --description "Automated upstream sync PR"
+#   gh label create needs-conflict-resolution --color e4e669 --description "Sync PR has merge conflicts"
+#
+# Registry / owner routine: agent-system/FORKS.md
+# CTO agent triage: Multica home workspace (daily sync-PR sweep).
+
+on:
+  schedule:
+    # Daily 06:00 SAST = 04:00 UTC.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — report diff but skip push and PR creation"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  UPSTREAM_REPO: earendil-works/pi-mono
+  UPSTREAM_BRANCH: main
+  FORK_BRANCH: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch upstream "${UPSTREAM_BRANCH}" --quiet
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          BEHIND=$(git rev-list --count "origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH}")
+          echo "behind=${BEHIND}" >> "$GITHUB_OUTPUT"
+          echo "Behind upstream by ${BEHIND} commits."
+          if [ "${BEHIND}" = "0" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stop if up-to-date
+        if: steps.check.outputs.skip == 'true'
+        run: echo "::notice::Fork is up to date with ${UPSTREAM_REPO}@${UPSTREAM_BRANCH}. Nothing to do."
+
+      # Dry-run: report diff summary and exit cleanly without touching the remote.
+      - name: Dry-run report
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run == 'true'
+        run: |
+          BEHIND="${{ steps.check.outputs.behind }}"
+          echo "::notice::DRY RUN — would open/refresh sync PR for ${BEHIND} upstream commit(s)."
+          echo ""
+          echo "=== Commits that would be merged ==="
+          git log --oneline "origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH}"
+          echo ""
+          echo "=== Diffstat ==="
+          git diff --stat "origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH}" | tail -5
+          echo ""
+          echo "Dry run complete. No branches pushed, no PRs opened."
+
+      - name: Clean up stale sync branches
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+
+          TODAY_BRANCH="sync/upstream-$(date -u +%Y-%m-%d)"
+          git ls-remote --heads origin "sync/upstream-*" |
+            while read -r _ REF; do
+              BRANCH="${REF#refs/heads/}"
+              if [ "${BRANCH}" = "${TODAY_BRANCH}" ]; then
+                continue
+              fi
+
+              OPEN_PR=$(gh pr list --head "${BRANCH}" --state open --json number -q '.[0].number')
+              if [ -n "${OPEN_PR}" ]; then
+                echo "::notice::Keeping ${BRANCH}; open PR #${OPEN_PR}."
+                continue
+              fi
+
+              git push origin --delete "${BRANCH}"
+              echo "::notice::Deleted stale sync branch ${BRANCH}."
+            done
+
+      - name: Configure git author
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create sync branch and attempt merge
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        id: merge
+        run: |
+          set -euo pipefail
+          DATE=$(date -u +%Y-%m-%d)
+          BRANCH="sync/upstream-${DATE}"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+          # Reuse same-day branch when it still exists (idempotent re-runs).
+          if git ls-remote --exit-code origin "refs/heads/${BRANCH}" >/dev/null 2>&1; then
+            echo "::notice::Sync branch ${BRANCH} already exists — refreshing."
+            if git fetch origin "${BRANCH}"; then
+              git checkout -B "${BRANCH}" "origin/${BRANCH}"
+            else
+              echo "::warning::Sync branch ${BRANCH} disappeared while refreshing; recreating from ${FORK_BRANCH}."
+              git checkout -B "${BRANCH}" "origin/${FORK_BRANCH}"
+            fi
+          else
+            git checkout -B "${BRANCH}" "origin/${FORK_BRANCH}"
+          fi
+
+          # Build commit log and diffstat for the PR body before attempting merge.
+          # Limit commit count natively (-n) instead of piping to `head`: under
+          # `set -o pipefail`, `git log | head -N` makes git exit 141 (SIGPIPE) once
+          # head closes the pipe after N lines, which aborts the whole step.
+          COMMIT_LOG=$(git log --oneline -n 40 "origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH}")
+          BEHIND="${{ steps.check.outputs.behind }}"
+          if [ "${BEHIND}" -gt 40 ]; then
+            COMMIT_LOG="${COMMIT_LOG}"$'\n'"… and $((BEHIND - 40)) more upstream commit(s) not shown (newest 40 listed)"
+          fi
+          DIFFSTAT=$(git diff --stat "origin/${FORK_BRANCH}..upstream/${UPSTREAM_BRANCH}" | tail -5)
+          {
+            echo "commit_log<<EOF"
+            echo "${COMMIT_LOG}"
+            echo "EOF"
+            echo "diffstat<<EOF"
+            echo "${DIFFSTAT}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if git merge --no-ff --no-edit "upstream/${UPSTREAM_BRANCH}"; then
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Clean merge."
+          else
+            # Capture conflicted paths, abort, mark draft.
+            # SIGPIPE guard scoped to the producer only: `head` closing the
+            # pipe early (>30 conflicted paths) must not fail the step under
+            # `set -o pipefail`, while the rest of the pipeline's status is no
+            # longer swallowed by a trailing `|| true`.
+            CONFLICTS=$({ git diff --name-only --diff-filter=U || true; } | head -30)
+            echo "::warning::Merge conflicts detected."
+            git merge --abort
+            # Reset to fork main and add an empty marker commit so GitHub can open a draft PR.
+            git checkout -B "${BRANCH}" "origin/${FORK_BRANCH}"
+            git commit --allow-empty -m "chore: mark upstream sync conflicts"
+            {
+              echo "draft=true"
+              echo "conflicts<<EOF"
+              echo "${CONFLICTS}"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+          git push origin "${BRANCH}" --force-with-lease
+
+      - name: Open or update PR
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          BRANCH: ${{ steps.merge.outputs.branch }}
+          DRAFT: ${{ steps.merge.outputs.draft }}
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+          BEHIND: ${{ steps.check.outputs.behind }}
+          COMMIT_LOG: ${{ steps.merge.outputs.commit_log }}
+          DIFFSTAT: ${{ steps.merge.outputs.diffstat }}
+        run: |
+          set -e
+
+          TITLE="sync: ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} → ${FORK_BRANCH}"
+
+          if [ "${DRAFT}" = "true" ]; then
+            BODY=$(cat <<EOF
+          ⚠️ **Conflict detected** during automated sync from \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\`.
+
+          - Commits behind upstream: ${BEHIND}
+          - Conflicted paths:
+          \`\`\`
+          ${CONFLICTS}
+          \`\`\`
+
+          Resolve manually:
+          \`\`\`bash
+          git fetch origin ${BRANCH}
+          git checkout ${BRANCH}
+          git fetch upstream ${UPSTREAM_BRANCH}
+          git merge upstream/${UPSTREAM_BRANCH}
+          # resolve conflicts, then:
+          git push origin ${BRANCH}
+          \`\`\`
+
+          **Do not merge this PR until conflicts are resolved.**
+          Registry: \`agent-system/FORKS.md\`.
+          EOF
+          )
+          else
+            BODY=$(cat <<EOF
+          Automated daily sync from \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\`.
+
+          - Commits pulled: ${BEHIND}
+          - Strategy: \`git merge --no-ff\` (preserves fork lineage)
+
+          ### Upstream commits
+          \`\`\`
+          ${COMMIT_LOG}
+          \`\`\`
+
+          ### Diffstat
+          \`\`\`
+          ${DIFFSTAT}
+          \`\`\`
+
+          ### Checklist
+          - [ ] Warden review (when runner is online)
+          - [ ] CTO agent triage
+          - [ ] Luke review + explicit merge (divergence is intentional — never auto-merge)
+
+          Registry: \`agent-system/FORKS.md\`.
+          EOF
+          )
+          fi
+
+          # Find existing open PR for this branch, or create one.
+          EXISTING=$(gh pr list --head "${BRANCH}" --state open --json number -q '.[0].number')
+          if [ -n "${EXISTING}" ]; then
+            gh pr edit "${EXISTING}" --title "${TITLE}" --body "${BODY}"
+            echo "::notice::Updated existing PR #${EXISTING}."
+          else
+            DRAFT_JSON=false
+            [ "${DRAFT}" = "true" ] && DRAFT_JSON=true
+            PR_JSON=$(gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f base="${FORK_BRANCH}" \
+              -f head="${BRANCH}" \
+              -f title="${TITLE}" \
+              -f body="${BODY}" \
+              -F draft="${DRAFT_JSON}")
+            PR_URL=$(echo "${PR_JSON}" | jq -r '.html_url')
+            PR_NUM=$(echo "${PR_JSON}" | jq -r '.number')
+            echo "::notice::Opened ${PR_URL}"
+            LABELS='["upstream-sync"]'
+            [ "${DRAFT}" = "true" ] && LABELS='["upstream-sync","needs-conflict-resolution"]'
+            # Best-effort label add (skip silently if labels don't exist yet).
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/issues/${PR_NUM}/labels" \
+              --input - <<<"{\"labels\":${LABELS}}" 2>/dev/null || \
+              echo "::warning::Could not add labels (may not exist). Run: gh label create upstream-sync --color 0075ca && gh label create needs-conflict-resolution --color e4e669"
+          fi
+
+      # Warden review — placeholder; activate once the valkyriweb self-hosted runner is
+      # registered. See FORKS.md § Runner topology.
+      # Uncomment and wire WARDEN_ANTHROPIC_API_KEY when runner is ready.
+      #
+      # - name: Warden review
+      #   if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true' && steps.merge.outputs.draft != 'true'
+      #   env:
+      #     ANTHROPIC_API_KEY: ${{ secrets.WARDEN_ANTHROPIC_API_KEY }}
+      #     BRANCH: ${{ steps.merge.outputs.branch }}
+      #   run: |
+      #     # warden-cli review --pr-branch "${BRANCH}" --repo "${GITHUB_REPOSITORY}"
+      #     echo "::notice::Warden review pending runner registration."

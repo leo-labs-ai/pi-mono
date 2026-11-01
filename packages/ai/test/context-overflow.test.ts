@@ -30,9 +30,11 @@ const LOREM_IPSUM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Se
 
 // Generate a string that will exceed the context window
 // Using chars/4 as token estimate (works better with varied text than repeated chars)
-function generateOverflowContent(contextWindow: number): string {
+// charsPerToken defaults to a deliberately generous 6 (chars/4 estimate x 1.5 margin).
+// Pass a measured ratio for providers whose quota is charged on input tokens.
+function generateOverflowContent(contextWindow: number, charsPerToken = 4 * 1.5): string {
 	const targetTokens = contextWindow + 10000; // Exceed by 10k tokens
-	const targetChars = targetTokens * 4 * 1.5;
+	const targetChars = targetTokens * charsPerToken;
 	const repetitions = Math.ceil(targetChars / LOREM_IPSUM.length);
 	return LOREM_IPSUM.repeat(repetitions);
 }
@@ -48,8 +50,8 @@ interface OverflowResult {
 	response: AssistantMessage;
 }
 
-async function testContextOverflow(model: Model<any>, apiKey: string): Promise<OverflowResult> {
-	const overflowContent = generateOverflowContent(model.contextWindow);
+async function testContextOverflow(model: Model<any>, apiKey: string, charsPerToken?: number): Promise<OverflowResult> {
+	const overflowContent = generateOverflowContent(model.contextWindow, charsPerToken);
 
 	const context: Context = {
 		systemPrompt: "You are a helpful assistant.",
@@ -76,6 +78,11 @@ async function testContextOverflow(model: Model<any>, apiKey: string): Promise<O
 		hasUsageData,
 		response,
 	};
+}
+
+// Google's per-minute quota error: HTTP 429 with status RESOURCE_EXHAUSTED.
+function isGeminiQuotaExhausted(errorMessage: string | undefined): boolean {
+	return !!errorMessage && /RESOURCE_EXHAUSTED/.test(errorMessage) && /\b429\b/.test(errorMessage);
 }
 
 function logResult(result: OverflowResult) {
@@ -187,7 +194,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!hasAzureOpenAICredentials())("Azure OpenAI Responses", () => {
 		it("gpt-4o-mini - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("azure-openai-responses", "gpt-4o-mini");
+			const model = getModel("azure", "gpt-4o-mini");
 			const result = await testContextOverflow(model, process.env.AZURE_OPENAI_API_KEY!);
 			logResult(result);
 
@@ -203,10 +210,22 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google", () => {
-		it("gemini-2.5-flash - should detect overflow via isContextOverflow", async () => {
+		it("gemini-2.5-flash - should detect overflow via isContextOverflow", async (ctx) => {
 			const model = getModel("google", "gemini-2.5-flash");
-			const result = await testContextOverflow(model, process.env.GEMINI_API_KEY!);
+			// Gemini counts this lorem text at ~5.31 chars/token (countTokens API). Rejected
+			// overflow requests still consume the per-minute input-token quota (3M on paid
+			// tier 2), so the generic 6 chars/token margin (~1.2M tokens/request) made
+			// back-to-back runs hit 429 RESOURCE_EXHAUSTED. 5.5 sends ~1.1M tokens: still
+			// ~40k over the 1,048,576 window, with less quota per run.
+			const result = await testContextOverflow(model, process.env.GEMINI_API_KEY!, 5.5);
 			logResult(result);
+
+			if (isGeminiQuotaExhausted(result.errorMessage)) {
+				// Transient provider quota, not an overflow answer. The detector must still
+				// refuse to call it an overflow; then report the run as skipped, not passed.
+				expect(isContextOverflow(result.response, model.contextWindow)).toBe(false);
+				ctx.skip("Gemini returned 429 RESOURCE_EXHAUSTED (input-token quota); overflow not exercised");
+			}
 
 			expect(result.stopReason).toBe("error");
 			expect(result.errorMessage).toMatch(/input token count.*exceeds the maximum/i);
@@ -228,9 +247,9 @@ describe("Context overflow error handling", () => {
 
 	describe("OpenAI Codex (OAuth)", () => {
 		it.skipIf(!openaiCodexToken)(
-			"gpt-5.5 - should detect overflow via isContextOverflow",
+			"gpt-5.6-sol - should detect overflow via isContextOverflow",
 			async () => {
-				const model = getModel("openai-codex", "gpt-5.5");
+				const model = getModel("openai-codex", "gpt-5.6-sol");
 				const result = await testContextOverflow(model, openaiCodexToken!);
 				logResult(result);
 
@@ -338,8 +357,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together AI", () => {
-		it("Kimi-K2.6 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("together", "moonshotai/Kimi-K2.6");
+		it("Kimi-K3 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("together", "moonshotai/Kimi-K3");
 			const result = await testContextOverflow(model, process.env.TOGETHER_API_KEY!);
 			logResult(result);
 
@@ -420,8 +439,8 @@ describe("Context overflow error handling", () => {
 		// Xiaomi silently truncates oversized input to fill the context window exactly,
 		// then returns finish_reason "length" with output=0 (no room left to generate).
 		// This is a detectable overflow signal but uses stopReason "length" rather than "error".
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_API_KEY!);
 			logResult(result);
 
@@ -432,8 +451,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY)("Xiaomi MiMo Token Plan (CN)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-cn", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-cn", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_CN_API_KEY!);
 			logResult(result);
 
@@ -444,8 +463,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY)("Xiaomi MiMo Token Plan (AMS)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-ams", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-ams", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_AMS_API_KEY!);
 			logResult(result);
 
@@ -456,8 +475,8 @@ describe("Context overflow error handling", () => {
 	});
 
 	describe.skipIf(!process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY)("Xiaomi MiMo Token Plan (SGP)", () => {
-		it("mimo-v2.5-pro - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("xiaomi-token-plan-sgp", "mimo-v2.5-pro");
+		it("mimo-v2.6-pro - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("xiaomi-token-plan-sgp", "mimo-v2.6-pro");
 			const result = await testContextOverflow(model, process.env.XIAOMI_TOKEN_PLAN_SGP_API_KEY!);
 			logResult(result);
 
@@ -540,8 +559,8 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter", () => {
 		// Anthropic backend
-		it("anthropic/claude-sonnet-4 via OpenRouter - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("openrouter", "anthropic/claude-sonnet-4");
+		it("anthropic/claude-sonnet-4.5 via OpenRouter - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("openrouter", "anthropic/claude-sonnet-4.5");
 			const result = await testContextOverflow(model, process.env.OPENROUTER_API_KEY!);
 			logResult(result);
 
@@ -563,7 +582,7 @@ describe("Context overflow error handling", () => {
 
 		// Mistral backend
 		it("mistralai/mistral-large-2512 via OpenRouter - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("openrouter", "mistralai/mistral-large-2512");
+			const model = getModel("openrouter", "mistralai/mistral-large");
 			const result = await testContextOverflow(model, process.env.OPENROUTER_API_KEY!);
 			logResult(result);
 

@@ -1,11 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
+import { setKeybindings, type TUI } from "@leo-labs-ai/pi-tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../../../src/core/auth-storage.ts";
 import { KeybindingsManager } from "../../../src/core/keybindings.ts";
-import { SettingsManager } from "../../../src/core/settings-manager.ts";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
@@ -26,6 +25,18 @@ function observeRefreshRender(): { tui: TUI; renderedAfterRefresh: Promise<void>
 		} as unknown as TUI,
 		renderedAfterRefresh,
 	};
+}
+
+/**
+ * Filter the selector to one query and render it. Ambient provider credentials (for example a
+ * GEMINI_API_KEY in the developer or CI environment) add their built-in models to the list, which
+ * can push the models.json entry below the visible rows. Searching keeps the assertion independent
+ * of whichever other providers happen to be configured.
+ */
+function renderSearch(selector: ModelSelectorComponent, query: string): string {
+	selector.getSearchInput().setValue("");
+	for (const char of query) selector.handleInput(char);
+	return stripAnsi(selector.render(120).join("\n"));
 }
 
 function modelsJson(provider: string, model: string): Record<string, unknown> {
@@ -69,7 +80,6 @@ describe("issue #6999 models.json hot reload", () => {
 		const selector = new ModelSelectorComponent(
 			tui,
 			undefined,
-			SettingsManager.inMemory(),
 			modelRuntime,
 			[],
 			() => {},
@@ -77,8 +87,7 @@ describe("issue #6999 models.json hot reload", () => {
 		);
 
 		await renderedAfterRefresh;
-		const rendered = stripAnsi(selector.render(120).join("\n"));
-		expect(rendered).toContain("new-model [new-provider]");
-		expect(rendered).not.toContain("old-model [old-provider]");
+		expect(renderSearch(selector, "new-model")).toContain("new-model [new-provider]");
+		expect(renderSearch(selector, "old-model")).not.toContain("old-model [old-provider]");
 	});
 });

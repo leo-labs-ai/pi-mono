@@ -15,11 +15,20 @@ export default defineConfig({
 		silent: "passed-only",
 	},
 	resolve: {
+		conditions: ["source"],
 		alias: [
+			{ find: /^@leo-labs-ai\/pi-telemetry$/, replacement: telemetrySrcIndex },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
-			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@leo-labs-ai\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@leo-labs-ai\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@leo-labs-ai\/pi-agent-core$/, replacement: agentSrcIndex },
 			{ find: /^@earendil-works\/pi-ai$/, replacement: aiSrcIndex },
 			{ find: /^@earendil-works\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@earendil-works\/pi-agent-core$/, replacement: agentSrcIndex },
+			{ find: /^@mariozechner\/pi-ai$/, replacement: aiSrcIndex },
+			{ find: /^@mariozechner\/pi-ai\/compat$/, replacement: aiSrcCompat },
+			{ find: /^@mariozechner\/pi-agent-core$/, replacement: agentSrcIndex },
 		],
 	},
+	ssr: { resolve: { conditions: ["source"] } },
 });

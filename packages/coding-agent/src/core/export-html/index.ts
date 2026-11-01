@@ -1,4 +1,4 @@
-import type { AgentState } from "@earendil-works/pi-agent-core";
+import type { AgentState } from "@leo-labs-ai/pi-agent-core";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
@@ -146,6 +146,7 @@ function generateHtml(sessionData: SessionData, themeName?: string): string {
 	const templateCss = readFileSync(join(templateDir, "template.css"), "utf-8");
 	const templateJs = readFileSync(join(templateDir, "template.js"), "utf-8");
 	const markedJs = readFileSync(join(templateDir, "vendor", "marked.min.js"), "utf-8");
+	const markedCjkFriendlyJs = readFileSync(join(templateDir, "vendor", "marked-cjk-friendly.min.js"), "utf-8");
 	const hljsJs = readFileSync(join(templateDir, "vendor", "highlight.min.js"), "utf-8");
 
 	const themeVars = generateThemeVars(themeName);
@@ -171,6 +172,7 @@ function generateHtml(sessionData: SessionData, themeName?: string): string {
 		.replace("{{JS}}", templateJs)
 		.replace("{{SESSION_DATA}}", sessionDataBase64)
 		.replace("{{MARKED_JS}}", markedJs)
+		.replace("{{MARKED_CJK_FRIENDLY_JS}}", markedCjkFriendlyJs)
 		.replace("{{HIGHLIGHT_JS}}", hljsJs);
 }
 

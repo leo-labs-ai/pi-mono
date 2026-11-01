@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# install-mini-pi-source — source-tarball install for pi-mono-fork.
+#
+# Fallback path for hosts where the bun-compiled binary tarball doesn't
+# run (currently macOS <16 / Sequoia and earlier, due to a
+# `bun build --compile` packaging issue with proxy-from-env). Mirrors
+# the multica-runtime Dockerfile's build approach.
+#
+# Pulls the GitHub source tarball for a fork tag, installs deps,
+# builds, and creates ~/.local/bin/pi as a thin `node dist/cli.js`
+# wrapper.
+#
+# Usage:
+#   install-mini-pi-source                   # latest fork release
+#   install-mini-pi-source v0.74.0-valk.2    # specific tag
+#
+# Requires: curl, tar, node + npm, ~5GB disk for node_modules.
+# Idempotent: re-running with same tag is a no-op once the build is in place.
+set -euo pipefail
+
+PI_REPO="${PI_REPO:-leo-labs-ai/pi-mono}"
+PI_TAG="${1:-}"
+PI_PREFIX="${PI_PREFIX:-$HOME/.local}"
+PI_SHARE="$PI_PREFIX/share/pi"
+PI_BIN="$PI_PREFIX/bin/pi"
+
+log() { printf '[install-mini-pi-source] %s\n' "$*"; }
+die() { printf '[install-mini-pi-source] error: %s\n' "$*" >&2; exit 1; }
+
+command -v curl >/dev/null || die "curl not found in PATH"
+command -v tar  >/dev/null || die "tar not found in PATH"
+command -v node >/dev/null || die "node not found in PATH (fnm/nvm/system)"
+command -v npm  >/dev/null || die "npm not found in PATH"
+
+# Resolve tag — default to latest release on the fork.
+if [ -z "$PI_TAG" ]; then
+  PI_TAG="$(curl -fsSL "https://api.github.com/repos/$PI_REPO/releases/latest" \
+    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+  [ -n "$PI_TAG" ] || die "no latest release found on $PI_REPO"
+  log "resolved latest tag: $PI_TAG"
+fi
+
+DEST="$PI_SHARE/$PI_TAG-source"
+ENTRY="$DEST/packages/coding-agent/dist/cli.js"
+
+# Idempotency.
+if [ -f "$ENTRY" ]; then
+  log "tag $PI_TAG already built at $DEST (reusing)"
+else
+  log "downloading source tarball for $PI_REPO@$PI_TAG"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  url="https://api.github.com/repos/$PI_REPO/tarball/$PI_TAG"
+  curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/src.tar.gz" "$url" \
+    || die "source tarball download failed: $url"
+  [ -s "$tmp/src.tar.gz" ] || die "empty tarball at $url"
+
+  mkdir -p "$DEST"
+  tar -xzf "$tmp/src.tar.gz" --strip-components=1 -C "$DEST"
+
+  log "running npm ci in $DEST (this can take several minutes)"
+  ( cd "$DEST" && npm ci --no-audit --no-fund --loglevel=warn ) \
+    || die "npm ci failed"
+
+  log "running npm run build"
+  ( cd "$DEST" && npm run build --silent ) || die "npm run build failed"
+
+  [ -f "$ENTRY" ] || die "build did not produce $ENTRY"
+  log "built $ENTRY"
+fi
+
+# Wrapper script (a real script, not a symlink — the wrapper invokes node).
+WRAPPER="$DEST/pi-wrapper.sh"
+cat > "$WRAPPER" <<EOF
+#!/bin/sh
+exec node "$ENTRY" "\$@"
+EOF
+chmod 0755 "$WRAPPER"
+
+# Atomic swing of ~/.local/bin/pi → the wrapper.
+mkdir -p "$(dirname "$PI_BIN")"
+tmp_link="$PI_BIN.tmp.$$"
+ln -sfn "$WRAPPER" "$tmp_link"
+mv -f "$tmp_link" "$PI_BIN"
+log "symlinked $PI_BIN -> $WRAPPER (-> node $ENTRY)"
+
+# Verify.
+if ! "$PI_BIN" --version >/dev/null 2>&1; then
+  die "pi --version failed after install"
+fi
+"$PI_BIN" --version | sed 's/^/[install-mini-pi-source] pi --version: /'
+
+if ! command -v pi >/dev/null 2>&1 || [ "$(command -v pi)" != "$PI_BIN" ]; then
+  log "note: add \"$(dirname "$PI_BIN")\" to PATH (e.g. in ~/.zshrc) if not already present"
+fi

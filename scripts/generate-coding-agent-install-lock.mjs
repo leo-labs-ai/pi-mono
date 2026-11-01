@@ -11,11 +11,13 @@ const outputDir = join(codingAgentDir, "install-lock");
 const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
-const internalPackagePrefix = "@earendil-works/pi-";
-const installPackageName = "@earendil-works/pi-coding-agent-install";
+const internalPackagePrefix = "@leo-labs-ai/pi-";
+const internalPackageNames = new Set(["@earendil-works/chord", "@earendil-works/pi-codemode", "@earendil-works/pi-mcp"]);
+const installPackageName = "@leo-labs-ai/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
-	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
+	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
+	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
+	["koffi@2.16.2", "fork keeps koffi optionalDependency for Windows VT input (Shift+Tab); install scripts build the native addon"],
 ]);
 
 const args = new Set(process.argv.slice(2));
@@ -127,11 +129,6 @@ function packageNameFromLockPath(lockPath) {
 	return parts[0];
 }
 
-function registryTarballUrl(packageName, version) {
-	const tarballName = packageName.startsWith("@") ? packageName.split("/")[1] : packageName;
-	return `https://registry.npmjs.org/${packageName}/-/${tarballName}-${version}.tgz`;
-}
-
 function isExactVersionSpec(spec) {
 	return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(spec);
 }
@@ -143,7 +140,7 @@ function getInternalWorkspaces(lockPackages) {
 		if (!lockPath.startsWith("packages/") || lockPath.includes("/node_modules/") || !entry.name || !entry.version) {
 			continue;
 		}
-		if (!entry.name.startsWith(internalPackagePrefix)) {
+		if (!entry.name.startsWith(internalPackagePrefix) && !internalPackageNames.has(entry.name)) {
 			continue;
 		}
 
@@ -203,28 +200,44 @@ function addInternalWorkspace(installLockPackages, addedPaths, queue, name, work
 	const packageJson = workspace.packageJson;
 	const outputPath = `node_modules/${name}`;
 	const entry = copyPackageJsonEntry(packageJson, { includeName: false });
-	entry.resolved = registryTarballUrl(name, packageJson.version);
+	// Do not stamp internal fork packages with a public npm tarball URL. The
+	// installer runs with the fork's scoped registry config, so leaving `resolved`
+	// unset lets npm resolve @leo-labs-ai packages from GitHub Packages instead.
 
 	installLockPackages[outputPath] = sortedPackageEntry(entry);
 	addedPaths.add(outputPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(packageJson))) {
-		queue.push({ name: dependencyName, from: outputPath });
+		queue.push({
+			name: dependencyName,
+			sourceFrom: workspace.lockPath,
+			sourceBase: workspace.lockPath,
+			outputBase: outputPath,
+		});
 	}
 }
 
-function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, name, from) {
-	const lockPath = resolveExternalDependency(lockPackages, name, from);
-	if (addedPaths.has(lockPath)) {
+function addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item) {
+	const sourceLockPath = resolveExternalDependency(lockPackages, item.name, item.sourceFrom);
+	const outputLockPath =
+		item.sourceBase && sourceLockPath.startsWith(`${item.sourceBase}/`)
+			? [item.outputBase, sourceLockPath.slice(item.sourceBase.length + 1)].filter(Boolean).join("/")
+			: sourceLockPath;
+	if (addedPaths.has(outputLockPath)) {
 		return;
 	}
 
-	const entry = lockPackages[lockPath];
-	installLockPackages[lockPath] = copyLockEntry(entry);
-	addedPaths.add(lockPath);
+	const entry = lockPackages[sourceLockPath];
+	installLockPackages[outputLockPath] = copyLockEntry(entry);
+	addedPaths.add(outputLockPath);
 
 	for (const dependencyName of Object.keys(packageDependencies(entry))) {
-		queue.push({ name: dependencyName, from: lockPath });
+		queue.push({
+			name: dependencyName,
+			sourceFrom: sourceLockPath,
+			sourceBase: item.sourceBase,
+			outputBase: item.outputBase,
+		});
 	}
 }
 
@@ -259,7 +272,7 @@ function createRootLockEntry(installerPackageJson) {
 	return sortedPackageEntry(entry);
 }
 
-function validateGeneratedFiles(installerPackageJson, installLock, internalNames) {
+function validateGeneratedFiles(installerPackageJson, installLock, internalNames, internalWorkspaces) {
 	const errors = [];
 	const rootEntry = installLock.packages[""];
 	const includedPackageNames = new Set();
@@ -294,8 +307,12 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		if (entry.dev || entry.devOptional || entry.extraneous) {
 			errors.push(`${lockPath || "root"} contains dev/extraneous metadata`);
 		}
-		if (packageName?.startsWith(internalPackagePrefix) && entry.version !== installerPackageJson.version) {
-			errors.push(`${lockPath} internal package version ${entry.version} does not match ${installerPackageJson.version}`);
+		if (packageName !== undefined && (packageName.startsWith(internalPackagePrefix) || internalPackageNames.has(packageName))) {
+			// chord keeps upstream's own version rather than the fork lockstep, so each workspace is its own reference.
+			const expectedVersion = internalWorkspaces.get(packageName)?.packageJson.version ?? installerPackageJson.version;
+			if (entry.version !== expectedVersion) {
+				errors.push(`${lockPath} internal package version ${entry.version} does not match ${expectedVersion}`);
+			}
 		}
 		if (entry.hasInstallScript) {
 			if (!packageName || !entry.version) {
@@ -344,12 +361,6 @@ function validateGeneratedFiles(installerPackageJson, installLock, internalNames
 		}
 	}
 
-	const platformPackageCount = Object.values(installLock.packages).filter((entry) => entry.os || entry.cpu || entry.libc)
-		.length;
-	if (platformPackageCount === 0) {
-		errors.push("no platform-specific optional dependency entries found");
-	}
-
 	if (errors.length > 0) {
 		throw new Error(`Generated installer lock failed validation:\n${errors.map((error) => `  - ${error}`).join("\n")}`);
 	}
@@ -370,7 +381,10 @@ function generateInstallLock() {
 	};
 	const addedPaths = new Set([""]);
 	const internalNames = new Set();
-	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({ name, from: "" }));
+	const queue = Object.keys(packageDependencies(installerPackageJson)).map((name) => ({
+		name,
+		sourceFrom: "",
+	}));
 
 	while (queue.length > 0) {
 		const item = queue.shift();
@@ -388,7 +402,7 @@ function generateInstallLock() {
 			continue;
 		}
 
-		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item.name, item.from);
+		addExternalPackage(lockPackages, installLockPackages, addedPaths, queue, item);
 	}
 
 	const installLock = {
@@ -399,7 +413,7 @@ function generateInstallLock() {
 		packages: sortedObject(installLockPackages),
 	};
 
-	validateGeneratedFiles(installerPackageJson, installLock, internalNames);
+	validateGeneratedFiles(installerPackageJson, installLock, internalNames, internalWorkspaces);
 	return { installerPackageJson, installLock };
 }
 

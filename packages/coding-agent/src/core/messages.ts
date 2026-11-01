@@ -5,8 +5,8 @@
  * and provides a transformer to convert them to LLM-compatible messages.
  */
 
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
+import type { AgentMessage } from "@leo-labs-ai/pi-agent-core";
+import type { ImageContent, Message, TextContent } from "@leo-labs-ai/pi-ai";
 
 export const COMPACTION_SUMMARY_PREFIX = `The conversation history before this point was compacted into the following summary:
 
@@ -48,6 +48,8 @@ export interface CustomMessage<T = unknown> {
 	customType: string;
 	content: string | (TextContent | ImageContent)[];
 	display: boolean;
+	/** Whether this message is included in the provider-facing context. Defaults to true. */
+	modelVisible?: boolean;
 	details?: T;
 	timestamp: number;
 }
@@ -55,7 +57,7 @@ export interface CustomMessage<T = unknown> {
 export interface BranchSummaryMessage {
 	role: "branchSummary";
 	summary: string;
-	fromId: string;
+	fromId: string | null;
 	timestamp: number;
 }
 
@@ -67,7 +69,7 @@ export interface CompactionSummaryMessage {
 }
 
 // Extend CustomAgentMessages via declaration merging
-declare module "@earendil-works/pi-agent-core" {
+declare module "@leo-labs-ai/pi-agent-core" {
 	interface CustomAgentMessages {
 		bashExecution: BashExecutionMessage;
 		custom: CustomMessage;
@@ -126,8 +128,9 @@ export function createCustomMessage(
 	display: boolean,
 	details: unknown | undefined,
 	timestamp: string,
+	modelVisible?: boolean,
 ): CustomMessage {
-	return {
+	const message: CustomMessage = {
 		role: "custom",
 		customType,
 		content,
@@ -135,6 +138,8 @@ export function createCustomMessage(
 		details,
 		timestamp: new Date(timestamp).getTime(),
 	};
+	if (modelVisible !== undefined) message.modelVisible = modelVisible;
+	return message;
 }
 
 /**
@@ -160,6 +165,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
+					if (m.modelVisible === false) return undefined;
 					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
 					return {
 						role: "user",
@@ -181,6 +187,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						],
 						timestamp: m.timestamp,
 					};
+				case "system":
 				case "user":
 				case "assistant":
 				case "toolResult":

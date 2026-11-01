@@ -2,9 +2,19 @@ import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocompl
 import { getKeybindings } from "../keybindings.ts";
 import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
-import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
+import {
+	type Component,
+	CURSOR_MARKER,
+	type Focusable,
+	renderFakeCursor,
+	type TUI,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+} from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import {
+	autocompleteBoundaryRegex,
+	autocompleteSeparatorRegex,
 	cjkBreakRegex,
 	getGraphemeSegmenter,
 	getWordSegmenter,
@@ -219,11 +229,26 @@ interface EditorSnapshot {
 	pasteCounter: number;
 }
 
-interface LayoutLine {
+export interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
 	cursorPos?: number;
+	/** Absolute offset of this line's first character in the full document text. */
+	startIndex?: number;
 }
+
+/**
+ * A styled span over the editor's full document text (lines joined with "\n").
+ * Offsets are absolute string indices; `end` is exclusive.
+ */
+export interface EditorHighlightRange {
+	start: number;
+	end: number;
+	style: (text: string) => string;
+}
+
+/** Computes styled spans for the editor's current text. Must be cheap and pure. */
+export type EditorHighlighter = (text: string) => EditorHighlightRange[];
 
 export interface EditorTheme {
 	borderColor: (str: string) => string;
@@ -242,22 +267,39 @@ const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 
 const ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS = 20;
 const DEFAULT_AUTOCOMPLETE_TRIGGER_CHARACTERS = ["@", "#"];
+// Unquoted completions end at whitespace or CJK punctuation; quoted paths may contain either.
+const unquotedAutocompleteSuffixRegex = new RegExp(`(?:(?!${autocompleteSeparatorRegex.source}).)*`, "u");
+// Trigger tokens may be wrapped in prose, e.g. "(@src/foo" or "`@src/foo".
+const autocompleteTokenStartSource = `${autocompleteBoundaryRegex.source}[([{<\`]*`;
 
 function escapeCharacterClass(value: string): string {
 	return value.replace(/[\\^$.*+?()[\]{}|-]/g, "\\$&");
 }
 
 function buildTriggerPattern(triggerCharacters: string[]): RegExp {
-	return new RegExp(`(?:^|[\\s])[${triggerCharacters.map(escapeCharacterClass).join("")}][^\\s]*$`);
+	return new RegExp(
+		`${autocompleteTokenStartSource}(?:@"[^"]*|[${triggerCharacters.map(escapeCharacterClass).join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function buildDebouncePattern(triggerCharacters: string[]): RegExp {
 	const escapedWithoutAt = triggerCharacters.filter((character) => character !== "@").map(escapeCharacterClass);
-	return new RegExp(`(?:^|[ \\t])(?:@(?:"[^"]*|[^\\s]*)|[${escapedWithoutAt.join("")}][^\\s]*)$`);
+	return new RegExp(
+		`${autocompleteTokenStartSource}(?:@(?:"[^"]*|${unquotedAutocompleteSuffixRegex.source})|[${escapedWithoutAt.join("")}]${unquotedAutocompleteSuffixRegex.source})$`,
+		"u",
+	);
 }
 
 function createScrollBorder(direction: "↑" | "↓", hiddenLineCount: number, width: number): string {
 	const availableWidth = Math.max(0, width);
+	const label = ` ${direction} ${hiddenLineCount} more `;
+	const labelWidth = visibleWidth(label);
+	if (labelWidth + 2 <= availableWidth) {
+		const leftWidth = Math.floor((availableWidth - labelWidth) / 2);
+		return "─".repeat(leftWidth) + label + "─".repeat(availableWidth - leftWidth - labelWidth);
+	}
+
 	const indicator = `─── ${direction} ${hiddenLineCount} more `;
 	const remaining = availableWidth - visibleWidth(indicator);
 	if (remaining >= 0) return indicator + "─".repeat(remaining);
@@ -281,14 +323,20 @@ export class Editor implements Component, Focusable {
 	private theme: EditorTheme;
 	private paddingX: number = 0;
 
-	// Store last render width for cursor navigation
+	// Store last render geometry for cursor navigation and mouse hit-testing.
 	private lastWidth: number = 80;
+	private renderedVisibleLineCount = 1;
+	private renderedAutocompleteHeight = 0;
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
+
+	// Inline highlighting support
+	private highlighter?: EditorHighlighter;
+	private highlightCache?: { text: string; ranges: EditorHighlightRange[] };
 
 	// Autocomplete support
 	private autocompleteProvider?: AutocompleteProvider;
@@ -479,6 +527,16 @@ export class Editor implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	protected renderTopBorder(width: number, hiddenLineCount: number): string {
+		const border = hiddenLineCount > 0 ? createScrollBorder("↑", hiddenLineCount, width) : "─".repeat(width);
+		return this.borderColor(border);
+	}
+
+	protected renderBottomBorder(width: number, hiddenLineCount: number): string {
+		const border = hiddenLineCount > 0 ? createScrollBorder("↓", hiddenLineCount, width) : "─".repeat(width);
+		return this.borderColor(border);
+	}
+
 	render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
@@ -490,8 +548,6 @@ export class Editor implements Component, Focusable {
 
 		// Store for cursor navigation (must match wrapping width)
 		this.lastWidth = layoutWidth;
-
-		const horizontal = this.borderColor("─");
 
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
@@ -517,18 +573,14 @@ export class Editor implements Component, Focusable {
 
 		// Get visible lines slice
 		const visibleLines = layoutLines.slice(this.scrollOffset, this.scrollOffset + maxVisibleLines);
+		this.renderedVisibleLineCount = visibleLines.length;
 
 		const result: string[] = [];
 		const leftPadding = " ".repeat(paddingX);
 		const rightPadding = leftPadding;
 
 		// Render top border (with scroll indicator if scrolled down)
-		if (this.scrollOffset > 0) {
-			const border = createScrollBorder("↑", this.scrollOffset, width);
-			result.push(this.borderColor(border));
-		} else {
-			result.push(horizontal.repeat(width));
-		}
+		result.push(this.renderTopBorder(width, this.scrollOffset));
 
 		// Render each visible layout line
 		// Emit hardware cursor marker when focused so TUI can position the
@@ -555,12 +607,12 @@ export class Editor implements Component, Focusable {
 					const afterGraphemes = [...this.segment(after, "grapheme")];
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
-					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
+					const cursor = renderFakeCursor(firstGrapheme);
 					displayText = before + marker + cursor + restAfter;
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
-					const cursor = "\x1b[7m \x1b[0m";
+					const cursor = renderFakeCursor(" ");
 					displayText = before + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it
@@ -580,16 +632,13 @@ export class Editor implements Component, Focusable {
 
 		// Render bottom border (with scroll indicator if more content below)
 		const linesBelow = layoutLines.length - (this.scrollOffset + visibleLines.length);
-		if (linesBelow > 0) {
-			const border = createScrollBorder("↓", linesBelow, width);
-			result.push(this.borderColor(border));
-		} else {
-			result.push(horizontal.repeat(width));
-		}
+		result.push(this.renderBottomBorder(width, linesBelow));
 
 		// Add autocomplete list if active
+		this.renderedAutocompleteHeight = 0;
 		if (this.autocompleteState && this.autocompleteList) {
 			const autocompleteResult = this.autocompleteList.render(contentWidth);
+			this.renderedAutocompleteHeight = autocompleteResult.length;
 			for (const line of autocompleteResult) {
 				const lineWidth = visibleWidth(line);
 				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
@@ -598,6 +647,69 @@ export class Editor implements Component, Focusable {
 		}
 
 		return result;
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		const autocompleteStartRow = this.renderedVisibleLineCount + 2;
+		if (
+			this.autocompleteState &&
+			this.autocompleteList &&
+			event.y >= autocompleteStartRow &&
+			event.y < autocompleteStartRow + this.renderedAutocompleteHeight
+		) {
+			const maxPadding = Math.max(0, Math.floor((event.width - 1) / 2));
+			const paddingX = Math.min(this.paddingX, maxPadding);
+			const contentWidth = Math.max(1, event.width - paddingX * 2);
+			const result = this.autocompleteList.handleMouse?.({
+				...event,
+				x: event.x - paddingX,
+				y: event.y - autocompleteStartRow,
+				width: contentWidth,
+				height: this.renderedAutocompleteHeight,
+			});
+			return result ? { ...result, focus: true } : undefined;
+		}
+
+		// Leave press/drag/release unhandled so the renderer's screen-level text
+		// selection can run over the editor rows (drag to select, release to copy).
+		// The renderer synthesizes a click when press and release land on the same
+		// cell without movement, which is the gesture that positions the cursor.
+		if (event.type !== "click" || event.button !== "left") return undefined;
+		if (event.y <= 0 || event.y > this.renderedVisibleLineCount) return { handled: true, focus: true };
+
+		const visualLines = this.buildVisualLineMap(this.lastWidth);
+		const visualLineIndex = this.scrollOffset + event.y - 1;
+		const visualLine = visualLines[visualLineIndex];
+		if (!visualLine) return { handled: true, focus: true };
+		const logicalLine = this.state.lines[visualLine.logicalLine] ?? "";
+		const chunkEnd = visualLine.startCol + visualLine.length;
+		const chunk = logicalLine.slice(visualLine.startCol, chunkEnd);
+		const maxPadding = Math.max(0, Math.floor((event.width - 1) / 2));
+		const paddingX = Math.min(this.paddingX, maxPadding);
+		const targetColumn = Math.max(0, event.x - paddingX);
+		let visibleColumn = 0;
+		let targetIndex = chunk.length;
+		let lastGraphemeIndex = 0;
+		for (const grapheme of this.segment(chunk, "grapheme")) {
+			const nextColumn = visibleColumn + visibleWidth(grapheme.segment);
+			lastGraphemeIndex = grapheme.index;
+			if (targetColumn < nextColumn) {
+				targetIndex = grapheme.index;
+				break;
+			}
+			visibleColumn = nextColumn;
+		}
+		const isLastSegment =
+			visualLineIndex === visualLines.length - 1 ||
+			visualLines[visualLineIndex + 1]?.logicalLine !== visualLine.logicalLine;
+		if (!isLastSegment && targetIndex === chunk.length && chunk.length > 0) targetIndex = lastGraphemeIndex;
+
+		this.state.cursorLine = visualLine.logicalLine;
+		this.setCursorCol(visualLine.startCol + targetIndex);
+		this.lastAction = null;
+		this.exitHistoryBrowsing();
+		if (this.autocompleteState) this.updateAutocomplete();
+		return { handled: true, focus: true };
 	}
 
 	handleInput(data: string): void {
@@ -904,6 +1016,7 @@ export class Editor implements Component, Focusable {
 
 	private layoutText(contentWidth: number): LayoutLine[] {
 		const layoutLines: LayoutLine[] = [];
+		const logicalIndices: number[] = [];
 
 		if (this.state.lines.length === 0 || (this.state.lines.length === 1 && this.state.lines[0] === "")) {
 			// Empty editor
@@ -911,13 +1024,24 @@ export class Editor implements Component, Focusable {
 				text: "",
 				hasCursor: true,
 				cursorPos: 0,
+				startIndex: 0,
 			});
-			return layoutLines;
+			logicalIndices.push(0);
+			return this.runLayoutHooks(layoutLines, logicalIndices);
+		}
+
+		// Absolute offset of each logical line within getText() (lines joined by "\n").
+		const lineOffsets: number[] = [];
+		let runningOffset = 0;
+		for (const line of this.state.lines) {
+			lineOffsets.push(runningOffset);
+			runningOffset += line.length + 1;
 		}
 
 		// Process each logical line
 		for (let i = 0; i < this.state.lines.length; i++) {
 			const line = this.state.lines[i] || "";
+			const lineOffset = lineOffsets[i] ?? 0;
 			const isCurrentLine = i === this.state.cursorLine;
 			const lineVisibleWidth = visibleWidth(line);
 
@@ -928,13 +1052,16 @@ export class Editor implements Component, Focusable {
 						text: line,
 						hasCursor: true,
 						cursorPos: this.state.cursorCol,
+						startIndex: lineOffset,
 					});
 				} else {
 					layoutLines.push({
 						text: line,
 						hasCursor: false,
+						startIndex: lineOffset,
 					});
 				}
+				logicalIndices.push(i);
 			} else {
 				// Line needs wrapping - use word-aware wrapping
 				const chunks = wordWrapLine(line, contentWidth, [...this.segment(line, "grapheme")]);
@@ -976,18 +1103,136 @@ export class Editor implements Component, Focusable {
 							text: chunk.text,
 							hasCursor: true,
 							cursorPos: adjustedCursorPos,
+							startIndex: lineOffset + chunk.startIndex,
 						});
 					} else {
 						layoutLines.push({
 							text: chunk.text,
 							hasCursor: false,
+							startIndex: lineOffset + chunk.startIndex,
 						});
 					}
+					logicalIndices.push(i);
 				}
 			}
 		}
 
-		return layoutLines;
+		return this.runLayoutHooks(layoutLines, logicalIndices);
+	}
+
+	/**
+	 * Highlight ranges address the plain document text, so they can only be spliced
+	 * into a line `onLayoutLines` left alone. A subclass that rewrote the line (e.g.
+	 * syntax highlighting) has already shifted every offset past its first escape,
+	 * so that line keeps the subclass's rendering instead.
+	 */
+	private runLayoutHooks(layoutLines: LayoutLine[], logicalIndices: number[]): LayoutLine[] {
+		const plainTexts = layoutLines.map((line) => line.text);
+		return this.applyHighlights(this.onLayoutLines(layoutLines, logicalIndices), plainTexts);
+	}
+
+	/**
+	 * Install a highlighter that styles spans of the editor's text in place.
+	 * Pass `undefined` to remove it.
+	 */
+	setHighlighter(highlighter: EditorHighlighter | undefined): void {
+		this.highlighter = highlighter;
+		this.highlightCache = undefined;
+	}
+
+	private highlightRangesFor(text: string): EditorHighlightRange[] {
+		if (this.highlightCache?.text === text) return this.highlightCache.ranges;
+		const produced = this.highlighter?.(text) ?? [];
+		// First range wins outright: a later one is dropped if it overlaps the last
+		// range actually kept, not merely the previous candidate (which may itself
+		// have been dropped, and whose `end` would then let an overlap slip through).
+		const ranges: EditorHighlightRange[] = [];
+		for (const range of produced
+			.filter((range) => range.end > range.start && range.start >= 0)
+			.sort((a, b) => a.start - b.start)) {
+			const kept = ranges[ranges.length - 1];
+			if (kept === undefined || range.start >= kept.end) ranges.push(range);
+		}
+		this.highlightCache = { text, ranges };
+		return ranges;
+	}
+
+	private applyHighlights(lines: LayoutLine[], plainTexts: string[]): LayoutLine[] {
+		if (!this.highlighter) return lines;
+		const ranges = this.highlightRangesFor(this.getText());
+		if (ranges.length === 0) return lines;
+		return lines.map((line, index) =>
+			line.text === plainTexts[index] ? this.highlightLayoutLine(line, ranges) : line,
+		);
+	}
+
+	private highlightLayoutLine(line: LayoutLine, ranges: EditorHighlightRange[]): LayoutLine {
+		const lineStart = line.startIndex;
+		if (lineStart === undefined || line.text.length === 0) return line;
+
+		// The grapheme under the cursor is rendered in reverse video by the renderer,
+		// so it must stay unstyled: carve it out of any span that covers it.
+		const cursorPos = line.hasCursor ? line.cursorPos : undefined;
+		let cursorGraphemeEnd = cursorPos;
+		if (cursorPos !== undefined && cursorPos < line.text.length) {
+			const rest = line.text.slice(cursorPos);
+			const first = [...this.segment(rest, "grapheme")][0]?.segment ?? "";
+			cursorGraphemeEnd = cursorPos + first.length;
+		}
+
+		let out = "";
+		let shift = 0;
+		let consumed = 0;
+		for (const range of ranges) {
+			const spanStart = Math.max(range.start - lineStart, consumed);
+			const spanEnd = Math.min(range.end - lineStart, line.text.length);
+			if (spanEnd <= spanStart) continue;
+
+			out += line.text.slice(consumed, spanStart);
+			for (const [from, to, styled] of this.splitSpanAroundCursor(
+				spanStart,
+				spanEnd,
+				cursorPos,
+				cursorGraphemeEnd,
+			)) {
+				const plain = line.text.slice(from, to);
+				const rendered = styled ? range.style(plain) : plain;
+				if (cursorPos !== undefined && cursorPos >= to) shift += rendered.length - plain.length;
+				out += rendered;
+			}
+			consumed = spanEnd;
+		}
+		if (consumed === 0) return line;
+		out += line.text.slice(consumed);
+
+		return cursorPos === undefined ? { ...line, text: out } : { ...line, text: out, cursorPos: cursorPos + shift };
+	}
+
+	/** Splits [start,end) into styled/unstyled parts so the cursor grapheme stays unstyled. */
+	private splitSpanAroundCursor(
+		start: number,
+		end: number,
+		cursorPos: number | undefined,
+		cursorEnd: number | undefined,
+	): Array<[number, number, boolean]> {
+		if (cursorPos === undefined || cursorEnd === undefined || cursorEnd <= start || cursorPos >= end) {
+			return [[start, end, true]];
+		}
+		const parts: Array<[number, number, boolean]> = [];
+		if (cursorPos > start) parts.push([start, cursorPos, true]);
+		parts.push([Math.max(cursorPos, start), Math.min(cursorEnd, end), false]);
+		if (cursorEnd < end) parts.push([cursorEnd, end, true]);
+		return parts;
+	}
+
+	/**
+	 * Hook called after layout computation, before rendering.
+	 * Subclasses can override to transform layout lines (e.g. syntax highlighting).
+	 * Each entry in `logicalIndices[i]` is the logical line index for `lines[i]`.
+	 * When transforming `text`, update `cursorPos` to account for any inserted ANSI bytes.
+	 */
+	protected onLayoutLines(lines: LayoutLine[], _logicalIndices: number[]): LayoutLine[] {
+		return lines;
 	}
 
 	getText(): string {
@@ -1142,13 +1387,12 @@ export class Editor implements Component, Focusable {
 			else if (this.autocompleteTriggerCharacters.includes(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				const charBeforeSymbol = textBeforeCursor[textBeforeCursor.length - 2];
-				if (textBeforeCursor.length === 1 || charBeforeSymbol === " " || charBeforeSymbol === "\t") {
+				if (this.autocompleteTriggerPattern.test(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
 			// Also auto-trigger when typing letters in a slash command or symbol completion context
-			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
+			else if (/[a-zA-Z0-9.\-_]/.test(char) || cjkBreakRegex.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
@@ -1300,7 +1544,7 @@ export class Editor implements Component, Focusable {
 			const graphemes = [...this.segment(beforeCursor, "grapheme")];
 			const lastGrapheme = graphemes[graphemes.length - 1];
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
-			const isPastedSegmented = PASTE_MARKER_SINGLE.exec(lastGrapheme.segment);
+			const isPastedSegmented = lastGrapheme ? PASTE_MARKER_SINGLE.exec(lastGrapheme.segment) : null;
 
 			if (isPastedSegmented) {
 				// This contains the id part e.g 4 from [paste #4 +123 lines]
@@ -2146,7 +2390,25 @@ export class Editor implements Component, Focusable {
 		items: Array<{ value: string; label: string; description?: string }>,
 	): SelectList {
 		const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
-		return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+		const list = new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+		list.onSelect = (selected) => {
+			if (!this.autocompleteProvider) return;
+			this.pushUndoSnapshot();
+			this.lastAction = null;
+			const result = this.autocompleteProvider.applyCompletion(
+				this.state.lines,
+				this.state.cursorLine,
+				this.state.cursorCol,
+				selected,
+				this.autocompletePrefix,
+			);
+			this.state.lines = result.lines;
+			this.state.cursorLine = result.cursorLine;
+			this.setCursorCol(result.cursorCol);
+			this.cancelAutocomplete();
+			this.onChange?.(this.getText());
+		};
+		return list;
 	}
 
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {

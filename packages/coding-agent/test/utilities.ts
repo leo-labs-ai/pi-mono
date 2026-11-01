@@ -6,10 +6,10 @@ import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
-import type { OAuthCredentials } from "@earendil-works/pi-ai";
-import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
-import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
+import { Agent } from "@leo-labs-ai/pi-agent-core";
+import type { OAuthCredentials } from "@leo-labs-ai/pi-ai";
+import { getModel, streamSimple } from "@leo-labs-ai/pi-ai/compat";
+import { builtinProviders } from "@leo-labs-ai/pi-ai/providers/all";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
@@ -150,6 +150,20 @@ export function assistantMsg(text: string) {
 		stopReason: "stop" as const,
 		timestamp: Date.now(),
 	};
+}
+
+/**
+ * Read a session JSONL file and return one label per record: the message role for
+ * message entries, otherwise the entry type (e.g. "session", "model_change").
+ */
+export function readSessionFileRoles(file: string): string[] {
+	return readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.map((line) => {
+			const record = JSON.parse(line);
+			return record.message?.role ?? record.type;
+		});
 }
 
 /**

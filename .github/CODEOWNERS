@@ -1,0 +1,21 @@
+# CODEOWNERS — leo-labs-ai/pi-mono (organization fork of earendil-works/pi-mono)
+#
+# Single maintainer fork: @valkyriweb owns everything. The explicit entries
+# below are not functionally different from the catch-all today, but they
+# document the release- and security-sensitive paths that must never merge
+# without owner review, and they keep ownership correct if the fork ever gains
+# more collaborators.
+
+* @valkyriweb
+
+# Release / CI / supply-chain critical paths.
+/.github/                                   @valkyriweb
+/package-lock.json                          @valkyriweb
+
+# Generated model metadata — only edited via the generator, never by hand.
+/packages/ai/src/models.generated.ts        @valkyriweb
+
+# Governance docs.
+/SECURITY.md                                @valkyriweb
+/VISION.md                                  @valkyriweb
+/AGENTS.md                                  @valkyriweb

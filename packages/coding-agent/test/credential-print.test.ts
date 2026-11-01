@@ -1,4 +1,4 @@
-import { InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { InMemoryModelsStore } from "@leo-labs-ai/pi-ai";
 import { describe, expect, test, vi } from "vitest";
 import { parseArgs } from "../src/cli/args.ts";
 import { AuthCommandError, isAuthCommandHelp, parseAuthCommand } from "../src/cli/auth-command.ts";
@@ -22,6 +22,20 @@ describe("credential print commands", () => {
 		const args = parseArgs(["--provider", "openai"]);
 
 		await expect(resolveCredentialForPrint(args, runtime, "api_key")).resolves.toBe("test-api-key");
+	});
+
+	test("resolves --model without --provider only among catalog models of configured providers", async () => {
+		const runtime = await createRuntime(
+			AuthStorage.inMemory({
+				openai: { type: "api_key", key: "openai-test-key" },
+				anthropic: { type: "api_key", key: "anthropic-test-key" },
+			}),
+		);
+
+		// anthropic has no gpt-5.5; an uncatalogued id on a configured provider must not count as a match.
+		await expect(resolveCredentialForPrint(parseArgs(["--model", "gpt-5.5"]), runtime, "api_key")).resolves.toBe(
+			"openai-test-key",
+		);
 	});
 
 	test("prints bearer tokens resolved from an Authorization header", async () => {

@@ -1,0 +1,198 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+env:
+  HAS_CLAWSWEEPER_APP_PRIVATE_KEY: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY != '' }}
+  CLAWSWEEPER_APP_CLIENT_ID: Iv23lirdjmVqYd1gwY26
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.changesets.outputs.published }}
+      version: ${{ steps.ca_version.outputs.version }}
+    env:
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_OAUTH_TOKEN: ""
+      OPENAI_API_KEY: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      CEREBRAS_API_KEY: ""
+      XAI_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      ZAI_API_KEY: ""
+      MISTRAL_API_KEY: ""
+      MINIMAX_API_KEY: ""
+      MINIMAX_CN_API_KEY: ""
+      KIMI_API_KEY: ""
+      AI_GATEWAY_API_KEY: ""
+      OPENCODE_API_KEY: ""
+      COPILOT_GITHUB_TOKEN: ""
+      HF_TOKEN: ""
+      GOOGLE_APPLICATION_CREDENTIALS: ""
+      GOOGLE_CLOUD_PROJECT: ""
+      GCLOUD_PROJECT: ""
+      GOOGLE_CLOUD_LOCATION: ""
+      AWS_PROFILE: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SESSION_TOKEN: ""
+      AWS_REGION: ""
+      AWS_DEFAULT_REGION: ""
+      AWS_BEARER_TOKEN_BEDROCK: ""
+      AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: ""
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: ""
+      AWS_WEB_IDENTITY_TOKEN_FILE: ""
+      AZURE_OPENAI_API_KEY: ""
+      AZURE_OPENAI_BASE_URL: ""
+      AZURE_OPENAI_RESOURCE_NAME: ""
+      PI_NO_LOCAL_LLM: "1"
+    steps:
+      - name: Require release PR GitHub App secret
+        if: env.HAS_CLAWSWEEPER_APP_PRIVATE_KEY != 'true'
+        run: |
+          echo "::error::CLAWSWEEPER_APP_PRIVATE_KEY is required so Changesets Version Packages PRs trigger required checks instead of needing --admin. Copy the repo-installed valkyriweb-clawsweeper App private key secret from my-pi."
+          exit 1
+
+      - name: Create release PR token (GitHub App)
+        id: release_pr_token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        with:
+          client-id: ${{ env.CLAWSWEEPER_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CLAWSWEEPER_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Checkout pi-mono fork
+        uses: actions/checkout@v7
+        with:
+          path: pi-mono-fork
+          fetch-depth: 0
+          # actions/checkout persists this token for later git pushes. Use the
+          # App token here too, or changesets/action may still push the release
+          # branch with the suppressed workflow GITHUB_TOKEN.
+          token: ${{ steps.release_pr_token.outputs.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://npm.pkg.github.com'
+          cache: npm
+          cache-dependency-path: pi-mono-fork/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.3.10
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep && sudo ln -s "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install pi-mono dependencies
+        working-directory: pi-mono-fork
+        # Fork-scoped dependencies resolve from the organization-owned @leo-labs-ai
+        # namespace, so npm ci authenticates with this repository's token.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci --ignore-scripts
+
+      - name: Build packages
+        working-directory: pi-mono-fork
+        # Keep release ordering aligned with the canonical workspace build. The
+        # hand-maintained list missed telemetry, session-backends, protocol,
+        # client, and server after the upstream workspace expansion, while still
+        # referencing the removed orchestrator package.
+        run: npm run build
+
+      - name: Release gate
+        working-directory: pi-mono-fork
+        run: npm run test:system-prompt && npm run test:cache-stability && npm run test:e2e
+
+      - name: Fork canonical check
+        working-directory: pi-mono-fork
+        run: npm run check
+
+      - name: Version or publish packages
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          cwd: pi-mono-fork
+          version: npm run version-packages
+          publish: npm run publish:changesets
+          commit: "chore(release): version fork packages"
+          title: "chore(release): version fork packages"
+          # We cut GitHub Releases ourselves (next step) with a bounded body.
+          # The package CHANGELOG.md files are upstream-owned Keep-a-Changelog
+          # (`## [x.y.z] - date`, 400KB+); the action can't match those headings
+          # to the version, so it dumps the whole file as the Release body and
+          # 422s past GitHub's 125000-char cap. See create-github-releases.mjs.
+          createGithubReleases: false
+        env:
+          # Must be the App token, not secrets.GITHUB_TOKEN, so the Version
+          # Packages PR triggers required PR checks instead of needing --admin.
+          GITHUB_TOKEN: ${{ steps.release_pr_token.outputs.token }}
+          # Organization-owned packages publish natively with this repository's token.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Cut a GitHub Release per just-published package, with a small body that
+      # points at FORK-CHANGELOG.md (never the 400KB upstream changelog), so a
+      # Release is always created and publish never reds on changelog size.
+      - name: Create GitHub Releases (bounded body)
+        if: steps.changesets.outputs.published == 'true'
+        working-directory: pi-mono-fork
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/create-github-releases.mjs '${{ steps.changesets.outputs.publishedPackages }}'
+
+      # Surface the just-published coding-agent (CLI) version so the binary build
+      # below only fires when the CLI itself releases (support-package-only
+      # releases don't need new binaries). Empty when coding-agent wasn't bumped.
+      - name: Extract coding-agent version
+        id: ca_version
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+        run: |
+          v=$(node -p "(JSON.parse(process.env.PUBLISHED)||[]).find(p=>p.name==='@leo-labs-ai/pi-coding-agent')?.version || ''")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  # Build the 6-platform compiled binaries + a v<version> GitHub Release in the
+  # same trusted run as the publish. Replaces the dead `push: tags: v*` trigger
+  # (the fork only cuts scoped Changeset tags now). See pi-mono #111.
+  binaries:
+    needs: release
+    if: needs.release.outputs.published == 'true' && needs.release.outputs.version != ''
+    permissions:
+      contents: write
+      packages: read
+      # The reusable build-binaries.yml `build` job requests `packages: read`
+      # to install private @leo-labs-ai packages; caller-job permissions must
+      # include every permission any called job requests.
+      #
+      # The reusable build-binaries.yml `stage-github-release` job requests
+      # `actions: read`. A called workflow can only request permissions the
+      # CALLER JOB holds; job-level permissions here replace the workflow-level
+      # block, so without `actions: read` on THIS job the whole Release run
+      # fails at startup validation (`actions: read` > the job's implicit `none`).
+      actions: read
+    uses: ./.github/workflows/build-binaries.yml
+    with:
+      tag: v${{ needs.release.outputs.version }}
+      source_ref: ${{ github.sha }}
+    secrets: inherit

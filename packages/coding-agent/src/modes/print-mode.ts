@@ -6,7 +6,7 @@
  * - `pi --mode json "prompt"` - JSON event stream
  */
 
-import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent } from "@leo-labs-ai/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
 import { flushRawStdout, waitForRawStdoutBackpressure, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
@@ -150,6 +150,10 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 						if (content.type === "text") {
 							writeRawStdout(`${content.text}\n`);
 						}
+					}
+					if (assistantMsg.stopReason === "length") {
+						console.error("Response was truncated: the model reached its output token limit.");
+						exitCode = 1;
 					}
 				}
 			}

@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type CredentialStore, createModels, type Provider } from "@earendil-works/pi-ai";
+import { type CredentialStore, createModels, type Provider } from "@leo-labs-ai/pi-ai";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage, FileAuthStorageBackend } from "../src/core/auth-storage.ts";
@@ -139,6 +139,22 @@ describe("AuthStorage", () => {
 		expect(release).toHaveBeenCalledTimes(1);
 	});
 
+	test.skipIf(process.platform === "win32")("creates new auth files with owner-only permissions", () => {
+		AuthStorage.create(authJsonPath);
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o600);
+	});
+
+	test.skipIf(process.platform === "win32")("preserves the mode of an existing auth file", async () => {
+		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
+		chmodSync(authJsonPath, 0o660);
+		const storage = AuthStorage.create(authJsonPath);
+
+		await storage.modify("anthropic", async () => ({ type: "api_key", key: "new" }));
+
+		expect(statSync(authJsonPath).mode & 0o777).toBe(0o660);
+	});
+
 	test("modify persists a credential while preserving unrelated external edits", async () => {
 		writeAuthJson({ anthropic: { type: "api_key", key: "old" } });
 		const storage = AuthStorage.create(authJsonPath);
@@ -242,6 +258,82 @@ describe("AuthStorage", () => {
 		expect(lockSpy).toHaveBeenCalledTimes(2);
 		expect(update).toHaveBeenCalledTimes(1);
 		expect(release).toHaveBeenCalledTimes(1);
+	});
+
+	describe("Windows EPERM on lock acquisition", () => {
+		// #10801: a delete-pending lock directory on Windows makes mkdir fail with EPERM briefly.
+		const eperm = () => Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+		const originalPlatform = process.platform;
+		const setPlatform = (platform: NodeJS.Platform) =>
+			Object.defineProperty(process, "platform", { value: platform, configurable: true });
+
+		afterEach(() => {
+			setPlatform(originalPlatform);
+		});
+
+		test("retries transient EPERM on Windows (async)", async () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const release = vi.fn(async () => {});
+			const lockSpy = vi.spyOn(lockfile, "lock").mockRejectedValueOnce(eperm()).mockResolvedValueOnce(release);
+			vi.spyOn(Math, "random").mockReturnValue(0);
+			const update = vi.fn(async () => ({ result: undefined }));
+
+			await backend.withLockAsync(update);
+
+			expect(lockSpy).toHaveBeenCalledTimes(2);
+			expect(update).toHaveBeenCalledTimes(1);
+			expect(release).toHaveBeenCalledTimes(1);
+		});
+
+		test("surfaces persistent EPERM on Windows after a bounded number of retries (async)", async () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const lockSpy = vi.spyOn(lockfile, "lock").mockImplementation(async () => {
+				throw eperm();
+			});
+			vi.spyOn(Math, "random").mockReturnValue(0);
+			const update = vi.fn(async () => ({ result: undefined }));
+
+			await expect(backend.withLockAsync(update)).rejects.toMatchObject({ code: "EPERM" });
+
+			expect(lockSpy).toHaveBeenCalledTimes(6);
+			expect(update).not.toHaveBeenCalled();
+		});
+
+		test("does not retry EPERM on other platforms (async)", async () => {
+			setPlatform("linux");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const lockSpy = vi.spyOn(lockfile, "lock").mockRejectedValueOnce(eperm());
+
+			await expect(backend.withLockAsync(async () => ({ result: undefined }))).rejects.toMatchObject({
+				code: "EPERM",
+			});
+			expect(lockSpy).toHaveBeenCalledTimes(1);
+		});
+
+		test("retries transient EPERM on Windows (sync)", () => {
+			setPlatform("win32");
+			writeAuthJson({});
+			const backend = new FileAuthStorageBackend(authJsonPath);
+			const release = vi.fn();
+			const lockSpy = vi
+				.spyOn(lockfile, "lockSync")
+				.mockImplementationOnce(() => {
+					throw eperm();
+				})
+				.mockReturnValueOnce(release);
+			const update = vi.fn(() => ({ result: undefined }));
+
+			backend.withLock(update);
+
+			expect(lockSpy).toHaveBeenCalledTimes(2);
+			expect(update).toHaveBeenCalledTimes(1);
+			expect(release).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	test("surfaces a compromised file storage lock", async () => {

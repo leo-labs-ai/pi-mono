@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai/compat";
+import { fauxAssistantMessage, registerFauxProvider } from "@leo-labs-ai/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
@@ -154,6 +154,20 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
+	});
+
+	// #591: my-pi pi-workflow registers its run cleanup with pi.onSessionDispose.
+	it("runs onSessionDispose handlers on session_shutdown", async () => {
+		let disposed = 0;
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.onSessionDispose(() => {
+				disposed += 1;
+			});
+		});
+		expect(disposed).toBe(0);
+
+		await runtimeHost.newSession();
+		expect(disposed).toBe(1);
 	});
 
 	it("honors session_before_switch cancellation", async () => {

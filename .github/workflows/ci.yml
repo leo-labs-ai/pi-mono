@@ -1,18 +1,23 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-check-test:
+  # Unit tests never ran on PRs: fork-safety-check covers lint/typecheck/build only,
+  # and release.yml runs a subset after code has already landed. That gap let a
+  # provider-transport regression sit on main with three red tests (see #467).
+  unit-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -20,23 +25,137 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
           cache: npm
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
-          sudo ln -s $(which fdfind) /usr/local/bin/fd
+          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
 
       - name: Install dependencies
+        env:
+          # Organization-owned packages are accessible through this repository token.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci --ignore-scripts
 
-      - name: Build
+      - name: Build workspace declarations
         run: npm run build
 
-      - name: Check
+      - name: Build the pi-env daemon
+        run: npm run build:daemon --workspace packages/env
+
+      # test.sh runs the suite in an isolated HOME with every provider credential
+      # blanked, so live-API tests skip rather than flake or leak.
+      - name: Unit tests
+        run: ./test.sh
+
+  fork-safety-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # read published @leo-labs-ai/pi-* dependencies from GitHub Packages
+    env:
+      ANTHROPIC_API_KEY: ""
+      ANTHROPIC_OAUTH_TOKEN: ""
+      OPENAI_API_KEY: ""
+      GEMINI_API_KEY: ""
+      GROQ_API_KEY: ""
+      CEREBRAS_API_KEY: ""
+      XAI_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      ZAI_API_KEY: ""
+      MISTRAL_API_KEY: ""
+      MINIMAX_API_KEY: ""
+      MINIMAX_CN_API_KEY: ""
+      KIMI_API_KEY: ""
+      AI_GATEWAY_API_KEY: ""
+      OPENCODE_API_KEY: ""
+      COPILOT_GITHUB_TOKEN: ""
+      HF_TOKEN: ""
+      GOOGLE_APPLICATION_CREDENTIALS: ""
+      GOOGLE_CLOUD_PROJECT: ""
+      GCLOUD_PROJECT: ""
+      GOOGLE_CLOUD_LOCATION: ""
+      AWS_PROFILE: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+      AWS_SESSION_TOKEN: ""
+      AWS_REGION: ""
+      AWS_DEFAULT_REGION: ""
+      AWS_BEARER_TOKEN_BEDROCK: ""
+      AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: ""
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: ""
+      AWS_WEB_IDENTITY_TOKEN_FILE: ""
+      AZURE_OPENAI_API_KEY: ""
+      AZURE_OPENAI_BASE_URL: ""
+      AZURE_OPENAI_RESOURCE_NAME: ""
+      PI_NO_LOCAL_LLM: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          cache: npm
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s "$(which fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        # Organization-owned packages are accessible through this repository token.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci --ignore-scripts
+
+      - name: Build workspace declarations
+        run: npm run build
+
+      - name: Fork canonical check
         run: npm run check
 
-      - name: Test
-        run: npm test
+      # Blocking on error-severity depcruise boundary rules (fork-added files only);
+      # warn-severity cycles/orphans and knip findings remain advisory (printed, exit 0).
+      - name: Static analysis - fork delta (knip + dependency-cruiser)
+        run: npm run lint:fork-delta
+
+      - name: Source CLI smoke
+        run: ./pi-test.sh --no-env --version
+
+  # Upstream 1.0.0 (a4715ec9b): runs pi's MCP client from source against the pinned
+  # official conformance suite and fails on regressions against
+  # packages/coding-agent/test/mcp-conformance/baseline.json.
+  mcp-conformance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # read published @leo-labs-ai/pi-* dependencies from GitHub Packages
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: 'https://npm.pkg.github.com'
+          cache: npm
+
+      - name: Install dependencies
+        env:
+          # Organization-owned packages are accessible through this repository token.
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm ci --ignore-scripts
+
+      - name: MCP client conformance
+        run: npm run test:mcp-conformance

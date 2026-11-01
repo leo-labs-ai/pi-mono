@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 dist/
 .artifacts/
 *.log
@@ -37,8 +37,27 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
+packages/env/bin/
+packages/env/daemon/target/
 todo.md
 plans/
+.pi/workflows/
+.pi/workspaces/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/settings.json
 collect.sh
+.repowise/
+.mcp.json
+
+# pi workspace worktrees nested in repo root
+.pi-ws-*/
+
+# rusty (pi) session store
+.rusty/
+
+# Rust recast experiment build output
+experiments/rusty-core-recast/target/
+
+# upstream: generated extension doc
+packages/agent/docs/extensions/pi-server-artifact/index.md

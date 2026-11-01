@@ -9,6 +9,9 @@
 # Shell scripts should keep LF
 *.sh text eol=lf
 
+# Archived patch artifacts preserve whitespace exactly
+packages/agent/docs/**/*.diff -whitespace
+
 # Common binary assets
 *.png binary
 *.jpg binary
@@ -21,3 +24,33 @@
 *.gz binary
 *.woff binary
 *.woff2 binary
+
+# Changelogs: auto-union on merge/rebase so upstream syncs never hard-conflict.
+# FORK-CHANGELOG.md (and any stray *CHANGELOG.md) auto-union so syncs never
+# hard-conflict. Package CHANGELOG.md files are now fork-owned stubs that point
+# at FORK-CHANGELOG.md + the archived upstream history — merge=ours keeps the
+# stub across upstream syncs so they never re-append their full changelog (the
+# old merge=union grew coding-agent's to 400KB+ and broke release-body
+# extraction; see docs/adr/0002). Upstream's history is frozen once in
+# CHANGELOG.upstream.md (union — harmless append if a sync ever touches it).
+*CHANGELOG.md merge=union
+packages/*/CHANGELOG.md merge=ours
+*CHANGELOG.upstream.md merge=union
+
+# Model registries: generated from LIVE provider API fetches (OpenRouter, NVIDIA NIM,
+# …) at generation time, so upstream's snapshot and the fork's never match → every
+# sync would hard-conflict. merge=ours keeps the fork's committed snapshot on merge.
+# The fork refreshes deliberately via `npm --prefix packages/ai run refresh-models`
+# (decoupled from `build`, so builds no longer dirty the tree). The `ours` driver is
+# registered by scripts/setup-merge-drivers.sh (run once per clone).
+packages/ai/src/models.generated.ts merge=ours
+packages/ai/src/image-models.generated.ts merge=ours
+
+# Root lockfile: npm regenerates package-lock.json from package.json on install,
+# so the fork's and upstream's never match byte-for-byte → every sync hard-conflicts
+# on 2k+ lines of generated lock data with zero code value. merge=ours keeps the
+# fork's committed lockfile on merge; reconcile deliberately with `npm install` after
+# a dependency change (scripts/check-lockfile-commit.mjs guards drift). Same rationale
+# as the generated model registries above (ADR docs/adr/0002). Scoped to the root
+# lockfile only — example-extension lockfiles stay upstream-owned.
+/package-lock.json merge=ours
