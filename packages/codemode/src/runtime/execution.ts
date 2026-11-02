@@ -131,15 +131,16 @@ function parseStoreWrites(json: string): CodemodeStoreWrites {
 function parseScriptError(json: string): CodemodeError {
 	const parsed = parseBridgeJson(json, "script error");
 	if (typeof parsed !== "object" || parsed === null) throw new BridgeError("script error is not an object");
-	const { name, message, stack } = parsed as Record<string, unknown>;
+	const { name, message, stack, phase } = parsed as Record<string, unknown>;
 	if (
 		typeof message !== "string" ||
 		(name !== undefined && typeof name !== "string") ||
-		(stack !== undefined && typeof stack !== "string")
+		(stack !== undefined && typeof stack !== "string") ||
+		(phase !== undefined && phase !== "parse")
 	) {
 		throw new BridgeError("script error is malformed");
 	}
-	return { kind: "script", name, message, stack };
+	return { kind: "script", name, message, stack, ...(phase === "parse" ? { phase } : {}) };
 }
 
 interface PendingCall {

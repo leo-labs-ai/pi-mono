@@ -74,6 +74,7 @@ export type CodemodeErrorKind =
 
 export interface CodemodeError {
 	kind: CodemodeErrorKind;
+	phase?: "parse";
 	name?: string;
 	message: string;
 	stack?: string;
