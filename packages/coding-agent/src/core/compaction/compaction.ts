@@ -804,7 +804,8 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -822,7 +823,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
-			reserveTokens,
+			_reserveTokens,
 			apiKey,
 			headers,
 			signal,
@@ -862,7 +863,8 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -1178,7 +1180,6 @@ export async function compact(
 		tokensBefore,
 		previousSummary,
 		fileOps,
-		settings,
 	} = preparation;
 
 	// Generate summaries and merge into one
@@ -1192,7 +1193,7 @@ export async function compact(
 			const historyResult = await generateSummaryWithUsage(
 				messagesToSummarize,
 				model,
-				settings.reserveTokens,
+				undefined,
 				apiKey,
 				headers,
 				signal,
@@ -1212,7 +1213,7 @@ export async function compact(
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			env,
@@ -1223,6 +1224,7 @@ export async function compact(
 			callbacks,
 			sessionId,
 			cacheSafeContext,
+			customInstructions,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1232,7 +1234,7 @@ export async function compact(
 		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			signal,
@@ -1301,7 +1303,7 @@ function buildTurnBoundaryExcerpt(turnPrefixMessages: AgentMessage[]): string {
 export async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
@@ -1312,6 +1314,7 @@ export async function generateTurnPrefixSummary(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
+	customInstructions?: string,
 ): Promise<{ text: string; usage: Usage }> {
 	// Cache-safe path: the split-turn prefix messages are ALREADY present verbatim in
 	// cacheSafeContext.messages (the live model-facing transcript). Re-serializing them into the
@@ -1324,13 +1327,14 @@ export async function generateTurnPrefixSummary(
 	//
 	// The standalone path is unchanged and still embeds the conversation, since it builds a
 	// standalone context that does not contain these messages.
+	const focusSuffix = customInstructions ? `\n\nAdditional focus: ${customInstructions}` : "";
 	const context = cacheSafeContext
 		? buildCacheSafeSummarizationContext(
 				cacheSafeContext,
-				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
+				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
 			)
 		: buildSummarizationContext(
-				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`,
+				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}`,
 			);
 
 	const response = await completeSummarization(

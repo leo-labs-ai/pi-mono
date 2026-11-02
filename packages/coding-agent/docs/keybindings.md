@@ -12,6 +12,7 @@ Map each action identifier to one key or a list of keys:
 
 ```json
 {
+  "$schema": "https://pi.dev/schemas/keybindings.schema.json",
   "app.session.new": "ctrl+shift+n",
   "app.session.tree": ["ctrl+shift+t", "alt+shift+t"]
 }
@@ -115,6 +116,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
 | `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the transcript |
 | `tui.altScreen.bottom` | `ctrl+end` | Scroll to the transcript end and follow new output |
+| `tui.altScreen.copy` | `super+c` | Copy the active fullscreen selection (Cmd+C in terminals that report super keys, such as Rex, Kitty and Ghostty) |
 
 ### Application
 

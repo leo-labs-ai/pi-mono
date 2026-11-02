@@ -254,8 +254,13 @@ export function loadProjectContextFiles(options: {
 
 	while (true) {
 		const contextFile = loadContextFileFromDir(currentDir);
+		// Compare the directory's real path, not the file's: a worktree AGENTS.md that
+		// symlinks to the main repo's file resolves to the shadowed path itself.
 		const isShadowed =
-			shadowedContextFile !== undefined && canonicalizePath(contextFile?.path ?? "") === shadowedContextFile;
+			shadowedContextFile !== undefined &&
+			contextFile !== null &&
+			join(canonicalizePath(currentDir), basename(contextFile.path)) === shadowedContextFile;
+		// Fork: dedupe by realpath, so symlinked context files load once.
 		const canonicalPath = contextFile ? canonicalizePath(contextFile.path) : undefined;
 		if (contextFile && canonicalPath && !isShadowed && !seenPaths.has(canonicalPath)) {
 			ancestorContextFiles.unshift(contextFile);

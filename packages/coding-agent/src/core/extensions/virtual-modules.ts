@@ -1,5 +1,6 @@
 import * as bundledPiAgentCore from "@leo-labs-ai/pi-agent-core";
 import * as bundledPiAiCompat from "@leo-labs-ai/pi-ai/compat";
+import * as bundledPiAiModels from "@leo-labs-ai/pi-ai/models";
 import * as bundledPiAiOauth from "@leo-labs-ai/pi-ai/oauth";
 import * as bundledPiAiProviders from "@leo-labs-ai/pi-ai/providers/all";
 import * as bundledPiTui from "@leo-labs-ai/pi-tui";
@@ -22,6 +23,7 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@earendil-works/pi-tui": bundledPiTui,
 	"@earendil-works/pi-ai": bundledPiAiCompat,
 	"@earendil-works/pi-ai/compat": bundledPiAiCompat,
+	"@earendil-works/pi-ai/models": bundledPiAiModels,
 	"@earendil-works/pi-ai/oauth": bundledPiAiOauth,
 	"@earendil-works/pi-ai/providers/all": bundledPiAiProviders,
 	"@earendil-works/pi-coding-agent": bundledPiCodingAgent,
@@ -32,6 +34,7 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	// global API keep working at runtime until compat is removed.
 	"@leo-labs-ai/pi-ai": bundledPiAiCompat,
 	"@leo-labs-ai/pi-ai/compat": bundledPiAiCompat,
+	"@leo-labs-ai/pi-ai/models": bundledPiAiModels,
 	"@leo-labs-ai/pi-ai/oauth": bundledPiAiOauth,
 	"@leo-labs-ai/pi-ai/providers/all": bundledPiAiProviders,
 	"@leo-labs-ai/pi-coding-agent": bundledPiCodingAgent,
@@ -39,6 +42,7 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-tui": bundledPiTui,
 	"@mariozechner/pi-ai": bundledPiAiCompat,
 	"@mariozechner/pi-ai/compat": bundledPiAiCompat,
+	"@mariozechner/pi-ai/models": bundledPiAiModels,
 	"@mariozechner/pi-ai/oauth": bundledPiAiOauth,
 	"@mariozechner/pi-ai/providers/all": bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": bundledPiCodingAgent,
