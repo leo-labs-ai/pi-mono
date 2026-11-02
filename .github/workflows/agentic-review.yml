@@ -151,7 +151,7 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         run: npm install --prefix "$RUNNER_TEMP/ar" @valkyriweb/agentic-review@0.1.0
 
-      # Skills (private) + bridge (private) — need a PAT with repo read.
+      # Skills (private) — need a PAT with repo read.
       - name: Checkout skills (agent-scripts)
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
@@ -171,14 +171,6 @@ jobs:
           repository: valkyriweb/skills
           path: skills-sot
           token: ${{ secrets.GH_CLONE_TOKEN }}
-      - name: Checkout claude-bridge
-        if: env.RUN_REVIEW == 'true'
-        uses: actions/checkout@v7
-        with:
-          repository: leo-labs-ai/pi-claude-bridge
-          path: pi-claude-bridge
-          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
-
       # Detect the rusty-review engine across the SoT layouts instead of hardcoding
       # one path, and FAIL LOUDLY if it is absent — a missing engine must break the
       # required check, never silently pass as a manual review (issue #318).
@@ -225,11 +217,30 @@ jobs:
         # ~/.npmrc configured above provides GitHub Packages auth. --ignore-scripts:
         # pi loads the .ts extensions directly (jiti), so no build postinstall.
         run: npm --prefix my-pi ci --ignore-scripts
-      - name: Stage pi agent config (bridge provider + actions profile source + skills)
+      - name: Stage pi agent config (ClawRouter provider + actions profile source + skills)
         if: env.RUN_REVIEW == 'true'
         run: |
           mkdir -p "$HOME/.pi/agent"
           cp "$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review/ci-models.json" "$HOME/.pi/agent/models.json"
+          jq '
+            if (.providers // {} | type) != "object" then error("ci-models.json providers must be an object") else . end
+            | .providers = ((.providers // {}) | del(."claude-bridge") | .clawrouter = {
+                name: "ClawRouter",
+                baseUrl: "https://clawrouter.openclaw.ai",
+                api: "anthropic-messages",
+                apiKey: "$CLAWROUTER_API_KEY",
+                models: [{
+                  id: "anthropic/claude-opus-5-5",
+                  name: "Claude Opus 5.5",
+                  api: "anthropic-messages",
+                  reasoning: true,
+                  input: ["text", "image"],
+                  contextWindow: 1000000,
+                  maxTokens: 128000
+                }]
+              })
+          ' "$HOME/.pi/agent/models.json" > "$RUNNER_TEMP/clawrouter-models.json"
+          mv "$RUNNER_TEMP/clawrouter-models.json" "$HOME/.pi/agent/models.json"
           # Load the actions profile's extension list minus native-tool-overrides
           # and tool-search: they call fork extension APIs (pi.hooks, pi.harness,
           # pi.getExtensionConfig, pi.tools deferral) that fork 1.0.x does not have,
@@ -241,9 +252,9 @@ jobs:
             "$PROFILE/package.json")
           cat > "$HOME/.pi/agent/settings.json" <<EOF
           {
-            "defaultProvider": "claude-bridge",
-            "defaultModel": "claude-opus-4-8",
-            "enabledModels": ["claude-bridge/*"],
+            "defaultProvider": "clawrouter",
+            "defaultModel": "anthropic/claude-opus-5-5",
+            "enabledModels": ["clawrouter/*"],
             "defaultTools": ["+Workflow"],
             "extensions": $EXTENSIONS
           }
@@ -269,23 +280,20 @@ jobs:
           # The extensions load in place from my-pi@main source (including the
           # Workflow tool). Local paths need no `pi install`/download.
 
-      - name: Start claude-bridge sidecar
+      - name: Verify ClawRouter credential is configured
         if: env.RUN_REVIEW == 'true'
+        env:
+          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
         run: |
-          cd pi-claude-bridge
-          # The bridge repo intentionally has no committed lockfile (gitignored),
-          # so `npm ci` (which requires one) fails — use `npm install`.
-          npm install
-          printf '_BRIDGE_OAUTH_TOKEN=%s\n' '${{ secrets._BRIDGE_OAUTH_TOKEN }}' > .env
-          nohup npm start > /tmp/bridge.log 2>&1 &
-          for _ in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:9100/health >/dev/null; then echo "bridge up"; exit 0; fi
-            sleep 1
-          done
-          echo "bridge failed to start"; cat /tmp/bridge.log; exit 1
+          if [ -z "${CLAWROUTER_API_KEY:-}" ]; then
+            echo "::error::Required repository secret CLAWROUTER_API_KEY is not configured"
+            exit 1
+          fi
 
       - name: Boot smoke (actions profile loads against this fork)
         if: env.RUN_REVIEW == 'true'
+        env:
+          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
         # Fail loudly and specifically if the profile can't boot against this fork,
         # instead of the cryptic "no review result produced" from a crashed pi.
         run: |
@@ -312,6 +320,7 @@ jobs:
           JS
           # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
           set -e
+          echo "model request provider=clawrouter endpoint=https://clawrouter.openclaw.ai model=anthropic/claude-opus-5-5"
           if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
             STATUS=0
           else
@@ -326,7 +335,7 @@ jobs:
             echo "::error::actions profile failed to load against this fork (extension/API skew) — see output above"; exit 1
           fi
           if ! printf '%s' "$OUT" | grep -q "READY"; then
-            echo "::error::boot smoke got no model reply (bridge/model issue) — see output above"; exit 1
+            echo "::error::boot smoke got no model reply (ClawRouter/model issue) — see output above"; exit 1
           fi
           echo "boot smoke OK"
 
@@ -343,6 +352,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           ADVISORY: ${{ needs.gate.outputs.advisory_only }}
+          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
         run: |
           mkdir -p /tmp/agentic-review
           AR="$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review"
