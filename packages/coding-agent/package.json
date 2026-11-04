@@ -1,6 +1,6 @@
 {
 	"name": "@leo-labs-ai/pi-coding-agent",
-	"version": "1.4.0",
+	"version": "1.4.1",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -45,9 +45,9 @@
 	"dependencies": {
 		"@earendil-works/pi-codemode": "1.4.0",
 		"@earendil-works/pi-mcp": "1.4.0",
-		"@leo-labs-ai/pi-agent-core": "1.4.0",
-		"@leo-labs-ai/pi-ai": "1.4.0",
-		"@leo-labs-ai/pi-tui": "1.4.0",
+		"@leo-labs-ai/pi-agent-core": "1.4.1",
+		"@leo-labs-ai/pi-ai": "1.4.1",
+		"@leo-labs-ai/pi-tui": "1.4.1",
 		"@pierre/diffs": "1.2.12",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"brace-expansion": "5.0.12",
