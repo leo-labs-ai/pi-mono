@@ -1,3 +1,5 @@
+> **leo-labs** — brand name (Leonardo + leopard). GitHub org: [`leo-labs-ai`](https://github.com/leo-labs-ai). Fork packages publish to GitHub Packages as `@leo-labs-ai/*`.
+
 <p align="center">
   <a href="https://pi.dev">
     <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
@@ -69,13 +71,17 @@ Nix builds are offline, so the bundled model data comes from a pi.dev model cata
 npm run update:model-catalog-pin
 ```
 
+Source builds do not use the Nix pin. `npm run build` in `packages/ai` hydrates model data from the committed `packages/ai/model-catalog.snapshot.json` and never contacts models.dev, so a build does not change when upstream model data changes. To hydrate by hand, run `npm run hydrate:model-snapshot`. To update the snapshot, run `npm run refresh:model-snapshot`. It regenerates the catalog from live data with `--check-api-drift`, validates it, and overwrites the snapshot only if no upstream model was skipped. Review and commit the snapshot diff. `npm run hydrate:model-data` and `npm run generate:models` remain live refreshes of the local data. Live refreshes skip upstream models whose npm adapter or API pi cannot serve and print `Skipped model:` warnings. Add `--check-api-drift` (and optionally `--diagnostics-json <file>`) to `node packages/ai/scripts/generate-models.ts` to exit non-zero when anything was skipped.
+
+OpenRouter snapshot costs come from each model ID's `pricing.prompt`, `pricing.completion`, and cache fields in [its models API](https://openrouter.ai/api/v1/models), converted from dollars per token to dollars per million tokens. A `:batch` suffix does not guarantee a lower price than another ID. For example, on 2026-10-14 the API returned GPT-OSS 20B at $0.018/$0.09 input/output and its batch variant at $0.024/$0.112. `openrouter-catalog-pricing.test.ts` records those source fields and verifies the conversion without adjusting either price.
+
 ## Packages
 
 This monorepo contains the Pi CLI and its supporting libraries.
 
 | Package | Description |
 |---------|-------------|
-| **[@earendil-works/chord](packages/chord)** | Standalone application-composition runtime for services, replicated state, RPC, and plugins |
+| **[@earendil-works/chord](packages/chord)** | Typed host runtime for hot-reloadable plugins, contracts, replicated state, and RPC over JSON links |
 | **[@earendil-works/pi-telemetry](packages/telemetry)** | Vendor-neutral telemetry contracts, reference adapter, conformance tests, and typed schemas |
 | **[@earendil-works/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@earendil-works/pi-durable](packages/durable)** | Durable conversation, task, and document runtime |
@@ -110,6 +116,48 @@ npm run check         # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
+### Using local packages outside the monorepo
+
+Build every public package into one coherent local artifact set:
+
+```bash
+npm run pack:packages -- --out .artifacts/pi-packages
+```
+
+This refreshes model data before building `pi-ai`. To avoid network access when
+model data is already hydrated, pass `--offline-model-data`.
+
+Then configure an external project to consume one package and resolve all of
+its Pi dependencies from the same artifact set. npm is the default:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-durable \
+  --package @earendil-works/pi-agent-core
+cd ../my-project
+npm install --ignore-scripts
+```
+
+For a pnpm project, point `--consumer` at the workspace root:
+
+```bash
+node scripts/use-local-packages.mjs \
+  --manifest .artifacts/pi-packages/manifest.json \
+  --consumer ../my-project \
+  --package @earendil-works/pi-agent-core \
+  --package-manager pnpm
+cd ../my-project
+pnpm install --ignore-scripts
+```
+
+Repeat `--package` for each direct dependency. The command updates the
+consumer's `package.json` with content-addressed local `file:` references. It
+writes transitive overrides to `package.json` for npm or `pnpm-workspace.yaml`
+for pnpm. Keep the artifact directory available while installing or updating
+the consumer. Re-run both commands after changing Pi source.
+
 ## Building standalone binaries from release source
 
 GitHub releases include a versioned source archive covered by the release's `SHA256SUMS` file. Extract it and run the same build script used for the official standalone binaries:
@@ -132,7 +180,7 @@ We treat npm dependency changes as reviewed code changes.
 - `package-lock.json` is the dependency ground truth. Pre-commit blocks accidental lockfile commits unless `PI_ALLOW_LOCKFILE_CHANGE=1` is set.
 - `npm run check` verifies pinned direct deps, native TypeScript import compatibility, and the generated coding-agent install lock.
 - The pi.dev installer installs from `packages/coding-agent/install-lock/`, generated from the root lockfile, to pin transitive deps. The npm package does not pin transitive deps.
-- Release smoke tests use `npm run release:local` to build, pack, and create isolated npm and Bun installs outside the repo before tagging a release.
+- Local release smoke tests and npm publication use the same tarball packer; npm publishes the validated tarballs rather than repacking workspace directories.
 - Local release installs, documented npm installs, and `pi update --self` use `--ignore-scripts` where supported.
 - CI installs with `npm ci --ignore-scripts`, and a scheduled GitHub workflow runs `npm audit --omit=dev` plus `npm audit signatures --omit=dev`.
 - Install lock generation has an explicit allowlist for dependency lifecycle scripts; new lifecycle-script deps fail checks until reviewed.

@@ -5,10 +5,10 @@ import { openAIResponsesApi } from "../api/openai-responses.lazy.ts";
 import { typesafeSystemOneApi } from "../api/typesafe-system-one.lazy.ts";
 import { envApiKeyAuth } from "../auth/helpers.ts";
 import { createProvider, type Provider } from "../models.ts";
+import type { ProviderStreams } from "../types.ts";
 import { OPENCODE_CLASSIFIER_MODELS, OPENCODE_MODELS } from "./opencode.models.ts";
+import type { OpenCodeApi } from "./opencode-apis.ts";
 import { withOpenCodeSessionHeader } from "./opencode-headers.ts";
-
-type OpenCodeApi = "anthropic-messages" | "google-generative-ai" | "openai-completions" | "openai-responses";
 
 export function opencodeProvider(): Provider<OpenCodeApi> {
 	return createProvider<OpenCodeApi>({
@@ -21,7 +21,7 @@ export function opencodeProvider(): Provider<OpenCodeApi> {
 			"google-generative-ai": withOpenCodeSessionHeader(googleGenerativeAIApi()),
 			"openai-completions": withOpenCodeSessionHeader(openAICompletionsApi()),
 			"openai-responses": withOpenCodeSessionHeader(openAIResponsesApi()),
-		},
+		} satisfies Record<OpenCodeApi, ProviderStreams>,
 		// OpenCode Zen serves TypeSafe's System One protocol at /zen/v1/systemone.
 		classifiers: { "typesafe-system-one": typesafeSystemOneApi() },
 	});

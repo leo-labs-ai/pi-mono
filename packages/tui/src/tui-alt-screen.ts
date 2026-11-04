@@ -301,6 +301,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		this.copyOnSelect = enabled;
 	}
 
+	/**
+	 * Stop mouse reporting ahead of stop(). Call before draining input on exit: with any-motion
+	 * tracking (1003) the terminal keeps sending pointer reports during the drain, and reports in
+	 * flight when stop() restores cooked mode leak into the parent shell as text (#656).
+	 */
+	disableMouseReporting(): void {
+		if (!this.altScreenActive || !this.mouseEnabled) return;
+		this.terminal.write(DISABLE_MOUSE);
+	}
+
 	/** Whether the fullscreen viewport has a non-empty active text selection. */
 	hasActiveSelection(): boolean {
 		return this.getActiveSelectionText() !== undefined;
@@ -311,6 +321,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		const text = this.getActiveSelectionText();
 		if (!text) return false;
 		return this.copyTextToClipboard(text);
+	}
+
+	/** Drop the text selection and multi-click history, e.g. before the host replaces the transcript. */
+	resetTextSelection(): void {
+		this.clearTextSelection();
+		this.lastClick = undefined;
 	}
 
 	/** The lines of the last rendered frame, one per terminal row, as written to the terminal. */
@@ -401,7 +417,9 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			this.terminal.write(`${BEGIN_SYNCHRONIZED_OUTPUT}${EXIT_ALT_SCREEN}\x1b[?25h${END_SYNCHRONIZED_OUTPUT}`);
 		} else {
 			const width = Math.max(1, this.terminal.columns);
-			const documentLines = this.render(width).map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+			const documentLines = this.resolveFakeCursors(this.render(width)).map((line) =>
+				line.replace(OSC133_ZONE_PREFIX, ""),
+			);
 			this.lastDocument = this.applyLineResets(documentLines.map((line) => line.replaceAll(CURSOR_MARKER, ""))).map(
 				(line) => (isImageLine(line) || visibleWidth(line) <= width ? line : sliceByColumn(line, 0, width, true)),
 			);
@@ -417,6 +435,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			setCapabilities(this.savedCapabilities);
 			this.savedCapabilities = undefined;
 		}
+	}
+
+	protected override getExitRestorePrefix(): string {
+		const prefix = super.getExitRestorePrefix();
+		if (!this.altScreenActive) return prefix;
+		return `${END_SYNCHRONIZED_OUTPUT}${this.mouseEnabled ? DISABLE_MOUSE : ""}${ENABLE_AUTOWRAP}${prefix}`;
+	}
+
+	protected override getExitRestoreSuffix(): string {
+		// Kitty keyboard flags are per screen, so the terminal pops them before the alternate screen is left.
+		return `${super.getExitRestoreSuffix()}${this.altScreenActive ? `${EXIT_ALT_SCREEN}\x1b[?25h` : ""}`;
 	}
 
 	private deleteKittyImages(): string {
@@ -707,7 +736,6 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (this.applyMouseDispatchResult(event, result)) this.requestRender();
 				return { consume: true };
 			}
-			if (this.shouldDeferViewportInputToOverlay()) return undefined;
 			this.routeWheel(wheelEvent, wheelDelta);
 			return { consume: true };
 		}
@@ -737,6 +765,12 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 				if (!isRelease) this.closeSearch();
 				return { consume: true };
 			}
+		}
+		// Mouse tracking makes the selection application-owned, so the terminal has nothing to copy on
+		// Cmd+C. Terminals that report super-modified keys (Kitty protocol) forward it here instead.
+		if (keybindings.matches(data, "tui.altScreen.copy") && this.hasActiveSelection()) {
+			if (!isRelease) void this.copyActiveSelectionToClipboard();
+			return { consume: true };
 		}
 		if (this.shouldDeferViewportInputToOverlay()) return undefined;
 		if (keybindings.matches(data, "tui.altScreen.pageUp")) {
@@ -1678,7 +1712,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 		if (this.refreshSearch(nextLayout)) {
 			nextLayout = renderLayoutFrame(root, width, height, () => this.requestRender());
 		}
-		let screen = nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, ""));
+		// Resolve fake cursors before highlighting and compositing, which only track SGR codes
+		let screen = this.resolveFakeCursors(nextLayout.lines.map((line) => line.replace(OSC133_ZONE_PREFIX, "")));
 		screen = this.applySearchHighlights(screen, nextLayout);
 		screen = this.compositeScrollToEndIndicator(screen, nextLayout, width);
 		screen = this.compositeOverlays(screen, width, height);

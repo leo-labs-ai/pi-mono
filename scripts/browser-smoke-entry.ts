@@ -1,8 +1,7 @@
-import { Client } from "@leo-labs-ai/pi-client";
+import { createHost, memoryLinkPair, replicatedState } from "@earendil-works/chord";
 import { createAssistantMessageEventStream, Type } from "@leo-labs-ai/pi-ai";
 import { complete, getModel, getProviders, streamSimple } from "@leo-labs-ai/pi-ai/compat";
 import { Agent, streamProxy } from "@leo-labs-ai/pi-agent-core";
-import { decodeCbor, encodeCbor, PROTOCOL_VERSION } from "@leo-labs-ai/pi-protocol";
 
 // Keep this entry browser-safe. It is bundled by scripts/check-browser-smoke.mjs
 // to catch accidental Node-only runtime imports in browser-facing package exports.
@@ -21,7 +20,7 @@ console.log(
 	typeof stream.push,
 	agent.hasQueuedMessages(),
 	typeof streamProxy,
-	typeof Client,
-	PROTOCOL_VERSION,
-	decodeCbor(encodeCbor({ browser: true })),
+	typeof createHost,
+	typeof memoryLinkPair,
+	replicatedState({ browser: true }).value.browser,
 );

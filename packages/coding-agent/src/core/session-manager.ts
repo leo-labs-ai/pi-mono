@@ -15,8 +15,10 @@ import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
+	constants,
 	createReadStream,
 	existsSync,
+	fstatSync,
 	mkdirSync,
 	openSync,
 	readdirSync,
@@ -26,7 +28,7 @@ import {
 	writeFileSync,
 } from "fs";
 import { readdir, stat } from "fs/promises";
-import { basename, join, resolve } from "path";
+import { basename, dirname, join, resolve } from "path";
 import { createInterface } from "readline";
 import { StringDecoder } from "string_decoder";
 import { APP_NAME, getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
@@ -555,25 +557,36 @@ export function buildSessionProjection(
 	leafId?: string | null,
 	byId?: Map<string, SessionEntry>,
 ): SessionProjection {
-	const path = buildSessionPath(entries, leafId, byId);
+	const entryIndex = buildEntryIndex(entries, byId);
+	const path = buildSessionPath(entries, leafId, entryIndex);
 	const { thinkingLevel, model } = getSessionContextSettings(path);
-	const contextEntries = buildContextEntries(entries, leafId, byId);
+	const contextEntries = buildContextEntries(entries, leafId, entryIndex);
 	const edits = new Map<string, ContextEditEntry>();
 	for (const entry of contextEntries) {
 		if (entry.type === "context_edit") edits.set(entry.targetId, entry);
 	}
-	const projectedEntries = contextEntries.map(
-		(sourceEntry, index): ProjectedSessionEntry => ({
-			sourceEntry,
-			// buildContextEntries() may retain an older compaction entry because its
-			// raw ID lies inside the newest retained range. Only the newest compaction
-			// at index zero contributes a checkpoint and summary.
-			messages:
-				sourceEntry.type === "compaction" && index > 0
-					? []
-					: projectContextEntry(sourceEntry, edits.get(sourceEntry.id)),
-		}),
-	);
+	const projectedEntries = contextEntries.map((sourceEntry, index): ProjectedSessionEntry => {
+		// buildContextEntries() may retain an older compaction entry because its
+		// raw ID lies inside the newest retained range. Only the newest compaction
+		// at index zero contributes a checkpoint and summary.
+		if (sourceEntry.type === "compaction" && index > 0) return { sourceEntry, messages: [] };
+
+		const messages = projectContextEntry(sourceEntry, edits.get(sourceEntry.id));
+		// Older session files predate compaction system checkpoints. Recover the tool/prompt
+		// state at that boundary so later deltas remain valid after reload.
+		if (sourceEntry.type === "compaction" && index === 0 && !sourceEntry.systemMessage && sourceEntry.parentId) {
+			const previousMessages = buildSessionProjection(entries, sourceEntry.parentId, entryIndex).messages;
+			const systemMessage = getCurrentSystemMessage(previousMessages);
+			if (systemMessage) {
+				const timestamp = Date.parse(sourceEntry.timestamp);
+				messages.unshift({
+					...systemMessage,
+					timestamp: Number.isFinite(timestamp) ? timestamp : systemMessage.timestamp,
+				});
+			}
+		}
+		return { sourceEntry, messages };
+	});
 	return {
 		entries: projectedEntries,
 		messages: projectedEntries.flatMap((entry) => entry.messages),
@@ -1001,6 +1014,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private _needsPersistenceRecovery = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
@@ -1052,11 +1066,13 @@ export class SessionManager {
 				this.sessionFile = explicitPath;
 				this._rewriteFile();
 				this.flushed = true;
+				this._needsPersistenceRecovery = false;
 				return;
 			}
 
 			this._loadEntries(entries);
 			this.flushed = true;
+			this._needsPersistenceRecovery = false;
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -1084,6 +1100,7 @@ export class SessionManager {
 		this.labelTimestampsById.clear();
 		this.leafId = null;
 		this.flushed = false;
+		this._needsPersistenceRecovery = false;
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
@@ -1181,20 +1198,60 @@ export class SessionManager {
 
 	_persist(entry: SessionEntry): void {
 		if (!this.persist || !this.sessionFile) return;
+		if (!this.flushed && !this._hasConversation()) return;
 
-		if (!this.flushed) {
-			if (!this._hasConversation()) return;
-			const fd = openSync(this.sessionFile, "wx");
-			try {
-				for (const e of this.fileEntries) {
-					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+		try {
+			if (this.flushed && !this._needsPersistenceRecovery) {
+				// Do not create a headerless transcript when an active file disappears.
+				const fd = openSync(this.sessionFile, constants.O_WRONLY | constants.O_APPEND);
+				try {
+					writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+					this._assertPersistedFileLinked(fd);
+				} finally {
+					closeSync(fd);
 				}
-			} finally {
-				closeSync(fd);
+			} else {
+				this._createPersistedSessionFile();
 			}
-			this.flushed = true;
-		} else {
-			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
+		} catch (error) {
+			if (!(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")) {
+				throw error;
+			}
+			// Keep recovery pending if it fails. The next append must not write into
+			// a colliding backup that lacks entries already present in memory.
+			this._needsPersistenceRecovery = true;
+			const sessionDir = dirname(this.sessionFile);
+			if (!existsSync(sessionDir)) {
+				mkdirSync(sessionDir, { recursive: true });
+				console.warn(`Warning: recreated missing session directory for session ${this.sessionId}`);
+			}
+			// One exclusive recovery attempt. Even a same-ID backup can be missing
+			// a parent, so never append to or replace a file that wins this race.
+			this._createPersistedSessionFile();
+		}
+		this.flushed = true;
+		this._needsPersistenceRecovery = false;
+	}
+
+	private _assertPersistedFileLinked(fd: number): void {
+		// Check after writing: unlink between open/fstat and write must not look
+		// like successful persistence into a reachable transcript.
+		if (fstatSync(fd).nlink === 0) {
+			throw Object.assign(new Error(`Session ${this.sessionId} file disappeared during persistence`), {
+				code: "ENOENT",
+			});
+		}
+	}
+
+	private _createPersistedSessionFile(): void {
+		const fd = openSync(this.sessionFile!, "wx");
+		try {
+			for (const entry of this.fileEntries) {
+				writeFileSync(fd, `${JSON.stringify(entry)}\n`);
+			}
+			this._assertPersistedFileLinked(fd);
+		} finally {
+			closeSync(fd);
 		}
 	}
 
@@ -1275,9 +1332,13 @@ export class SessionManager {
 		details?: T,
 		fromHook?: boolean,
 		usage?: Usage,
+		systemMessageOverride?: SystemMessage | null,
 	): string {
 		const timestamp = new Date().toISOString();
-		const systemMessage = getCurrentSystemMessage(this.buildSessionProjection().messages);
+		const systemMessage =
+			systemMessageOverride === undefined
+				? getCurrentSystemMessage(this.buildSessionProjection().messages)
+				: (systemMessageOverride ?? undefined);
 		const id = generateId(this.byId);
 		const entry: CompactionEntry<T> = {
 			type: "compaction",
@@ -1732,8 +1793,10 @@ export class SessionManager {
 			if (this._hasConversation()) {
 				this._rewriteFile();
 				this.flushed = true;
+				this._needsPersistenceRecovery = false;
 			} else {
 				this.flushed = false;
+				this._needsPersistenceRecovery = false;
 			}
 
 			return newSessionFile;

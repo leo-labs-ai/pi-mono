@@ -4,7 +4,7 @@ import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import type { SystemMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
 import { Type } from "typebox";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionFactory } from "../../src/core/extensions/types.ts";
 import type { SessionManager } from "../../src/core/session-manager.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
@@ -120,6 +120,12 @@ function createFakeServer(
 describe("AgentSession MCP integration", () => {
 	const harnesses: Harness[] = [];
 
+	// Release run 38889114702 lost the first dynamic import of runtime.ts against
+	// vi.waitFor's 1s default. Load it once so later waits hit the module cache.
+	beforeAll(async () => {
+		await import("../../src/extensions/mcp/runtime.ts");
+	}, 30_000);
+
 	afterEach(() => {
 		while (harnesses.length > 0) harnesses.pop()?.cleanup();
 	});
@@ -200,8 +206,9 @@ describe("AgentSession MCP integration", () => {
 		});
 		// The first prompt waits only for servers with direct tools; wait for the others here.
 		if (waitForTools) {
-			await vi.waitFor(() =>
-				expect(harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+			await vi.waitFor(
+				() => expect(harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+				{ timeout: 15_000 },
 			);
 		}
 		return { harness, calls, servers, notifications };
@@ -677,6 +684,38 @@ return { docs, sameForAliases: aliases.every((alias) => JSON.stringify(alias) ==
 		]);
 	});
 
+	it("tells scripts what directly exposed MCP tools resolve to", async () => {
+		const { harness } = await setup("direct");
+		harness.session.setActiveToolsByName([...harness.session.getActiveToolNames(), "codemode"]);
+		const search = harness.session.agent.state.tools.find((tool) => tool.name === "mcp__docs__search");
+		const fail = harness.session.agent.state.tools.find((tool) => tool.name === "mcp__docs__fail");
+		expect(search?.description).toContain(
+			"Codemode: `tools.mcp__docs__search(args)` resolves to `{ content, structuredContent?: { hits }, isError? }`.",
+		);
+		expect(fail?.description).toContain(
+			"Codemode: `tools.mcp__docs__fail(args)` resolves to `{ content, structuredContent?, isError? }`.",
+		);
+	});
+
+	it("activates another extension's codemode tool when it reaches other tools", async () => {
+		const otherExec: ExtensionFactory = (pi) => {
+			pi.registerTool({
+				name: "codemode",
+				label: "codemode",
+				description: "Another extension's codemode tool.",
+				parameters: Type.Object({}),
+				defaultActive: false,
+				reachesTools: () => "all",
+				execute: async () => ({ content: [], details: undefined }),
+			});
+		};
+		const { harness } = await setup("codemode", undefined, { extensionFactories: [otherExec] });
+		harness.setResponses([fauxAssistantMessage("ready")]);
+		await harness.session.prompt("start");
+
+		expect(harness.session.getActiveToolNames()).toEqual(["codemode"]);
+	});
+
 	it("does not activate another extension's tool named codemode", async () => {
 		// Registered first, so it wins over the codemode extension's codemode.
 		const otherExec: ExtensionFactory = (pi) => {
@@ -826,7 +865,9 @@ return { docs, sameForAliases: aliases.every((alias) => JSON.stringify(alias) ==
 			fauxAssistantMessage(
 				[
 					fauxToolCall("codemode", {
-						code: `await tools.mcp__slow_docs__search({ query: "q" }); return (await describeNamespace("slow_docs")).name;`,
+						code: `await tools.mcp__slow_docs__search({ query: "q" });
+const names = ["slow-docs", "slow_docs", "mcp__slow-docs", "mcp__slow_docs"];
+return [...new Set(await Promise.all(names.map(async (name) => (await describeNamespace(name))?.name)))];`,
 					}),
 				],
 				{ stopReason: "toolUse" },
@@ -837,7 +878,7 @@ return { docs, sameForAliases: aliases.every((alias) => JSON.stringify(alias) ==
 		await harness.session.prompt("go");
 
 		expect(toolResult(harness, "codemode").isError).toBe(false);
-		expect(getMessageText(toolResult(harness, "codemode")).split("\n").at(-1)).toBe("mcp__slow_docs");
+		expect(getMessageText(toolResult(harness, "codemode")).split("\n").at(-1)).toBe('["mcp__slow_docs"]');
 		expect(calls).toEqual(['search:{"query":"q"}']);
 	});
 
@@ -1126,7 +1167,9 @@ describe("AgentSession MCP tools after resume and reload", () => {
 		sessionManager?: SessionManager,
 		extensionFactories: ExtensionFactory[] = [],
 		initializeDelayMs = 0,
+		options: { startupWaitMs?: number; initialActiveToolNames?: string[]; usesDefaultTools?: boolean } = {},
 	) {
+		const { startupWaitMs, ...toolOptions } = options;
 		const connected: string[] = [];
 		const servers: McpServerEntry[] = [
 			{ name: "docs", config: { url: "http://unused.invalid", exposure: "deferred" }, source: "test" },
@@ -1142,6 +1185,7 @@ describe("AgentSession MCP tools after resume and reload", () => {
 					void pair.server.start();
 					return pair.client;
 				},
+				...(startupWaitMs === undefined ? {} : { startupWaitMs }),
 			}),
 		];
 		let extensions = await createTestExtensionsResult(factories);
@@ -1152,7 +1196,7 @@ describe("AgentSession MCP tools after resume and reload", () => {
 				extensions = await createTestExtensionsResult(factories);
 			},
 		};
-		const harness = await createHarness({ resourceLoader, sessionManager });
+		const harness = await createHarness({ resourceLoader, sessionManager, ...toolOptions });
 		harnesses.push(harness);
 		// `/reload` emits session_start only to bound extensions.
 		await harness.session.bindExtensions({ uiContext: createTestUiContext() });
@@ -1212,12 +1256,60 @@ describe("AgentSession MCP tools after resume and reload", () => {
 		},
 	);
 
+	// The CLI passes the `defaultTools` setting as the initial tools when no `--tools` is given. A
+	// resumed session keeps the transcript's loadout instead, so its tool declarations, and with them
+	// the prompt cache, do not change (my-pi#1816).
+	it("restores the transcript's tools on resume when the session starts with the default tools", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+		const loadout = [...first.harness.session.getActiveToolNames()].sort();
+
+		const second = await setup(first.harness.sessionManager, [], 0, {
+			initialActiveToolNames: ["read"],
+			usesDefaultTools: true,
+		});
+		await vi.waitFor(() => expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search"));
+
+		expect([...second.harness.session.getActiveToolNames()].sort()).toEqual(loadout);
+	});
+
+	it("keeps an explicit tool list on resume", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+
+		const second = await setup(first.harness.sessionManager, [], 0, {
+			initialActiveToolNames: ["read"],
+			usesDefaultTools: false,
+		});
+		await vi.waitFor(() =>
+			expect(second.harness.session.getAllTools().some((tool) => tool.name === "mcp__docs__search")).toBe(true),
+		);
+
+		expect(second.harness.session.getActiveToolNames()).toContain("read");
+		expect(second.harness.session.getActiveToolNames()).not.toContain("mcp__docs__search");
+	});
+
+	it("holds the first prompt after resume for servers that own restored tools", async () => {
+		const first = await setup();
+		await loadDocsSearch(first.harness);
+
+		const second = await setup(first.harness.sessionManager, [], 200);
+		second.harness.setResponses([fauxAssistantMessage("done")]);
+		await second.harness.session.prompt("go");
+
+		expect(second.harness.session.getActiveToolNames()).toContain("mcp__docs__search");
+		const removals = second.harness.session.messages.filter(
+			(message) => message.role === "system" && (message.toolsRemoved ?? []).length > 0,
+		);
+		expect(removals).toEqual([]);
+	});
+
 	it("does not activate restored tools that register after the next prompt starts", async () => {
 		const first = await setup();
 		await loadDocsSearch(first.harness);
 
-		// The first prompt does not wait for servers without direct tools.
-		const second = await setup(first.harness.sessionManager, [], 200);
+		// The first prompt waits for the server only up to startupWaitMs.
+		const second = await setup(first.harness.sessionManager, [], 200, { startupWaitMs: 20 });
 		second.harness.setResponses([fauxAssistantMessage("done")]);
 		await second.harness.session.prompt("go");
 		await vi.waitFor(() =>

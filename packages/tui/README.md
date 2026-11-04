@@ -62,7 +62,7 @@ tui.start();
 - `TuiAltScreen` renders a fixed-height viewport in the alternate terminal buffer with application-owned scrolling. When stopped, it restores the main buffer and prints the complete final document.
 
 ```typescript
-import { type TUI, TuiAltScreen, TuiMainScreen } from "@earendil-works/pi-tui";
+import { type TUI, TuiAltScreen, TuiMainScreen } from "@leo-labs-ai/pi-tui";
 
 const tui: TUI = new TuiMainScreen(terminal);
 // To use an application-owned viewport in the alternate terminal buffer instead:
@@ -91,7 +91,7 @@ import {
   parseColor,
   rgbColor,
   styleText,
-} from "@earendil-works/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 
 const accent = parseColor("oklch(70% 0.12 220)");
 const background = parseColor("#20242a");
@@ -127,7 +127,7 @@ import {
   ScrollView,
   Text,
   VStack,
-} from "@earendil-works/pi-tui";
+} from "@leo-labs-ai/pi-tui";
 
 const transcript = new Container();
 transcript.addChild(new Text("History"));
@@ -269,7 +269,7 @@ The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered lin
 `TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. `TuiMainScreen` does not capture mouse input because the terminal owns its scrollback.
 
 ```typescript
-import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+import type { TuiMouseEvent, TuiMouseEventResult } from "@leo-labs-ai/pi-tui";
 
 handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
   if (event.type === "click" && event.button === "left") {
@@ -308,7 +308,7 @@ const collapsible = new MouseRegion(content, (event) => {
 Components that display a text cursor and need IME (Input Method Editor) support should implement the `Focusable` interface:
 
 ```typescript
-import { CURSOR_MARKER, type Component, type Focusable } from "@leo-labs-ai/pi-tui";
+import { CURSOR_MARKER, type Component, type Focusable, renderFakeCursor } from "@leo-labs-ai/pi-tui";
 
 class MyInput implements Component, Focusable {
   focused: boolean = false;  // Set by TUI when focus changes
@@ -316,7 +316,7 @@ class MyInput implements Component, Focusable {
   render(width: number): string[] {
     const marker = this.focused ? CURSOR_MARKER : "";
     // Emit marker right before the fake cursor
-    return [`> ${beforeCursor}${marker}\x1b[7m${atCursor}\x1b[27m${afterCursor}`];
+    return [`> ${beforeCursor}${marker}${renderFakeCursor(atCursor)}${afterCursor}`];
   }
 
   invalidate(): void {}
@@ -329,7 +329,9 @@ When a `Focusable` component has focus, TUI:
 3. Positions the hardware terminal cursor at that location
 4. Shows the hardware cursor only when `showHardwareCursor` is enabled
 
-The cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
+`renderFakeCursor()` wraps the cursor cell in zero-width markers. TUI renders them as reverse video. When `showHardwareCursor` is enabled, TUI removes the fake cursor that directly follows `CURSOR_MARKER`, so the focused component shows only the terminal cursor. Fake cursors without a preceding `CURSOR_MARKER` stay visible.
+
+The hardware cursor remains hidden by default. This keeps the fake cursor rendering, while still positioning the hardware cursor for terminals that track IME candidate windows with hidden cursors. Some terminals require a visible hardware cursor for IME positioning; enable it with the renderer constructor's `showHardwareCursor` argument or `setShowHardwareCursor(true)`. The `Editor` and `Input` built-in components already implement this interface.
 
 **Container components with embedded inputs:** When a container component (dialog, selector, etc.) contains an `Input` or `Editor` child, the container must implement `Focusable` and propagate the focus state to the child:
 
@@ -740,11 +742,12 @@ if (matchesKey(data, Key.enter)) {
 
 ## Rendering modes
 
-`TuiMainScreen` uses three rendering strategies:
+`TuiMainScreen` uses these rendering strategies:
 
 1. **First Render**: Output all lines without clearing scrollback
-2. **Width Changed or Change Above Viewport**: Clear screen and fully re-render
-3. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
+2. **Width Change, Deep Shrink, or Inline Image**: Clear the screen and fully re-render — the fallback used when a differential repaint cannot safely resolve the update
+3. **Change Above Viewport**: Repaint only the still-visible rows in place and preserve scrollback, rebasing the viewport for small off-screen shrinks; skip the paint when nothing visible changed
+4. **Normal Update**: Move the cursor to the first changed line, clear to the end, and render changed lines
 
 `TuiAltScreen` owns a terminal-height viewport. Without an explicit layout root it preserves the legacy single-document scrolling behavior. With `setLayoutRoot()`, `VStack`, `HStack`, and nested `ScrollView` components can reserve fixed regions and independently scroll constrained regions. It updates changed viewport rows in place, follows streaming output while at the bottom, and preserves a manually selected scroll position while content grows. Mouse-wheel and configurable keyboard navigation scroll without modifying terminal scrollback, including jumps between OSC 133 semantic prompt markers. Scrollbars support hover expansion, thumb dragging, and track-click jumping. Clicking an OSC 8 hyperlink opens it with the configured URL handler. Dragging with the primary mouse button selects text and, unless `TuiAltScreenOptions.copyOnSelect` is `false`, copies it to the clipboard with OSC 52; holding the drag at a scroll view's top or bottom edge auto-scrolls and extends the selection into off-screen content. Kitty images support vertical viewport cropping; iTerm2 inline images fall back to text because the iTerm2 protocol cannot delete or crop placements during viewport repainting.
 
