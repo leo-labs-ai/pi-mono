@@ -33,6 +33,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Fixed
 
+- **The Changesets version PR keeps `PI_AI_VERSION` in step with `packages/ai/package.json`.** `npm run version-packages`, which `release.yml` runs through changesets/action to build the "chore(release): version fork packages" PR, only rewrote package manifests, so `packages/ai/src/utils/version.ts` stayed on the previous release: `packages/ai/test/identity.test.ts` failed on every version PR (#663: expected `1.4.0` to be `1.4.1`) and a published pi-ai would have reported the previous version in its User-Agent. The script now runs `scripts/sync-versions.js` after `changeset version`, which also re-checks the fork lockstep. Contract test in `scripts/version-packages.test.mjs` (red before the change).
 - **A model change drops the prompt sections retained for wake-started runs.** `_lastRunSystemPromptOptions` (#599) kept the extension sections built for the previous model, so `setModel` and model cycling reused stale sections in wake runs. The three model-change sites now clear the retained options; wake runs use base options until the next user prompt rebuilds sections via `before_agent_start`, which is how the reload path already behaved. Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the fix). Fixes #601.
 - **Tool search respects required terms.** A query term prefixed with `+` must occur in tool metadata before the tool can be activated, preventing unrelated matches from being loaded.
 

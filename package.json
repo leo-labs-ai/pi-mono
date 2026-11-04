@@ -66,7 +66,7 @@
 		"check:changelog": "node scripts/check-changelog-updated.mjs",
 		"changeset": "changeset",
 		"changeset:status": "changeset status",
-		"version-packages": "changeset version && npm install --package-lock-only --ignore-scripts && npm run install-lock:coding-agent",
+		"version-packages": "changeset version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts && npm run install-lock:coding-agent",
 		"publish:changesets": "npm_config_ignore_scripts=true changeset publish",
 		"test:build-gate": "npm run test:system-prompt && npm run test:cache-stability && npm run test:loader-resolver && npm run test:e2e && npm run test:my-pi-extensions",
 		"test:loader-resolver": "node -e \"console.log('skip test:loader-resolver: loader-module-alias-symmetry.test.ts pending fork-seam re-graft'); process.exit(0)\"",
