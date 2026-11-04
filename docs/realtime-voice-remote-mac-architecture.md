@@ -253,7 +253,15 @@ need for a receive-side jitter buffer.
 
 ### 2.5 What Pi already has
 
-Pi has no audio, voice, speech or realtime code at all — searched
+This section records the source tree inspected on 2026-08-14. On current main,
+`packages/protocol`, `packages/client`, `packages/server`, and the referenced
+`RemoteSession` are absent. Their interfaces below are historical, not current
+implementation seams. The current supported control surface is RPC mode:
+`packages/coding-agent/src/modes/rpc/rpc-mode.ts` and
+`packages/coding-agent/docs/rpc.md` describe JSONL over a subprocess's stdin and
+stdout. No current audio framing or remote transport is established here.
+
+At the time, Pi had no audio, voice, speech or realtime code — searched
 `packages/**/*.ts`, only `vi.useRealTimers` and pricing fields match. This lane
 is greenfield inside Pi.
 
@@ -527,13 +535,14 @@ good at roughly this number.
 | m2-max → old-mbp-13 | ~14 ms | §2.1 |
 | Jitter buffer | 120 ms | §4.3 |
 | Bluetooth output | 100–150 ms | AirPods (§2.2) |
-| **Total** | **~870–1270 ms** | |
+| **Total** | **~868–1468 ms** | sum of the listed ranges |
 
-The budget closes, but with little margin, and the two largest controllable
-terms are VAD silence and the jitter buffer. The two largest terms overall are
-Bluetooth in and out (200–300 ms combined) — **wired headphones on old-mbp-13
-are the single biggest latency win available and require no code**. Measure with
-AirPods, since that is the real configuration, but state the wired number too.
+The low end fits the 1.2 s target, but the high end exceeds it by 268 ms;
+these summed estimates do not establish that the target is met. Model first
+audio and VAD silence are the largest individual terms. Bluetooth adds
+200–300 ms combined, so wired headphones could reduce that contribution.
+Measure with AirPods, since that is the real configuration, and compare wired
+output before claiming a realized latency improvement.
 
 Agent-work turns are a different regime: Pi may take 30 s. That is what the
 filler and `voice_state: thinking` exist for — never leave silence unexplained.
@@ -628,6 +637,14 @@ enough". Answering them together makes a bad result undiagnosable.
 
 ## 9. The exact next slice
 
+This is the historical proposal, not an implementation-ready source map. On
+current main the `@earendil-works/pi-protocol` package and its `FrameDecoder`
+are absent. Before implementing, select and review a current framing owner;
+do not assume RPC's JSONL control protocol is an audio transport. The proposed
+`tools/voice` paths below are new files, not existing implementations. RPC mode
+is a possible later control integration, not a verified remote voice path.
+Revalidate device addresses and the owner decisions in §10 before any live run.
+
 **Build `pi-voiced` Phase 0 + Phase 1 sender: a Swift GUI-domain launchd agent
 on old-mbp-13 that captures 24 kHz mono PCM16 and streams 20 ms framed chunks to
 a TCP listener on m2-max's Tailscale address, plus a Node receiver on m2-max
@@ -641,9 +658,10 @@ Concretely:
 2. `tools/voice/pi-voiced/dev.pi.voiced.plist` — `gui/501` launchd agent,
    `RunAtLoad`, stable install path `/usr/local/libexec/pi-voiced`
    (stable path matters, §2.2).
-3. `tools/voice/receiver.ts` — Node TCP listener on the Tailscale address,
-   decodes frames with `FrameDecoder` from `@earendil-works/pi-protocol`, writes
-   `out.wav`, prints seq gaps, per-frame arrival jitter, and RMS.
+3. `tools/voice/receiver.ts` — proposed Node TCP listener on the Tailscale
+   address, decoding frames with a framing implementation selected during
+   design review; writes `out.wav` and prints sequence gaps, per-frame arrival
+   jitter, and RMS.
 4. `tools/voice/README.md` — install, grant mic, run, and the §1 warning that
    testing over SSH will silently capture zeros.
 
