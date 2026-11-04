@@ -2613,6 +2613,15 @@ export class AgentSession {
 	}
 
 	/**
+	 * Persist a model as the global default and add it to the scoped model set.
+	 * Called from the model-switch paths when `options.persist` is set.
+	 */
+	private _persistDefaultModel(model: Model<any>): void {
+		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		this._addPersistedDefaultToNonEmptyScope(model);
+	}
+
+	/**
 	 * Set model directly.
 	 * Validates that auth is configured and saves to the session transcript.
 	 * Persists to global defaults only when options.persist is true.
@@ -2626,10 +2635,7 @@ export class AgentSession {
 		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(model);
 		this._applyModelChange(model, previousModel);
-		if (options.persist) {
-			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-			this._addPersistedDefaultToNonEmptyScope(model);
-		}
+		if (options.persist) this._persistDefaultModel(model);
 
 		// Apply thinking level for the new model.
 		// Per-model thinking level overrides take priority over the global default.
@@ -2692,10 +2698,7 @@ export class AgentSession {
 
 		// Apply model
 		this._applyModelChange(next.model, currentModel);
-		if (options.persist) {
-			this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
-			this._addPersistedDefaultToNonEmptyScope(next.model);
-		}
+		if (options.persist) this._persistDefaultModel(next.model);
 
 		// Apply thinking level for the new model.
 		// - Explicit scoped model thinking level overrides defaults
@@ -2726,10 +2729,7 @@ export class AgentSession {
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(nextModel);
 		this._applyModelChange(nextModel, currentModel);
-		if (options.persist) {
-			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
-			this._addPersistedDefaultToNonEmptyScope(nextModel);
-		}
+		if (options.persist) this._persistDefaultModel(nextModel);
 
 		// Apply thinking level for the new model.
 		// Model persistence does not implicitly rewrite the global thinking default.
