@@ -385,6 +385,44 @@ function estimateMessagesTokens(messages: AgentMessage[]): number {
 // AgentSession Class
 // ============================================================================
 
+function formatNameList(names: readonly string[]): string {
+	if (names.length <= 1) return names[0] ?? "";
+	if (names.length === 2) return `${names[0]} and ${names[1]}`;
+	return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/**
+ * Uppercase requests such as `Read` do not match core's `read`. Say so only when
+ * the lowercase spelling is actually registered. Otherwise the operator would be
+ * told to request a name the registry does not have.
+ */
+function formatCaseSensitiveToolGuidance(unresolved: readonly string[], available: readonly string[]): string {
+	const availableByLower = new Map<string, string[]>();
+	for (const name of available) {
+		const key = name.toLowerCase();
+		const existing = availableByLower.get(key);
+		if (existing) existing.push(name);
+		else availableByLower.set(key, [name]);
+	}
+	const lowercaseNames: string[] = [];
+	for (const name of unresolved) {
+		const matches = availableByLower.get(name.toLowerCase());
+		const lowercase = matches?.find((candidate) => candidate === name.toLowerCase() && candidate !== name);
+		if (lowercase) lowercaseNames.push(lowercase);
+	}
+	if (lowercaseNames.length === 0) return "";
+	const requested = lowercaseNames.length === 1 ? "name" : "names";
+	const alias = lowercaseNames.length === 1 ? "an uppercase alias" : "uppercase aliases";
+	return ` Registered tool names are case-sensitive. Request the available lowercase ${requested} ${formatNameList(lowercaseNames)}, or register ${alias} via an extension.`;
+}
+
+function formatUnresolvedActiveToolsDiagnostic(unresolved: readonly string[], available: readonly string[]): string {
+	const subject = unresolved.length === 1 ? "tool" : "tools";
+	const availableText = available.length > 0 ? available.join(", ") : "(none)";
+	const caseGuidance = formatCaseSensitiveToolGuidance(unresolved, available);
+	return `Requested active ${subject} not registered: ${unresolved.join(", ")}.${caseGuidance} Available tools: ${availableText}.`;
+}
+
 export class AgentSession {
 	readonly agent: Agent;
 	readonly sessionManager: SessionManager;
@@ -480,6 +518,9 @@ export class AgentSession {
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
+	/** True only while the constructor records the initial active-tool resolution. */
+	private _captureStartupToolDiagnostic = false;
+	private _startupToolDiagnostic: { type: "warning"; message: string } | undefined;
 	/** Created on the first `ctx.executeTool()` call. */
 	private _nestedToolCalls: NestedToolCallRunner | undefined;
 	/** Declared tools whose declarations requests leave out, from `prepareLoadout` hooks. */
@@ -541,10 +582,15 @@ export class AgentSession {
 		this._installHiddenDeclarationsProjection();
 		this._installAgentForcedPromptProjection();
 
-		this._buildRuntime({
-			activeToolNames: this._initialActiveToolNames,
-			includeAllExtensionTools: true,
-		});
+		this._captureStartupToolDiagnostic = true;
+		try {
+			this._buildRuntime({
+				activeToolNames: this._initialActiveToolNames,
+				includeAllExtensionTools: true,
+			});
+		} finally {
+			this._captureStartupToolDiagnostic = false;
+		}
 		if (this._usesDefaultTools) this._restoreToolsFromTranscript(this._defaultToolModifiers);
 	}
 
@@ -1589,7 +1635,41 @@ export class AgentSession {
 		if (previous.some((name) => !active.has(name))) this._pendingToolNames.clear();
 	}
 
+	/**
+	 * Warning from the constructor's initial active-tool resolution.
+	 * The CLI copies this into startup diagnostics. Later `setActiveToolsByName`
+	 * calls still skip unknown names and do not append another warning, because
+	 * the host does not forward diagnostics after startup. Reading this does not
+	 * change the active set, the system prompt, or tool schemas.
+	 */
+	getStartupDiagnostics(): readonly { type: "warning"; message: string }[] {
+		return this._startupToolDiagnostic ? [this._startupToolDiagnostic] : [];
+	}
+
+	private _recordStartupUnresolvedActiveTools(requested: readonly string[]): void {
+		if (!this._captureStartupToolDiagnostic) return;
+		const unresolved: string[] = [];
+		const seen = new Set<string>();
+		for (const name of requested) {
+			// Allowlist patterns are selectors, not exact requested names.
+			if (!name || name.includes("*") || seen.has(name)) continue;
+			seen.add(name);
+			if (!this._toolRegistry.has(name)) unresolved.push(name);
+		}
+		if (unresolved.length === 0) {
+			this._startupToolDiagnostic = undefined;
+			return;
+		}
+		// Default string sort is UTF-16 code-unit order; the registry keys are always strings.
+		const available = [...this._toolRegistry.keys()].sort();
+		this._startupToolDiagnostic = {
+			type: "warning",
+			message: formatUnresolvedActiveToolsDiagnostic(unresolved, available),
+		};
+	}
+
 	private _setActiveTools(toolNames: string[]): void {
+		this._recordStartupUnresolvedActiveTools(toolNames);
 		const tools = this._applyToolLoadout(toolNames);
 		for (const tool of tools) this._pendingToolNames.delete(tool.name);
 		this._rebuildSystemPrompt(tools.map((tool) => tool.name));
