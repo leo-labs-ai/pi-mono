@@ -1,52 +1,100 @@
 ---
 name: release
-description: Prepare, publish, verify, and recover pi releases. Use for release preparation, local release smoke tests, publishing, and failed release CI or announcements.
+description: Prepare, verify, and recover pi fork releases (Changesets version PR, GitHub Packages publish, release binaries). Use for release preparation, adding changesets, local release smoke tests, checking a release run, and failed release CI.
 ---
 
-# Releasing pi
+# Releasing pi (fork)
 
-Run repository commands from the repo root (two directories above this skill), unless instructed otherwise.
+Run repository commands from the repo root (two directories above this skill). The human runbook is
+[docs/RELEASING.md](../../docs/RELEASING.md); this skill is its agent-facing copy. Releases need the
+maintainer's explicit approval: you prepare and verify, the maintainer merges.
 
-**Lockstep versioning**: all packages share one version; every release updates all together. `patch` = fixes + additions, `minor` = breaking changes. No major releases.
+**How releases work.** Changesets on `main`, driven by `.github/workflows/release.yml`. A PR that should
+ship adds `.changeset/<name>.md`. Each push to `main` lets `changesets/action` open or update the PR
+"chore(release): version fork packages" (branch `changeset-release/main`). Merging that PR publishes the
+`@leo-labs-ai/*` packages to GitHub Packages, creates one GitHub Release per package and, when
+`pi-coding-agent` ships, builds the `v<version>` binaries. Six packages move in lockstep
+(`.changeset/config.json` `fixed`): pi-ai, pi-agent-core, pi-tui, pi-telemetry, pi-durable and
+pi-coding-agent; `pi-env` follows as a dependent. Vendored `@earendil-works/*` packages keep upstream's
+versions and are never published by the fork.
 
-1. **Update CHANGELOGs**: ask the user whether they ran the `/cl` prompt on the latest commit on `main`. If not, they must run `/cl` first to audit and update each package's `[Unreleased]` section before releasing.
+## Add a changeset to a PR
 
-2. **Local smoke test**: build an unpublished release and smoke test from outside the repo (so it can't resolve workspace files):
+Write `.changeset/<kebab-name>.md`:
+
+```md
+---
+"@leo-labs-ai/pi-coding-agent": patch
+---
+
+What changes for users of the package, one or two sentences.
+```
+
+`patch` = fixes and additions, `minor` = breaking changes. Name a fixed-group package, never an
+`@earendil-works/*` one. The changeset does not replace the `FORK-CHANGELOG.md` entry that
+`npm run check:changelog` requires for non-docs, non-test changes. `npm run changeset:status` previews
+the bump.
+
+## Prepare a release
+
+1. On `main`, run `npm run changeset:status` and confirm the pending changesets are the ones meant to
+   ship.
+2. Find the version PR: `gh pr list --head changeset-release/main`. Check it with `gh pr checks <n>` and
+   `gh pr diff <n>`. The diff must contain only manifests, `package-lock.json`,
+   `packages/coding-agent/install-lock/*`, `packages/ai/src/utils/version.ts` and removed `.changeset/*.md`
+   files. Anything else is a `version-packages` problem: report it, do not patch the branch (the action
+   force-pushes it on every push to `main`).
+3. Confirm `FORK-CHANGELOG.md` `[Unreleased]` covers what ships. Nothing cuts the section automatically.
+   Propose a `## [X.Y.Z] - YYYY-MM-DD` heading above the shipping entries; commit it only when the user
+   asks.
+4. When startup, packaging or the binary changed, run the local smoke test. It publishes nothing:
    ```bash
    npm run release:local -- --out /tmp/pi-local-release --force
    cd /tmp
 
-   # Node package install smoke tests
    /tmp/pi-local-release/node/pi --help
    /tmp/pi-local-release/node/pi --version
    /tmp/pi-local-release/node/pi --list-models
    /tmp/pi-local-release/node/pi -p "Say exactly: ok"
    /tmp/pi-local-release/node/pi
 
-   # Bun binary smoke tests
    /tmp/pi-local-release/bun/pi --help
    /tmp/pi-local-release/bun/pi --version
    /tmp/pi-local-release/bun/pi --list-models
    /tmp/pi-local-release/bun/pi -p "Say exactly: ok"
    /tmp/pi-local-release/bun/pi
    ```
-   Verify both Node and Bun startup, model/account listing, interactive startup, and at least one real prompt with the intended default provider. The bare commands `/tmp/pi-local-release/node/pi` and `/tmp/pi-local-release/bun/pi` start interactive mode; run each in tmux, submit a prompt, and wait for the model reply before considering the interactive smoke test passed. Failures are release blockers unless the user explicitly accepts the risk.
+   The bare commands start interactive mode: run each in tmux started from `/tmp`, following
+   [interactive-testing.md](interactive-testing.md), submit a prompt and wait for the model reply before
+   calling the smoke test passed. Failures block the release unless the user explicitly accepts the risk.
+5. Report the state to the user and ask them to merge the version PR, or to label it `ready-to-land` for
+   the land queue. Do not merge, label, or push tags yourself.
 
-   Load and follow [interactive-testing.md](interactive-testing.md) for the tmux workflow. Start each release binary from `/tmp`, not the repo root.
+## Verify a release
 
-3. **Run the release script**:
-   ```bash
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:patch    # fixes + additions
-   PI_ALLOW_LOCKFILE_CHANGE=1 npm_config_min_release_age=0 npm run release:minor    # breaking changes
-   ```
-   If the test suite already passed in `npm run release:local` and only fails from machine load, `PI_RELEASE_SKIP_TESTS=1` skips `./test.sh` in the release script; checks and the packed install check still run. Use it only with the user's approval.
+After the version PR merges, the Release run on the merge commit must be green:
 
-   Use `npm_config_min_release_age=0` only for the release command. The repo's normal npm age gate can otherwise block the release lockfile refresh when the current workspace package version was published recently. Review any lockfile or install lock diffs the release creates before push.
+- "Version or publish packages" logs a `New tag:` line per package.
+- GitHub Releases: `@leo-labs-ai/<name>@<version>` per package, plus `v<version>` with the six binaries,
+  `pi-<version>-source.tar.gz`, the two install-lock files and `SHA256SUMS` when coding-agent shipped.
+- `npm view @leo-labs-ai/pi-coding-agent@<version> version --registry https://npm.pkg.github.com`
+  resolves (needs a token with `read:packages`).
 
-   The release script pins the newest published model catalog for Nix (`nix/model-catalog.json`) and builds the checkout with it as the Nix build does (it fails if that catalog predates main's model changes; publish one first), bumps all package versions, updates changelogs, regenerates release artifacts, runs `npm run check`, commits `Release vX.Y.Z`, tags `vX.Y.Z`, adds fresh `## [Unreleased]` changelog sections, commits `Add [Unreleased] section for next cycle`, then pushes `main` and the tag. Do not rerun the release script after a tag was pushed.
+## Recover
 
-4. **CI verifies and announces the npm release**: pushing the `vX.Y.Z` tag triggers `.github/workflows/build-binaries.yml`. The `publish-npm` job uses npm trusted publishing through GitHub Actions OIDC with environment `npm-publish`; no local `npm publish`, `npm whoami`, OTP, or WebAuthn flow is required. After publishing, `announce-pi-dev-release` verifies every public workspace package resolves at the exact release version and that its npm tarball is available, then writes the verified release marker to R2. `pi.dev/api/latest-version` reads that marker; it must never announce a release from npm before this job succeeds.
+- Run failed before "Version or publish packages": nothing was published. Fix `main` through a normal
+  PR; the next push re-runs Release and refreshes the version PR.
+- Publish failed part-way: ask the user to re-run the failed run. `changeset publish` skips versions
+  already on the registry and `.github/scripts/create-github-releases.mjs` skips existing releases. If
+  only `binaries` failed, dispatch the Build Binaries workflow with `tag: v<version>` and
+  `source_ref: <merge commit SHA>`.
+- Never run `npm run version-packages`, `npm run publish:changesets`, `npm run release:patch|minor|major`
+  or `npm run publish`, and never push tags by hand. The `release:*` and `publish` scripts are upstream's
+  legacy laptop flow and target public npm.
 
-5. **CI builds the Nix release**: the tag push also triggers `.github/workflows/nix.yml`, which builds the tagged flake on Linux and macOS and then fast-forwards the `stable` branch to the release commit. `nix run github:earendil-works/pi/stable` runs the latest release. If the Nix build fails, `stable` stays on the previous release; the tag cannot be fixed, so fix `main` and ship the fix in the next release.
+## Known gaps (2026-11-04)
 
-6. **If CI publish or announcement fails**: inspect the failed job. The publish helper is idempotent and skips package versions already present on npm; the announcement job rechecks availability before updating the R2 marker. Rerun the failed job or workflow after fixing CI or transient npm issues. Do not rerun `npm run release:patch` or `npm run release:minor` for the same version.
+- A version PR that bumps `@earendil-works/chord` (it depends on `@leo-labs-ai/pi-telemetry`) fails
+  `check:changelog`, and its publish would fail on chord after the `@leo-labs-ai/*` packages are out,
+  because no fork-numbered chord exists on npmjs. Flag it to the user instead of working around it.
+- `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0.
