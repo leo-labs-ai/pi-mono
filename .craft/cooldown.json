@@ -14,6 +14,13 @@
       "lastSuggestedAt": "2026-11-01T11:42:30Z",
       "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/560",
       "outcome": "applied"
+    },
+    {
+      "kind": "extract-helper",
+      "area": "packages/coding-agent/src/core/agent-session.ts",
+      "lastSuggestedAt": "2026-11-04T13:38:34Z",
+      "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/604",
+      "outcome": "applied"
     }
   ]
 }
