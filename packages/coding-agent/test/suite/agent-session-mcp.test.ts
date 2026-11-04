@@ -1033,6 +1033,22 @@ return [...new Set(await Promise.all(names.map(async (name) => (await describeNa
 		await harness.session.prompt("go");
 		expect(getMessageText(toolResult(harness, "tool_search"))).toBe("No matching tools found.");
 	});
+
+	it.each(["+slack search docs", "search (+slack) docs", "search,+slack docs"])(
+		"does not activate an unrelated deferred tool for %s (#653)",
+		async (query) => {
+			const { harness } = await setup("deferred");
+			harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("tool_search", { query, limit: 1 })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("go");
+			expect(getMessageText(toolResult(harness, "tool_search"))).toBe("No matching tools found.");
+			expect(harness.session.getActiveToolNames()).toEqual(["tool_search"]);
+		},
+	);
 });
 
 describe("AgentSession MCP servers registered by extensions", () => {
