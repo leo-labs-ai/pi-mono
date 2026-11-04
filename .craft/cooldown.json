@@ -7,6 +7,13 @@
       "lastSuggestedAt": "2026-10-12T02:40:59Z",
       "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/616",
       "outcome": "applied"
+    },
+    {
+      "kind": "simplify-control-flow",
+      "area": "packages/coding-agent/src/core/agent-session.ts",
+      "lastSuggestedAt": "2026-11-01T11:42:30Z",
+      "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/560",
+      "outcome": "applied"
     }
   ]
 }
