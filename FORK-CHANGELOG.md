@@ -8,6 +8,8 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Upstream sync 1.4.0
 
+- **Recover a missing active session file without appending into a restored backup.** Persistence exclusively recreates the resident transcript after file/directory loss and detects unlink during writes. Colliding files remain untouched, including same-ID backups missing a resident parent; subsequent appends keep refusing until recovery can succeed. First-user-message flushing is preserved. Extension callback error isolation from #521 remains separate.
+
 - **Merges upstream Pi `v1.4.0`** (from `v1.3.0`). Fork scope `@leo-labs-ai/pi-*` and fork-only cache-safe compaction are kept; `compaction.ts` adopts upstream's optional reserve and custom-instruction summaries. `provider-attribution.ts` is gone (moved into pi-ai upstream). `packages/ai/model-catalog.snapshot.json` holds upstream's pinned 1.4.0 catalog plus the fork's Kimi K3 `cacheWrite: 3` override.
 - **Resume restores the tool loadout from compaction checkpoints.** `_restoreToolsFromTranscript` replays the session projection, so a loadout checkpointed at compaction wins over earlier raw declarations.
 
