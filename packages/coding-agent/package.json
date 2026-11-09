@@ -39,7 +39,7 @@
 		"generate:schemas": "node --import ./src/experimental/source-resolver.ts scripts/generate-schemas.ts",
 		"generate:references": "node --import ./src/experimental/source-resolver.ts scripts/generate-references.ts",
 		"prepublishOnly": "npm run clean && npm run build",
-		"build:ts": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
+		"build:ts": "npm run build:unbundled",
 		"memory:audit": "node scripts/pi-claude-rss-audit.mjs"
 	},
 	"dependencies": {

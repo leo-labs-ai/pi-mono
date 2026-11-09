@@ -32,6 +32,7 @@ The merge reported 122 conflicted files. 84 of them differed only by package sco
 1. **Generic terms in tool search.** Upstream's ranker scores name, namespace and description separately. The old fork rule dropped generic terms before scoring an `mcp__` tool, which made a tool that matched two query terms rank below one that matched one. The rule is now a filter: an `mcp__` tool is a match only when one of its matched query terms is not generic, is required with `+`, or occurs in the tool's name. Scores are upstream's.
 2. **Invalid resource lists in settings no longer stop startup (#670).** `"extensions": {}` (also `skills`, `prompts`, `themes`) used to throw `entries is not iterable`. A non-array value is now dropped and reported as a settings warning.
 3. **Upstream Sync picks a working push credential (#637).** See below.
+4. **`build:ts` is now an alias of `build:unbundled`.** The fork-only `build:ts` script in `packages/coding-agent` called `shx`, which upstream removed in favour of `scripts/package-files.mjs`. The first merge commit kept the old script body, and the `review` CI job failed with `shx: not found`. Upstream's `build:unbundled` does the same three steps. No other use of a dependency removed by the sync remains (checked `shx`, `autoevals`, `@anthropic-ai/sandbox-runtime` and `typebox` in `agent`, `chord`, `durable`).
 
 ## Issues handled with the sync
 
