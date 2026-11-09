@@ -512,6 +512,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			}
 		}
 
+		it("keeps the OpenCode cache-retention matrix populated", () => {
+			expect(opencodeModelsWithoutLongCache.length).toBeGreaterThan(0);
+		});
+
 		it.each(opencodeModelsWithoutLongCache)("should omit long cache retention for $provider/$id", async (model) => {
 			let capturedPayload: OpenAICompletionsCachePayload | undefined;
 
