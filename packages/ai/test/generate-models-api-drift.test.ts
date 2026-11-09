@@ -1,11 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import type { ModelsDevV2Catalog, ModelsDevV2Model } from "../catalog/sources/models-dev.ts";
 import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
+import { writeUpstreamMock } from "./catalog-generation-utils.ts";
 
 const packageRoot = join(fileURLToPath(new URL(".", import.meta.url)), "..");
 const temporaryRoots: string[] = [];
@@ -14,35 +16,30 @@ afterEach(() => {
 	for (const root of temporaryRoots.splice(0)) rmSync(root, { force: true, recursive: true });
 });
 
-function upstreamModel(id: string, npm?: string): Record<string, unknown> {
-	return { id, name: id, tool_call: true, ...(npm ? { provider: { npm } } : {}) };
+function upstreamModel(id: string, protocol: string, aisdk?: string, reasoning = false): ModelsDevV2Model {
+	return {
+		id,
+		type: "chat",
+		name: id,
+		modalities: { input: ["text"], output: ["text"] },
+		capabilities: { tools: { supported: true }, reasoning: { supported: reasoning } },
+		api: { [protocol]: { base_url: "https://example.test/v1", ...(aisdk ? { sdk: { aisdk } } : {}) } },
+	};
 }
 
-/** Run the generator against a mocked models.dev; every other fetch fails. */
-function runGenerator(catalog: Record<string, { models: Record<string, unknown> }>, extraArgs: string[]) {
+/** Run the generator against a mocked models.dev; every other fetch is stubbed or fails. */
+function runGenerator(catalog: ModelsDevV2Catalog, extraArgs: string[]) {
 	const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-api-drift-"));
 	temporaryRoots.push(fixtureRoot);
-	const isolatedPackageRoot = join(fixtureRoot, "package");
-	mkdirSync(isolatedPackageRoot);
-	for (const entry of ["package.json", "scripts", "src"]) {
-		cpSync(join(packageRoot, entry), join(isolatedPackageRoot, entry), { recursive: true });
-	}
 	const preloadPath = join(fixtureRoot, "mock-models-dev.mjs");
-	writeFileSync(
-		preloadPath,
-		`const catalog = ${JSON.stringify(catalog)};\n` +
-			`globalThis.fetch = async (input) => {\n` +
-			`  if (String(input) === "https://models.dev/api.json") return new Response(JSON.stringify(catalog), { status: 200 });\n` +
-			`  throw new Error(\`Unexpected fetch: \${String(input)}\`);\n` +
-			`};\n`,
-	);
+	writeUpstreamMock(preloadPath, catalog);
 	const diagnosticsPath = join(fixtureRoot, "diagnostics.json");
 	const result = spawnSync(
 		process.execPath,
 		[
 			"--import",
 			pathToFileURL(preloadPath).href,
-			"scripts/generate-models.ts",
+			"catalog/generate.ts",
 			"--json-only",
 			"--json-output",
 			join(fixtureRoot, "out"),
@@ -50,7 +47,7 @@ function runGenerator(catalog: Record<string, { models: Record<string, unknown> 
 			diagnosticsPath,
 			...extraArgs,
 		],
-		{ cwd: isolatedPackageRoot, encoding: "utf8", timeout: 30_000 },
+		{ cwd: packageRoot, encoding: "utf8", timeout: 30_000 },
 	);
 	const diagnostics = JSON.parse(readFileSync(diagnosticsPath, "utf8")) as {
 		skipped: { provider: string; modelId: string; reason: string; npm?: string }[];
@@ -60,10 +57,10 @@ function runGenerator(catalog: Record<string, { models: Record<string, unknown> 
 
 describe("generate-models API drift", () => {
 	const models = {
-		"known-model": upstreamModel("known-model", "@ai-sdk/openai"),
+		"known-model": upstreamModel("known-model", "responses", "@ai-sdk/openai"),
 		// Documented override: OpenCode serves this as openai-compatible chat completions.
-		"mistral-large-4": upstreamModel("mistral-large-4", "@ai-sdk/mistral"),
-		"mystery-model": upstreamModel("mystery-model", "@ai-sdk/mystery"),
+		"mistral-large-4": upstreamModel("mistral-large-4", "chat-completions", "@ai-sdk/mistral"),
+		"mystery-model": upstreamModel("mystery-model", "chat-completions", "@ai-sdk/mystery"),
 	};
 
 	it("skips and logs an unknown adapter in ordinary runs", () => {
@@ -112,7 +109,7 @@ describe("generate-models API drift", () => {
 		const { result, outputDir } = runGenerator(
 			{
 				"opencode-go": {
-					models: { "deepseek-v4-flash": { ...upstreamModel("deepseek-v4-flash"), reasoning: true } },
+					models: { "deepseek-v4-flash": upstreamModel("deepseek-v4-flash", "chat-completions", undefined, true) },
 				},
 			},
 			[],

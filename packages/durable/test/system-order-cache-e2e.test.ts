@@ -1,10 +1,10 @@
+import { obj, str } from "@earendil-works/pi-schema";
 import {
 	type AssistantMessage,
 	type Message,
 	type Model,
 	type Models,
 	normalizeContext,
-	Type,
 	uuidv7,
 } from "@leo-labs-ai/pi-ai";
 import { builtinModels } from "@leo-labs-ai/pi-ai/providers/all";
@@ -41,7 +41,7 @@ function instructions(nonce: string): string {
 	return lines.join("\n");
 }
 
-const Parameters = Type.Object({ text: Type.String() });
+const Parameters = obj({ text: str() });
 const first = defineTool({
 	name: "probe_first",
 	description: "Unused probe tool.",

@@ -1,0 +1,47 @@
+# Fork upstream sync 2026-11-09 — 1.4.0 → 1.5.0
+
+Worktree: `lue-t-pii-1-5-sync-1109`, branch `lue/t-pii-1-5-sync-1109`. Method: `git merge --no-ff v1.5.0` on a lane branch, as for 1.3.0 and 1.4.0.
+
+## B / L / U
+
+| | SHA | Proof |
+|---|---|---|
+| B (last integrated upstream) | `4a080252f` = tag `v1.4.0` | `git merge-base origin/main v1.5.0`; merge commit `cd0d70136` |
+| L (fork) | `c4bfda4f3` = `origin/main` | lane base |
+| U (upstream) | `f9a263655` = tag `v1.5.0` | selected tag, ancestor of `upstream/main` |
+
+The merge reported 122 conflicted files. 84 of them differed only by package scope and were resolved by rule (ours equals base modulo scope: take upstream, rewrite the 8 fork package names). 32 files needed manual hunks. 5 modify/delete files had no fork delta and follow upstream's deletion.
+
+## Classification
+
+| Class | What |
+|---|---|
+| adopt | New package `packages/schema` (`@earendil-works/pi-schema`), which replaces direct typebox use; the "pi-ai extension view" for extensions (`bundledPiAiExtensionView`, `pi-ai-extension-view.ts`); the field-weighted tool-search ranker; `packages/ai/catalog/` as the home of model generation; deletion of `examples/extensions/sandbox`, `durable/src/harness/events.ts` and three tests |
+| adapt (package identity) | All manifests (fork scope, GitHub Packages `publishConfig`, upstream dependency versions); 53 new or changed upstream files rewritten to `@leo-labs-ai/` for the 8 fork packages; 18 fork-scope path twins in `packages/coding-agent/examples/tsconfig.json`; `virtual-modules.ts` and `loader.ts` keep both scopes as aliases of the extension view |
+| adapt (generator) | `scripts/generate-models.ts` is gone upstream. Its fork delta moved to `catalog/generate.ts` (`--check-api-drift`, `--diagnostics-json`, skipped-model report), `catalog/providers/opencode.ts` (unknown npm adapter is skipped, not guessed) and `catalog/families/kimi.ts` (Kimi K3 `cacheWrite: 3`). `scripts/model-api-support.ts` stays fork-only and exports the shared skip list |
+| adapt (schema) | `providers/compat-schema.ts` taken from upstream, then the fork fields re-added with pi-schema builders: `sendSessionAffinityHeaders`, `sendChatgptAccountId`, `supportsWebSocketTransport`, `supportsZstdRequestCompression`; `supportsMidConvoEffort` still names `openai-codex-responses` |
+| adapt (tool search) | `extensions/tool-search/tool.ts` taken from upstream, then the fork rules re-added: generic terms (#635) and required `+term` (#653). See decision 1 |
+| adapt (model snapshot) | `nix/model-catalog.json` takes upstream's v1.5.0 pin `sha256-f4dbabe7…`. `packages/ai/model-catalog.snapshot.json` holds that revision (hash verified) plus the Kimi K3 override on `moonshotai`, `moonshotai-cn` and `kimi-coding` |
+| adapt (lockfiles) | Root `package-lock.json` regenerated with `npm install --ignore-scripts`, then `npm audit fix --ignore-scripts` (zod 4.6.7, fast-uri 3.1.9, js-yaml 4.3.2 / 3.15.2, smol-toml 1.9.1). Install lock regenerated (186 packages); the generator now treats `@earendil-works/pi-schema` as a workspace package |
+| preserve | Fork CI (`ci.yml` with `unit-tests` and `fork-safety-check`), fork release flow, `test:build-gate`, cache-safe compaction, `modelVisible`, hidden-tool declarations, slash-means-provider, dynamic OpenCode cache matrix (#666, `cache-retention.test.ts` kept as ours), fork doc notes in `docs/extensions.md` |
+| reject | `.github/workflows/preview-packages.yml` and the `ci.yml` preview pack/upload steps (they publish to `pkg.earendil.com`). `scripts/preview-packages.mjs` and its test stay, unused, to keep the upstream diff small |
+| not merged | `packages/*/CHANGELOG.md` use `merge=ours` (`.gitattributes`), so `packages/chord/CHANGELOG.md` has no upstream `[1.5.0]` section. Unchanged policy from earlier syncs |
+
+## Decisions that change behaviour
+
+1. **Generic terms in tool search.** Upstream's ranker scores name, namespace and description separately. The old fork rule dropped generic terms before scoring an `mcp__` tool, which made a tool that matched two query terms rank below one that matched one. The rule is now a filter: an `mcp__` tool is a match only when one of its matched query terms is not generic, is required with `+`, or occurs in the tool's name. Scores are upstream's.
+2. **Invalid resource lists in settings no longer stop startup (#670).** `"extensions": {}` (also `skills`, `prompts`, `themes`) used to throw `entries is not iterable`. A non-array value is now dropped and reported as a settings warning.
+3. **Upstream Sync picks a working push credential (#637).** See below.
+
+## Issues handled with the sync
+
+- **#670**: fixed in `core/settings-manager.ts` with a test in `test/settings-manager.test.ts`.
+- **#652**: `undici` was already above 6.28.1 after the 1.4.0 sync (8.12.3 direct, 7.30.1 under `openai`, 6.29.1 under gondolin by override). `node scripts/npm-audit.mjs` reports no unaccepted advisory after the bumps above.
+- **#637**: the `UPSTREAM_SYNC_TOKEN` secret (set 2026-05-19) belongs to `valkyriweb` and predates the repo's move to `leo-labs-ai` on 2026-10-05, so GitHub denies its pushes with 403. `actions/checkout` stored that token as the git credential, and the first push (`Clean up stale sync branches`) failed. The workflow now tests the secret with `git push --dry-run` and uses `GITHUB_TOKEN` when the secret cannot push. A PR opened with `GITHUB_TOKEN` does not start CI; rotating the secret restores that.
+
+## Verification status (local, M2 Max)
+
+- `npm run check`: exit 0.
+- `npm run build:offline`: all packages build; `dist/cli.js --version` = 1.5.0.
+- Focused suites: `packages/ai`, `packages/durable`, `packages/coding-agent` pass.
+- `./test.sh` ran with a load average near 400 from other sessions. Remaining failures are environment-only as far as checked: `env` daemon not built (`terminal`, `conformance`, `differential`, `remote`, `ssh*`), 5-second timeouts in `chord`, `codemode` and `tui` that pass alone, and `codemode` Bun worker tests. Three `chord` files still fail alone on Node 26 (`upgrades`, `plugins/build`, `workers`); `packages/chord/src` differs from `v1.5.0` only by package names. CI on Node 24 is the gate.

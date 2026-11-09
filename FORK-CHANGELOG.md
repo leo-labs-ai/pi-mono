@@ -6,6 +6,15 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Upstream sync 1.5.0
+
+- **Merges upstream Pi `v1.5.0`** (from `v1.4.0`). Fork-owned packages keep `@leo-labs-ai/pi-*` names. The new upstream package `@earendil-works/pi-schema` keeps its upstream name, like `chord`, `pi-codemode` and `pi-mcp`. Details: `docs/fork-merge-conflict-log-2026-11-09.md`.
+- **The model catalog generator moved to `packages/ai/catalog/`.** Upstream replaced `scripts/generate-models.ts`. The fork's `--check-api-drift` and `--diagnostics-json` flags, the OpenCode unknown-adapter skip and the Kimi K3 `cacheWrite: 3` price now live in `catalog/generate.ts`, `catalog/providers/opencode.ts` and `catalog/families/kimi.ts`. `packages/ai/model-catalog.snapshot.json` holds upstream's pinned 1.5.0 catalog (`nix/model-catalog.json`) plus the Kimi K3 override.
+- **Tool search uses upstream's field-weighted ranker.** Name, namespace and description now score separately, and an exact tool name ranks first. The fork rules stay: a generic term does not count for an `mcp__` tool unless the tool's name has it (#635), and a `+term` is required (#653).
+- **Fork-only compat fields were ported to upstream's `pi-schema` builders** in `providers/compat-schema.ts` (`sendChatgptAccountId`, `supportsWebSocketTransport`, `supportsZstdRequestCompression`; `sendSessionAffinityHeaders` on OpenAI Responses).
+- **Upstream's `preview-packages.yml` workflow is not adopted.** It publishes to `pkg.earendil.com`, which the fork cannot use. CI keeps the fork's `unit-tests` and `fork-safety-check` jobs.
+- **Dependency bumps for open advisories: `zod` 4.6.7, `fast-uri` 3.1.9, `js-yaml` 4.3.2 / 3.15.2, `smol-toml` 1.9.1.** Lockfile and `packages/coding-agent/install-lock` regenerated. `undici` already met #652 (8.12.3 direct, 6.29.1 under gondolin).
+
 ### Upstream sync 1.4.0
 
 - **Recover a missing active session file without appending into a restored backup.** Persistence exclusively recreates the resident transcript after file/directory loss and detects unlink during writes. Colliding files remain untouched, including same-ID backups missing a resident parent; subsequent appends keep refusing until recovery can succeed. First-user-message flushing is preserved. Extension callback error isolation from #521 remains separate.
@@ -33,6 +42,8 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Fixed
 
+- **A non-array `extensions`, `skills`, `prompts` or `themes` value in `settings.json` no longer stops startup (#670).** `"extensions": {}` used to throw `entries is not iterable`. The value is now ignored and reported as a settings warning.
+- **Upstream Sync workflow falls back to `GITHUB_TOKEN` when `UPSTREAM_SYNC_TOKEN` cannot push (#637).** The secret predates the move to `leo-labs-ai`, so every daily run failed with 403 in the stale-branch cleanup. The workflow now tests the secret with a push dry-run first.
 - **A model change drops the prompt sections retained for wake-started runs.** `_lastRunSystemPromptOptions` (#599) kept the extension sections built for the previous model, so `setModel` and model cycling reused stale sections in wake runs. The three model-change sites now clear the retained options; wake runs use base options until the next user prompt rebuilds sections via `before_agent_start`, which is how the reload path already behaved. Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the fix). Fixes #601.
 - **Tool search respects required terms.** A query term prefixed with `+` must occur in tool metadata before the tool can be activated, preventing unrelated matches from being loaded.
 
