@@ -33,6 +33,7 @@ The merge reported 122 conflicted files. 84 of them differed only by package sco
 2. **Invalid resource lists in settings no longer stop startup (#670).** `"extensions": {}` (also `skills`, `prompts`, `themes`) used to throw `entries is not iterable`. A non-array value is now dropped and reported as a settings warning.
 3. **Upstream Sync picks a working push credential (#637).** See below.
 4. **`build:ts` is now an alias of `build:unbundled`.** The fork-only `build:ts` script in `packages/coding-agent` called `shx`, which upstream removed in favour of `scripts/package-files.mjs`. The first merge commit kept the old script body, and the `review` CI job failed with `shx: not found`. Upstream's `build:unbundled` does the same three steps. No other use of a dependency removed by the sync remains (checked `shx`, `autoevals`, `@anthropic-ai/sandbox-runtime` and `typebox` in `agent`, `chord`, `durable`).
+5. **One chord test has a longer timeout.** `packages/chord/test/manager.test.ts` (kernel-lock test, four child spawns) timed out at the 5 s default in two of three CI runs. The file is identical to upstream; 1.5.0 grows chord from 49 to 193 test files that run in parallel. The test now has a 20 s limit. Upstream deletes this file after 1.5.0, so follow the deletion at the next sync.
 
 ## Issues handled with the sync
 
