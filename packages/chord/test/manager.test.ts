@@ -101,7 +101,8 @@ describe("host manager (real child processes)", () => {
 		await first.stop();
 		await second.start();
 		await second.stop();
-	});
+		// Fork: four child spawns; 1.5.0's larger parallel chord suite pushes this past the 5 s default on CI.
+	}, 20_000);
 
 	it("a graceful exit still takes the child's descendants with it", async () => {
 		const file = scratch("grandchild-graceful");

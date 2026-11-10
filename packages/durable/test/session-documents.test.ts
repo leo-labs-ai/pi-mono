@@ -2,7 +2,14 @@ import type { Draft, JsonValue } from "@earendil-works/chord";
 import { type ConversationId, defineDoc, defineDocFamily, type JsonObject, type TaskId } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
-import { context, createConversation, documentChanges, flush, openTestSession } from "./session-support.ts";
+import {
+	context,
+	createConversation,
+	documentChanges,
+	documentValues,
+	flush,
+	openTestSession,
+} from "./session-support.ts";
 
 type Live = { message?: string; items: string[]; nested: { count: number }; other: { label: string } };
 
@@ -97,7 +104,7 @@ describe("Session document transactions", () => {
 		expect(snapshot).toEqual({ message: "hello", items: [], nested: { count: 0 }, other: { label: "x" } });
 		await flush();
 		const publication = publications.at(-1)!;
-		const published = documentChanges(publication)[0]!;
+		const published = documentValues(publication)[0]!;
 		expect(published.record.createdAt).toBe(publication.seq);
 		expect(published.value).toBe(snapshot);
 		expect(published.conversationId).toBe(conversationId);
@@ -142,7 +149,7 @@ describe("Session document transactions", () => {
 		}, context);
 		await flush();
 		const snapshot = (await session.snapshot(LiveDoc, conversationId, context))!;
-		const published = documentChanges(publications.at(-1)!)[0]!;
+		const published = documentValues(publications.at(-1)!)[0]!;
 		expect(published.value).toBe(snapshot);
 		const admitted = storage.admittedCommits.at(-1)!.find((write) => write.type === "document.change")!;
 		expect(admitted.content.kind).toBe("delta");
@@ -200,7 +207,7 @@ describe("Session document transactions", () => {
 		const after = (await session.snapshot(LiveDoc, conversationId, context))!;
 		expect(after).toEqual(before);
 		expect(after).not.toBe(before);
-		expect(documentChanges(publications.at(-1)!)[0]!.ops.length).toBeGreaterThan(0);
+		expect(documentValues(publications.at(-1)!)[0]!.ops.length).toBeGreaterThan(0);
 	});
 
 	it("revokes escaped drafts when the callback settles", async () => {
@@ -500,12 +507,14 @@ describe("Session document transactions", () => {
 		await flush();
 		const publication = publications.at(-1)!;
 		const [retired, created] = documentChanges(publication);
-		expect(retired).toMatchObject({ record: { id: oldId }, value: null, ops: [] });
-		expect(retired!.record.retiredAt).toBe(publication.seq);
+		expect(retired).toEqual({ type: "document", kind: "retire", record: retired!.record, conversationId });
+		expect(retired!.record).toMatchObject({ id: oldId, retiredAt: publication.seq });
 		expect(created!.record.id).not.toBe(oldId);
 		expect(created!.record.createdAt).toBe(publication.seq);
-		expect(created).toMatchObject({ value: { message: "new", items: [] }, ops: [] });
-		expect(await session.snapshot(LiveDoc, conversationId, context)).toBe(created!.value);
+		expect(created).toMatchObject({ kind: "change", value: { message: "new", items: [] }, ops: [] });
+		expect(await session.snapshot(LiveDoc, conversationId, context)).toBe(
+			created?.kind === "change" ? created.value : undefined,
+		);
 
 		await session.commit((tx) => tx.retireDoc(LiveDoc, conversationId), context);
 		expect(await session.snapshot(LiveDoc, conversationId, context)).toBeUndefined();
@@ -607,8 +616,11 @@ describe("Session document transactions", () => {
 		const { session, publications, conversationId } = await setupLive();
 		const published = publications.length;
 		let listenerContext: typeof context | undefined;
-		const unsubscribe = session.subscribeCommits((_publication, deliveredContext) => {
-			listenerContext = deliveredContext;
+		const observation = session.observeCommits({
+			advance: (_publication, deliveredContext) => {
+				listenerContext = deliveredContext;
+			},
+			end: () => {},
 		});
 		const result = await session.commit(async (tx) => {
 			(await tx.doc(LiveDoc, conversationId)).message = "m";
@@ -617,7 +629,7 @@ describe("Session document transactions", () => {
 		expect(result).toBe("done");
 		expect(listenerContext).toBe(context);
 		expect(publications.length).toBe(published + 1);
-		unsubscribe();
+		observation.detach();
 	});
 
 	it("publishes close synchronously and supports unsubscription", async () => {

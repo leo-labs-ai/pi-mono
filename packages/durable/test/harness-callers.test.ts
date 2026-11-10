@@ -1,4 +1,5 @@
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@leo-labs-ai/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import {
 	AgentDoc,
 	type Conversation,
@@ -16,7 +17,7 @@ function tool(name: string, extra: Partial<ToolRegistration> = {}): ToolRegistra
 	return defineTool({
 		name,
 		description: name,
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		execute: async () => ({ output: [{ type: "text", text: `${name} ran` }] }),
 		...extra,
 	});
@@ -34,7 +35,7 @@ function prober(names: readonly string[]) {
 	const registration = defineTool({
 		name: "probe",
 		description: "probe",
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		execute: async (_args, api, callContext) => {
 			for (const name of names) received.set(name, await api.executeTool(name, {}, callContext));
 			return {};

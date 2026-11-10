@@ -251,6 +251,31 @@ describe("SettingsManager", () => {
 			]);
 			expect(manager.drainErrors()).toEqual([]);
 		});
+
+		// leo-labs-ai/pi-mono#670: `"extensions": {}` crashed startup with "entries is not iterable".
+		it("should ignore and report resource lists that are not arrays", () => {
+			const globalSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				globalSettingsPath,
+				JSON.stringify({ theme: "dark", extensions: {}, prompts: "prompts", themes: ["themes"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getGlobalSettings().extensions).toBeUndefined();
+			expect(manager.getGlobalSettings().prompts).toBeUndefined();
+			expect(manager.getGlobalSettings().themes).toEqual(["themes"]);
+			expect(manager.getGlobalSettings().theme).toBe("dark");
+			const errors = manager.drainErrors();
+			expect(errors).toMatchObject([
+				{ scope: "global", path: globalSettingsPath },
+				{ scope: "global", path: globalSettingsPath },
+			]);
+			expect(errors.map((entry) => entry.error.message)).toEqual([
+				'"extensions" must be an array of paths or patterns; the value is ignored',
+				'"prompts" must be an array of paths or patterns; the value is ignored',
+			]);
+		});
 	});
 
 	describe("project trust", () => {

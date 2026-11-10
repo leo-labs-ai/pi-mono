@@ -105,6 +105,7 @@ export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.ts";
 // Keybindings
 export {
 	getKeybindings,
+	getSelectPageIndex,
 	type Keybinding,
 	type KeybindingConflict,
 	type KeybindingDefinition,
@@ -209,6 +210,7 @@ export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.
 export {
 	applyBackgroundToLine,
 	getOsc8LinkAtColumn,
+	replaceControlCharacters,
 	sliceByColumn,
 	stripTerminalSequences,
 	truncateToWidth,
