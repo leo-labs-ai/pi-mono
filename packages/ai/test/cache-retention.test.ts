@@ -240,12 +240,17 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 	});
 
 	describe("OpenAI Responses Provider", () => {
-		it.each(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra", "gpt-6-luna", "gpt-6-sol"] as const)(
-			"does not enable cache warming from the documented TTL alone for %s",
-			(modelId) => {
-				expect(getModel("openai", modelId).promptCache).toBeUndefined();
-			},
-		);
+		it.each([
+			"gpt-5.6-luna",
+			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+			"gpt-6-astra",
+			"gpt-6-luna",
+			"gpt-6-sol",
+			"gpt-6.1-terra",
+		] as const)("does not enable cache warming from the documented TTL alone for %s", (modelId) => {
+			expect(getModel("openai", modelId).promptCache).toBeUndefined();
+		});
 
 		it.skipIf(!process.env.OPENAI_API_KEY)(
 			"should not set prompt_cache_retention when PI_CACHE_RETENTION is not set",
@@ -504,14 +509,19 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload.prompt_cache_retention).toBeUndefined();
 		});
 
-		it.each([
-			MODELS.opencode["deepseek-v4-flash"],
-			MODELS.opencode["deepseek-v4-pro"],
-			MODELS.opencode["kimi-k2.5"],
-			MODELS.opencode["kimi-k2.6"],
-			MODELS.opencode["minimax-m2.7"],
-		] as const)("should omit long cache retention for $provider/$id", async (metadata) => {
-			const model = metadata as Model<"openai-completions">;
+		// Issue #666: keep this coverage aligned with the refreshed OpenCode catalog.
+		const opencodeModelsWithoutLongCache: Model<"openai-completions">[] = [];
+		for (const model of Object.values(MODELS.opencode)) {
+			if (model.api === "openai-completions" && model.compat?.supportsLongCacheRetention === false) {
+				opencodeModelsWithoutLongCache.push(model);
+			}
+		}
+
+		it("keeps the OpenCode cache-retention matrix populated", () => {
+			expect(opencodeModelsWithoutLongCache.length).toBeGreaterThan(0);
+		});
+
+		it.each(opencodeModelsWithoutLongCache)("should omit long cache retention for $provider/$id", async (model) => {
 			let capturedPayload: OpenAICompletionsCachePayload | undefined;
 
 			try {

@@ -1,3 +1,4 @@
+import { obj } from "@earendil-works/pi-schema";
 import {
 	createModels,
 	fauxAssistantMessage,
@@ -6,7 +7,6 @@ import {
 	fauxToolCall,
 	type Models,
 	type SimpleStreamOptions,
-	Type,
 } from "@leo-labs-ai/pi-ai";
 import {
 	type Conversation,
@@ -86,7 +86,7 @@ describe("HarnessOptions.models and settings as functions", () => {
 					defineTool({
 						name: "probe",
 						description: "Records api.models before and after the host swaps it",
-						parameters: Type.Object({}),
+						parameters: obj({}),
 						execute: async (_args, api) => {
 							seen.push(api.models);
 							current = second;
