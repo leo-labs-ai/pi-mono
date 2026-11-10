@@ -56,7 +56,9 @@ Non-goals (v1):
   **Project scope:** the base scope plus the approved project plugins of one directory.
 - **Scope key:** `(env id, canonical session cwd)`. **Revision:** the digest of an immutable project snapshot (6.2).
 - **Host packages:** packages the running p2 supplies to every plugin as single instances: p2's API
-  (`@p2/app/v1`, re-exporting the part of Chord v2 plugins use, with per-kind modules), `@earendil-works/pi-ai`, `pi-codemode`, `pi-durable`, `pi-env`, `pi-tui`, `pi-schema` (all `@earendil-works/`),
+  (`@p2/app/v1`, re-exporting the part of Chord v2 plugins use, with per-kind modules), `@leo-labs-ai/pi-ai`,
+  `@leo-labs-ai/pi-durable`, `@leo-labs-ai/pi-env`, `@leo-labs-ai/pi-tui`, `@earendil-works/pi-codemode`,
+  `@earendil-works/pi-schema`,
   `react`, `react-dom` (with subpaths such as `react/jsx-runtime`, `react-dom/client`), and p2 itself
   (`@earendil-works/p2/runtime/*`, `@earendil-works/p2/plugins/*`).
 - **Data directory:** `P2_DATA_DIR` (default `~/.pi/p2`), written `<data>` below.

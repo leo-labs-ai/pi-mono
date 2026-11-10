@@ -52,4 +52,8 @@ Initial upstream pin SHA256: `175c0d73533fad08fdd1554932a4993c37564d2a2ea084cbcc
 - First Crabbox run `run_0a6d73fb51c8f33bc010416651139df5` failed in sync finalization, before any gate ran (exit 6). Its lease was stopped. The diagnostic full-sync attempt `run_7e27293495e89e48e4ea502cad75a928` failed identically. Source inspection found a silent >=200-deletions guard; the merge removes 641 old paths without rename detection. A run with `CRABBOX_ALLOW_MASS_DELETIONS=1` acknowledged those expected upstream moves in the disposable workspace and passed sync. All three leases stopped.
 - Luke approved the exact upstream instruction patch in async answer sequence 1: include the updates to `AGENTS.md` and new `.pi/skills/p2-ui.md`. The staged patch matches the proposed patch byte for byte; shared instructions remain untouched.
 
+## Independent-review corrections
+
+The p2 identity review found two missed source aliases and stale host-package examples. The p2 source resolver now reads both workspace scopes, and the root TypeScript config maps the fork's telemetry render subpath to source. Plugin documentation uses the fork's host identities while retaining upstream-owned codemode and schema names. A deterministic resolution test reproduced five fork imports falling through to `dist/`; all nine fork, upstream and p2 alias cases pass after the correction. This adds no second host-package identity.
+
 Live installation and final gate results belong in the lane report at `harbor/state/pi-151-update-1110/report.md`; this file does not claim a push, merge, promotion or successful gates.

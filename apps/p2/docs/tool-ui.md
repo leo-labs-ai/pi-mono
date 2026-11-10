@@ -49,7 +49,7 @@ failed call whose output is the error's message.
 ```ts plugins/word-count/tool.ts
 // The `word_count` tool: what the model sees (name, description, parameters) and what it does. Nothing here says how
 // a call looks: that is the web and TUI facets' business.
-import { defineExtension, defineTool } from "@earendil-works/pi-durable";
+import { defineExtension, defineTool } from "@leo-labs-ai/pi-durable";
 import { obj, str } from "@earendil-works/pi-schema";
 
 /** What a call's result keeps for the UI, beside the text the model reads: the counts. */
@@ -249,7 +249,7 @@ the tool's name.
 
 ```ts plugins/word-count/tui.ts
 // The TUI facet: the tool's card in the terminal transcript.
-import { Text } from "@earendil-works/pi-tui";
+import { Text } from "@leo-labs-ai/pi-tui";
 import { contribute, defineFacet } from "@p2/app/v1";
 import { getTextOutput, lineText, record, str, type ToolRenderers, TuiToolRenderers } from "@p2/app/v1/tui";
 

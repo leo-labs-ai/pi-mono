@@ -70,6 +70,7 @@
 			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"],
 			"@leo-labs-ai/pi-telemetry": ["./packages/telemetry/src/index.ts"],
 			"@leo-labs-ai/pi-telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
+			"@leo-labs-ai/pi-telemetry/render": ["./packages/telemetry/src/render.ts"],
 			"@leo-labs-ai/pi-ai": ["./packages/ai/src/index.ts"],
 			"@leo-labs-ai/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
 			"@leo-labs-ai/pi-ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],

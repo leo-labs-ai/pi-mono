@@ -209,7 +209,7 @@ self.register(SendRouters, {
   (`plugins/chat/contract.ts:127-128`); `write` appends display-only entries (`:150-158`). Data that is a person's
   message (`MessageDataSchema`, `src/runtime/input.ts:144`) is shown by both UIs; other model-less kinds are hidden on
   the web (`src/web/transcript.ts:506-512`) and need a `TuiEntryRenderers` entry in the TUI.
-- **Documents:** `defineDoc` from `@earendil-works/pi-durable`; write in `harness.commit(tx => tx.doc(Doc, id))`,
+- **Documents:** `defineDoc` from `@leo-labs-ai/pi-durable`; write in `harness.commit(tx => tx.doc(Doc, id))`,
   read with `harness.snapshot(Doc, id)` or in tools/hooks via their API. Conversation docs reach clients in
   `Chat.view.docs`. Examples: `p2.subagents`, `p2.agent-run`, `p2.artifacts`, chat-mode's `ChatModeDoc`
   (`plugins/chat-mode/worker.ts:25`). Change signals: `CommitSignal` (`src/runtime/commits.ts:4`), `watchSource`
