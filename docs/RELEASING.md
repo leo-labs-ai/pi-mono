@@ -41,10 +41,11 @@ of `pi-durable`, and `scripts/sync-versions.js` (run by `version-packages`) fail
 public `@leo-labs-ai/*` package falls out of lockstep. `@leo-labs-ai/pi-evals` is private and never
 published.
 
-The vendored upstream packages `@earendil-works/chord`, `@earendil-works/pi-codemode` and
-`@earendil-works/pi-mcp` keep upstream's version numbers and are never published by the fork:
-`changeset publish` skips them because those versions already exist on npmjs. See "Known gaps" for the
-chord exception.
+The vendored upstream packages `@earendil-works/chord`, `@earendil-works/pi-codemode`,
+`@earendil-works/pi-mcp` and `@earendil-works/pi-schema` (added in the 1.5.0 sync) keep upstream's
+version numbers and are never published by the fork: `changeset publish` skips a version that already
+exists on npmjs, and consumers of the fork's packages resolve them from npmjs (the root `.npmrc` routes
+only `@leo-labs-ai` and `@valkyriweb` to GitHub Packages). See "Known gaps" for the chord exception.
 
 Bump types: `patch` for fixes and additions, `minor` for breaking changes; the group takes the highest
 bump among the pending changesets. Numbers continue from the last upstream sync: an upstream
@@ -168,14 +169,18 @@ explicit, maintainer-reviewed fallback.
   it; copy the secret from `my-pi` if it is missing.
 - `GITHUB_TOKEN` with `packages: write`, used as `NODE_AUTH_TOKEN` for GitHub Packages. No npm token.
 
-## Known gaps (2026-11-04)
+## Known gaps (2026-11-10)
 
-- The 1.4.1 version PR (#663) was red twice. `unit-tests`: `packages/ai/test/identity.test.ts` saw
-  `PI_AI_VERSION` still on 1.4.0, fixed by #664 (`version-packages` now runs `sync-versions.js`).
-  `fork-safety-check`: `check:changelog` rejects the bump of `@earendil-works/chord` to 1.4.1 and the
-  rewritten chord pins in `durable` and `env`. chord is bumped because it depends on
-  `@leo-labs-ai/pi-telemetry`, and no fork-numbered chord exists on npmjs, so `changeset publish` would
-  also fail on it after publishing the `@leo-labs-ai/*` packages (the `@earendil-works/pi-env@1.1.1`
-  ENEEDAUTH pattern). Decide how chord is versioned before merging a version PR that bumps it.
+- The version PR (#663, 1.5.1 since the 1.5.0 sync) is red on `unit-tests` until #664 lands:
+  `packages/ai/test/identity.test.ts` sees `PI_AI_VERSION` still on the previous version because
+  `version-packages` did not run `sync-versions.js`.
+- It is also red on `check` and `fork-safety-check`: `check:changelog` asks for
+  `packages/durable/CHANGELOG.md` and `packages/env/CHANGELOG.md`. `changeset version` bumps the vendored
+  `@earendil-works/chord` because it depends on `@leo-labs-ai/pi-telemetry`, and rewrites the chord pins
+  in `durable` and `env`. The publish then depends on npmjs. When upstream has already released chord at
+  the fork's new number (1.5.1 and 1.5.2 exist as of 2026-11-10), `changeset publish` skips it and the
+  fork's `durable` and `env` resolve upstream's chord. When it has not (1.4.1 on 2026-11-04), the publish
+  fails on chord after the `@leo-labs-ai/*` packages are out, as `@earendil-works/pi-env@1.1.1` did
+  (ENEEDAUTH). Decide how chord is versioned before merging a version PR that bumps it.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0; every release since is under
   `[Unreleased]`.

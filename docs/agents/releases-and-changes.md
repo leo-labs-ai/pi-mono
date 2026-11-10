@@ -15,7 +15,7 @@ Do not follow the legacy local tag/WebAuthn/public-npm flow in `scripts/release.
 
 ## Current package set
 
-The Changesets fixed group (`.changeset/config.json`) holds the six fork-owned publishable workspaces: `@leo-labs-ai/pi-ai`, `pi-agent-core`, `pi-tui`, `pi-telemetry`, `pi-durable` and `pi-coding-agent`. `@leo-labs-ai/pi-env` is public and fork-owned but outside the group; it is bumped as a dependent and `scripts/sync-versions.js` keeps every public `@leo-labs-ai/*` package in lockstep. `@leo-labs-ai/pi-evals` is private. The vendored `@earendil-works/chord`, `pi-codemode` and `pi-mcp` keep upstream's versions and are not published by the fork. `protocol`, `client` and `server` were removed in the 1.3.0 upstream sync and the orchestrator workspace earlier; neither set may be reintroduced into the group.
+The Changesets fixed group (`.changeset/config.json`) holds the six fork-owned publishable workspaces: `@leo-labs-ai/pi-ai`, `pi-agent-core`, `pi-tui`, `pi-telemetry`, `pi-durable` and `pi-coding-agent`. `@leo-labs-ai/pi-env` is public and fork-owned but outside the group; it is bumped as a dependent and `scripts/sync-versions.js` keeps every public `@leo-labs-ai/*` package in lockstep. `@leo-labs-ai/pi-evals` is private. The vendored `@earendil-works/chord`, `pi-codemode`, `pi-mcp` and `pi-schema` keep upstream's versions and are not published by the fork. `protocol`, `client` and `server` were removed in the 1.3.0 upstream sync and the orchestrator workspace earlier; neither set may be reintroduced into the group.
 
 ## Change records
 

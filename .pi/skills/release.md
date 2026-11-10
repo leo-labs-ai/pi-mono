@@ -92,9 +92,10 @@ After the version PR merges, the Release run on the merge commit must be green:
   or `npm run publish`, and never push tags by hand. The `release:*` and `publish` scripts are upstream's
   legacy laptop flow and target public npm.
 
-## Known gaps (2026-11-04)
+## Known gaps (2026-11-10)
 
 - A version PR that bumps `@earendil-works/chord` (it depends on `@leo-labs-ai/pi-telemetry`) fails
-  `check:changelog`, and its publish would fail on chord after the `@leo-labs-ai/*` packages are out,
-  because no fork-numbered chord exists on npmjs. Flag it to the user instead of working around it.
+  `check:changelog`. Its publish skips chord when upstream already released that version on npmjs, and
+  fails on chord, after the `@leo-labs-ai/*` packages are out, when upstream has not. Flag it to the user
+  instead of working around it.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0.
