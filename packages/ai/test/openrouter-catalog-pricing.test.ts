@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenRouterCatalog } from "../scripts/openrouter-catalog.ts";
+import { buildOpenRouterCatalog } from "../catalog/sources/openrouter.ts";
 
 describe("OpenRouter catalog pricing provenance", () => {
 	// https://openrouter.ai/api/v1/models, observed 2026-10-14.

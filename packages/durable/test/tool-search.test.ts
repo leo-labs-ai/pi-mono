@@ -1,4 +1,5 @@
-import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@leo-labs-ai/pi-ai";
+import { num, obj, opt } from "@earendil-works/pi-schema";
+import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import {
 	AgentDoc,
 	type Conversation,
@@ -19,7 +20,7 @@ function tool(name: string, description: string, extra: Partial<ToolRegistration
 	return defineTool({
 		name,
 		description,
-		parameters: Type.Object({ number: Type.Optional(Type.Number({ description: "Issue number" })) }),
+		parameters: obj({ number: opt(num({ description: "Issue number" })) }),
 		execute: async () => ({ output: [{ type: "text", text: `${name} ran` }] }),
 		...extra,
 	});
@@ -120,7 +121,7 @@ describe("deferred tools and tool_search", () => {
 		const grow = defineTool({
 			name: "grow",
 			description: "grow",
-			parameters: Type.Object({}),
+			parameters: obj({}),
 			execute: async () => ({ output: [], control: { addTools: ["github_get_issue", "alpha", "ghost"] } }),
 		});
 		addTool(chat.registry, grow);

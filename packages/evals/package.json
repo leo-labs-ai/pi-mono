@@ -1,24 +1,23 @@
 {
 	"name": "@leo-labs-ai/pi-evals",
-	"version": "1.4.0",
+	"version": "1.5.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"clean": "shx rm -rf .eval",
+		"clean": "node ../../scripts/package-files.mjs clean .eval",
 		"eval": "npm run eval:host && npm run eval:docs --",
 		"eval:host": "vitest run --config vitest.evals.config.ts --project host",
+		"eval:audit": "vitest run --config vitest.evals.config.ts --project audit",
 		"eval:docs": "node --experimental-strip-types src/cli.ts",
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@leo-labs-ai/pi-ai": "1.4.0",
-		"@leo-labs-ai/pi-coding-agent": "1.4.0",
+		"@leo-labs-ai/pi-ai": "1.5.0",
+		"@leo-labs-ai/pi-coding-agent": "1.5.0",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
-		"autoevals": "0.3.0",
-		"shx": "0.3.4",
 		"typescript": "5.9.3",
-		"vitest": "4.1.11",
+		"vitest": "4.1.12",
 		"vitest-evals": "0.15.0"
 	}
 }

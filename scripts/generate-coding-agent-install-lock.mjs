@@ -12,7 +12,7 @@ const rootLockfilePath = join(repoRoot, "package-lock.json");
 const outputPackageJsonPath = join(outputDir, "package.json");
 const outputLockfilePath = join(outputDir, "package-lock.json");
 const internalPackagePrefix = "@leo-labs-ai/pi-";
-const internalPackageNames = new Set(["@earendil-works/chord", "@earendil-works/pi-codemode", "@earendil-works/pi-mcp"]);
+const internalPackageNames = new Set(["@earendil-works/chord", "@earendil-works/pi-codemode", "@earendil-works/pi-mcp", "@earendil-works/pi-schema"]);
 const installPackageName = "@leo-labs-ai/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],

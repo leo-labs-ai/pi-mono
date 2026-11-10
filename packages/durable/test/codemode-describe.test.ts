@@ -1,6 +1,7 @@
 import { CodemodeSandbox } from "@earendil-works/pi-codemode";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
-import { type AssistantMessage, fauxAssistantMessage, fauxText, Type } from "@leo-labs-ai/pi-ai";
+import { obj, str } from "@earendil-works/pi-schema";
+import { type AssistantMessage, fauxAssistantMessage, fauxText } from "@leo-labs-ai/pi-ai";
 import { defineTool, MemoryStorage, type ToolRegistration } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { createCodemodeExtension } from "../src/codemode/codemode.ts";
@@ -12,7 +13,7 @@ function tool(name: string, description: string, extra: Partial<ToolRegistration
 	return defineTool({
 		name,
 		description,
-		parameters: Type.Object({ path: Type.String({ description: "File path" }) }),
+		parameters: obj({ path: str({ description: "File path" }) }),
 		execute: async () => ({ output: [] }),
 		...extra,
 	});
