@@ -73,11 +73,17 @@ const defaultReadOperations: ReadOperations = {
  * as /proc files) and other file types until EOF.
  */
 async function* readLocalFileChunks(path: string, { signal }: { signal?: AbortSignal }): AsyncIterable<Uint8Array> {
+	signal?.throwIfAborted();
 	const handle = await fsOpen(path, "r");
 	try {
+		signal?.throwIfAborted();
 		const stats = await handle.stat();
+		signal?.throwIfAborted();
 		const end = stats.isFile() && stats.size > 0 ? stats.size - 1 : undefined;
-		yield* handle.createReadStream({ end, signal, autoClose: false });
+		const stream = handle.createReadStream({ end, signal, autoClose: false });
+		// Own errors before iteration starts and after it ends; the iterator still propagates read errors.
+		stream.on("error", () => {});
+		yield* stream;
 	} finally {
 		await handle.close();
 	}
