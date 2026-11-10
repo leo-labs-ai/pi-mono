@@ -4,14 +4,6 @@
  */
 
 import {
-	type Agent,
-	type AgentTool,
-	type AgentToolCallOutcome,
-	type AgentToolResult,
-	runToolCall,
-} from "@earendil-works/pi-agent-core";
-import type { ImageContent, JsonObject, JsonValue, TextContent } from "@earendil-works/pi-ai";
-import {
 	type CodemodeJsonSchema,
 	CodemodeSandbox,
 	type CodemodeTool,
@@ -19,6 +11,14 @@ import {
 } from "@earendil-works/pi-codemode";
 import { type McpClient, toLlmContent } from "@earendil-works/pi-mcp";
 import { obj, str } from "@earendil-works/pi-schema";
+import {
+	type Agent,
+	type AgentTool,
+	type AgentToolCallOutcome,
+	type AgentToolResult,
+	runToolCall,
+} from "@leo-labs-ai/pi-agent-core";
+import type { ImageContent, JsonObject, JsonValue, TextContent } from "@leo-labs-ai/pi-ai";
 
 /** Provider tool names are limited to 64 characters of `[A-Za-z0-9_-]`. */
 function toToolName(prefix: string, name: string): string {

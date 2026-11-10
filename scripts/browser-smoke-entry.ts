@@ -1,4 +1,4 @@
-import { createHost, memoryLinkPair, replicatedState } from "@earendil-works/chord";
+import { createHost, memoryLinkPair } from "@earendil-works/chord";
 import { createAssistantMessageEventStream, validateToolArguments } from "@leo-labs-ai/pi-ai";
 import { complete, getModel, getProviders, streamSimple } from "@leo-labs-ai/pi-ai/compat";
 import { Agent, streamProxy } from "@leo-labs-ai/pi-agent-core";
@@ -28,5 +28,4 @@ console.log(
 	typeof streamProxy,
 	typeof createHost,
 	typeof memoryLinkPair,
-	replicatedState({ browser: true }).value.browser,
 );

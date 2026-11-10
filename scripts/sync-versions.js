@@ -2,7 +2,8 @@
 
 /**
  * Validates lockstep versions for published packages, then synchronizes
- * exact internal dependency versions in all workspace packages, including private ones.
+ * exact internal dependency versions in all workspace packages, including private ones,
+ * and in the apps next to the packages directory (`apps/*`, never published).
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,13 +12,23 @@ import { findPackageDirectories, isVendoredUpstreamPackage } from "./package-wor
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
-const packageRoot = process.argv[2] ?? "packages";
-const workspacePackages = findPackageDirectories(packageRoot)
-	.filter((directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)))
-	.map((directory) => {
+function readManifests(directories) {
+	return directories.map((directory) => {
 		const path = join(directory, "package.json");
 		return { data: JSON.parse(readFileSync(path, "utf8")), path };
 	});
+}
+
+const packageRoot = process.argv[2] ?? "packages";
+const workspacePackages = readManifests(
+	findPackageDirectories(packageRoot).filter(
+		(directory) => !GENERATED_PACKAGE_SUFFIXES.some((suffix) => directory.endsWith(suffix)),
+	),
+);
+// Apps pin workspace packages exactly too, rather than fetching them from a registry.
+const appRoot = join(dirname(packageRoot), "apps");
+const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
+
 // Vendored upstream packages are versioned by upstream, so they neither join the
 // fork's lockstep set nor supply versions for the dependency rewrite below.
 const forkOwnedPackages = workspacePackages.filter((pkg) => !isVendoredUpstreamPackage(pkg.data.name));
@@ -43,7 +54,7 @@ console.log("\nAll non-private packages are at the same version (lockstep).");
 
 let totalUpdates = 0;
 const updatedPackages = new Set();
-for (const pkg of workspacePackages) {
+for (const pkg of [...workspacePackages, ...appPackages]) {
 	for (const dependencyType of ["dependencies", "devDependencies", "optionalDependencies"]) {
 		const dependencies = pkg.data[dependencyType];
 		if (!dependencies) {
