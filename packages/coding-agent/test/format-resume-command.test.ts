@@ -8,8 +8,11 @@ import { formatResumeCommand } from "../src/modes/interactive/interactive-mode.t
 
 const tempDirs: string[] = [];
 const originalStdoutIsTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+const originalResumeCommand = process.env.PI_RESUME_COMMAND;
 
 afterEach(() => {
+	if (originalResumeCommand === undefined) delete process.env.PI_RESUME_COMMAND;
+	else process.env.PI_RESUME_COMMAND = originalResumeCommand;
 	if (originalStdoutIsTTY) {
 		Object.defineProperty(process.stdout, "isTTY", originalStdoutIsTTY);
 	} else {
@@ -52,6 +55,24 @@ function createSessionManager(options: {
 describe("formatResumeCommand", () => {
 	it("returns a session resume command for default session dirs", () => {
 		setStdoutIsTTY(true);
+		const sessionFile = createTempFile();
+		const sessionManager = createSessionManager({ sessionFile, sessionId: "test-session" });
+
+		expect(formatResumeCommand(sessionManager)).toBe(`${APP_NAME} --session test-session`);
+	});
+
+	it("uses PI_RESUME_COMMAND as the executable prefix", () => {
+		setStdoutIsTTY(true);
+		process.env.PI_RESUME_COMMAND = "captain";
+		const sessionFile = createTempFile();
+		const sessionManager = createSessionManager({ sessionFile, sessionId: "test-session" });
+
+		expect(formatResumeCommand(sessionManager)).toBe("captain --session test-session");
+	});
+
+	it("uses the default command when PI_RESUME_COMMAND is blank", () => {
+		setStdoutIsTTY(true);
+		process.env.PI_RESUME_COMMAND = "  ";
 		const sessionFile = createTempFile();
 		const sessionManager = createSessionManager({ sessionFile, sessionId: "test-session" });
 

@@ -17,6 +17,8 @@ Use `/name` or `--name` to assign a recognizable session name. Run `/session` to
 
 The session picker lets you search, rename, and delete sessions. It can also show paths, change sorting, and limit results to named sessions. See [Keybindings](keybindings.md#sessions) for its shortcuts.
 
+When an interactive session exits, Pi prints a command to resume it. Set `PI_RESUME_COMMAND` to replace the command name in that hint while keeping Pi’s session arguments. For example, `PI_RESUME_COMMAND=captain` prints `captain --session <id>`. The variable affects only the printed hint; your wrapper must launch Pi with any required environment.
+
 ## Choose how to branch
 
 Pi stores entries as a tree, so returning to an earlier point does not erase the branch you leave.
