@@ -61,6 +61,14 @@ test("pins fork-owned dependencies without touching vendored packages, registry 
 				"@mariozechner/pi-ai": "npm:@earendil-works/pi-ai@1.0.0",
 			},
 		});
+		await writeManifest(root, "apps/p2", {
+			name: "p2",
+			version: "0.0.1",
+			private: true,
+			dependencies: {
+				"@leo-labs-ai/pi-ai": "1.0.0",
+			},
+		});
 		await writeManifest(root, "packages/coding-agent/install-lock", {
 			name: "generated-install-lock",
 			version: "0.0.0",
@@ -82,6 +90,9 @@ test("pins fork-owned dependencies without touching vendored packages, registry 
 		// Vendored versions are upstream's, so the exact pin must survive the rewrite.
 		assert.equal(evalsManifest.dependencies["@earendil-works/chord"], "9.9.9");
 		assert.equal(evalsManifest.dependencies["@mariozechner/pi-ai"], "npm:@earendil-works/pi-ai@1.0.0");
+		const appManifest = await readManifest(root, "apps/p2");
+		assert.equal(appManifest.dependencies["@leo-labs-ai/pi-ai"], "2.0.0");
+		assert.equal(appManifest.version, "0.0.1");
 		const generatedManifest = await readManifest(root, "packages/coding-agent/install-lock");
 		assert.equal(generatedManifest.dependencies["@leo-labs-ai/pi-coding-agent"], "^1.0.0");
 

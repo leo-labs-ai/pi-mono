@@ -1,8 +1,9 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Context, JsonValue } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { withAbortSignal } from "@earendil-works/chord/context";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { obj } from "@earendil-works/pi-schema";
 import { createModels, fauxAssistantMessage, fauxText, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import {

@@ -6,6 +6,14 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Upstream sync 1.5.1
+
+- **Merges upstream Pi `v1.5.1`** using three-way inputs B `f9a263655` (`v1.5.0`), L `94b0b09fe` (fork head) and U `dd30101cf` (`v1.5.1`). The fork keeps its `@leo-labs-ai/pi-*` package names, its CI and build-gate seams, and its compaction and tool seams. Details: `docs/fork-merge-conflict-log-2026-11-10.md`.
+- **Upstream Chord v2 moved from `next` to the package root.** The merge follows upstream's deletion of the old v1 code and of the issue-triage files. The old manager timeout is obsolete: the fork had already planned its removal.
+- **Adopted upstream's `lovely-mermaid`.**
+- **Rejected upstream's `preview-packages` and `p2-cloud-bundle` workflows.** They publish to upstream infrastructure, which the fork cannot use.
+- **Refreshed the immutable catalog pin to SHA256 `d1cdce8a84fa8b63211a8cda9b2a176fca8155ba2182795284ab31b6631c0914`.** Upstream's older pin lacks the Fable 5.2 entries that 1.5.1 tests require. The fork keeps its Kimi K3 cost override.
+
 ### Upstream sync 1.5.0
 
 - **Merges upstream Pi `v1.5.0`** (from `v1.4.0`). Fork-owned packages keep `@leo-labs-ai/pi-*` names. The new upstream package `@earendil-works/pi-schema` keeps its upstream name, like `chord`, `pi-codemode` and `pi-mcp`. Details: `docs/fork-merge-conflict-log-2026-11-09.md`.
