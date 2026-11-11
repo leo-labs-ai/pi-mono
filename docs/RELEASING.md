@@ -66,8 +66,9 @@ One or two sentences on what changes for users of the package.
 ```
 
 - Name a package of the fixed group (naming several is fine). Never name a vendored
-  `@earendil-works/*` package: the config `ignore` list is empty and a changeset that mixes skipped and
-  released packages fails `changeset version`.
+  `@earendil-works/*` package: nothing is in the config's `ignore` list, so `changeset version` would
+  move it off upstream's version number, and the publish then fails on npmjs unless upstream already
+  released that number (see "Known gaps").
 - The config sets `"changelog": false`, so the text is not rendered anywhere and the version PR body
   lists package names only. Keep the text accurate anyway.
 - Release notes live in `FORK-CHANGELOG.md`. `npm run check:changelog` requires an entry under
