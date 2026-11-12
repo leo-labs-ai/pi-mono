@@ -619,6 +619,8 @@ interface ServerSentEvent {
 	event: string | null;
 	data: string;
 	raw: string[];
+	/** True when the frame was flushed at end of stream without its terminating blank line. */
+	unfinished?: boolean;
 }
 
 interface SseDecoderState {
@@ -690,9 +692,13 @@ function nextLineBreakIndex(text: string): number {
 	return Math.min(carriageReturnIndex, newlineIndex);
 }
 
-function consumeLine(text: string): { line: string; rest: string } | null {
+function consumeLine(text: string, final: boolean): { line: string; rest: string } | null {
 	const lineBreakIndex = nextLineBreakIndex(text);
 	if (lineBreakIndex === -1) {
+		return null;
+	}
+	// A CR at the end of the buffer may be the first half of CRLF split across chunks. Wait for the next byte.
+	if (!final && text[lineBreakIndex] === "\r" && lineBreakIndex === text.length - 1) {
 		return null;
 	}
 
@@ -728,26 +734,26 @@ async function* iterateSseMessages(
 			}
 
 			buffer += decoder.decode(value, { stream: true });
-			let consumed = consumeLine(buffer);
+			let consumed = consumeLine(buffer, false);
 			while (consumed) {
 				buffer = consumed.rest;
 				const event = decodeSseLine(consumed.line, state);
 				if (event) {
 					yield event;
 				}
-				consumed = consumeLine(buffer);
+				consumed = consumeLine(buffer, false);
 			}
 		}
 
 		buffer += decoder.decode();
-		let consumed = consumeLine(buffer);
+		let consumed = consumeLine(buffer, true);
 		while (consumed) {
 			buffer = consumed.rest;
 			const event = decodeSseLine(consumed.line, state);
 			if (event) {
 				yield event;
 			}
-			consumed = consumeLine(buffer);
+			consumed = consumeLine(buffer, true);
 		}
 
 		if (buffer.length > 0) {
@@ -759,6 +765,7 @@ async function* iterateSseMessages(
 
 		const trailingEvent = flushSseEvent(state);
 		if (trailingEvent) {
+			trailingEvent.unfinished = true;
 			yield trailingEvent;
 		}
 	} finally {
@@ -795,6 +802,10 @@ async function* iterateAnthropicEvents(
 			}
 			yield event;
 		} catch (error) {
+			// A frame cut off by EOF is a truncated transport, not malformed provider output.
+			if (sse.unfinished && sawMessageStart && !sawMessageEnd) {
+				throw new Error("Anthropic stream ended before message_stop");
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			throw new Error(
 				`Could not parse Anthropic SSE event ${sse.event}: ${message}; data=${sse.data}; raw=${sse.raw.join("\\n")}`,

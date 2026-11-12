@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Anthropic SSE CRLF parsing
+
+- **Fixes Anthropic SSE parsing when a CRLF pair splits across network chunks.** The parser consumed a trailing CR at once, so the LF at the start of the next chunk looked like a blank line and dispatched a partial event. It now holds a terminal CR while streaming and consumes it at end of stream. A frame cut off by end of stream after `message_start` and before `message_stop` now raises the existing retryable `Anthropic stream ended before message_stop` error instead of a JSON parse error; no JSON is repaired or invented. Completed malformed frames still fail with the parse error. Upstream report: earendil-works/pi#10390.
+
 ### Upstream sync 1.5.1
 
 - **Merges upstream Pi `v1.5.1`** using three-way inputs B `f9a263655` (`v1.5.0`), L `94b0b09fe` (fork head) and U `dd30101cf` (`v1.5.1`). The fork keeps its `@leo-labs-ai/pi-*` package names, its CI and build-gate seams, and its compaction and tool seams. Details: `docs/fork-merge-conflict-log-2026-11-10.md`.

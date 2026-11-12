@@ -5,6 +5,7 @@ import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import { transformMessages } from "../src/api/transform-messages.ts";
 import { getModel, normalizeContext } from "../src/compat.ts";
 import type { Api, Model, ToolCall } from "../src/types.ts";
+import { isRetryableAssistantError } from "../src/utils/retry.ts";
 
 function createSseResponse(events: Array<{ event: string; data: string }>): Response {
 	const body = events.map(({ event, data }) => `event: ${event}\ndata: ${data}\n`).join("\n");
@@ -108,6 +109,110 @@ function createResponseModelSseResponse(model: string, contentBlock: ResponseCon
 		{ event: "message_stop", data: JSON.stringify({ type: "message_stop" }) },
 	]);
 }
+
+function createSplitSseResponse(wire: string, splitAt: number): Response {
+	const bytes = new TextEncoder().encode(wire);
+	const body = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(bytes.slice(0, splitAt));
+			controller.enqueue(bytes.slice(splitAt));
+			controller.close();
+		},
+	});
+	return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+async function collectProviderEvents(response: Response) {
+	const providerEvents: unknown[] = [];
+	const result = await streamAnthropic(
+		getModel("anthropic", "claude-haiku-4-5"),
+		normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] }),
+		{
+			client: createFakeAnthropicClient(response),
+			onProviderStreamEvent: async (event) => {
+				providerEvents.push(event);
+			},
+		},
+	).result();
+	return { providerEvents, result };
+}
+
+const multilineThinkingDelta = {
+	type: "content_block_delta",
+	index: 0,
+	delta: { type: "thinking_delta", thinking: "step one\nstep two" },
+};
+
+function buildWire(lineBreak: string, dataJson: string): string {
+	const dataLines = dataJson.split("\n").map((line) => `data: ${line}`);
+	return [
+		`event: content_block_delta${lineBreak}${dataLines.join(lineBreak)}${lineBreak}${lineBreak}`,
+		`event: message_stop${lineBreak}data: {"type":"message_stop"}${lineBreak}${lineBreak}`,
+	].join("");
+}
+
+describe("Anthropic SSE line-break splits", () => {
+	const prettyJson = JSON.stringify(multilineThinkingDelta, null, 1);
+	const expectedEvents = [multilineThinkingDelta, { type: "message_stop" }];
+
+	for (const [name, lineBreak] of [
+		["CRLF", "\r\n"],
+		["LF", "\n"],
+		["CR", "\r"],
+	] as const) {
+		it(`preserves multiline events for every byte split with ${name}`, async () => {
+			const wire = buildWire(lineBreak, prettyJson);
+			const length = new TextEncoder().encode(wire).length;
+			for (let splitAt = 0; splitAt <= length; splitAt++) {
+				const { providerEvents } = await collectProviderEvents(createSplitSseResponse(wire, splitAt));
+				expect(providerEvents, `${name} split at ${splitAt}`).toEqual(expectedEvents);
+			}
+		});
+	}
+
+	it("consumes a lone terminal CR at end of stream", async () => {
+		const wire = `event: message_stop\rdata: {"type":"message_stop"}\r\r`;
+		const { providerEvents } = await collectProviderEvents(createSplitSseResponse(wire, wire.length - 1));
+		expect(providerEvents).toEqual([{ type: "message_stop" }]);
+	});
+
+	const messageStartFrame = `event: message_start\r\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg_t", usage: { input_tokens: 1, output_tokens: 0 } } })}\r\n\r\n`;
+	const truncatedDelta = `event: content_block_delta\r\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"x"}`;
+
+	it("classifies an EOF-truncated frame after message_start as a retryable stream drop", async () => {
+		const wire = messageStartFrame + truncatedDelta;
+		const { result } = await collectProviderEvents(createSplitSseResponse(wire, 20));
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("Anthropic stream ended before message_stop");
+		expect(isRetryableAssistantError(result)).toBe(true);
+	});
+
+	it("keeps a completed malformed frame after message_start as a parse error", async () => {
+		const wire = `${messageStartFrame}${truncatedDelta}\r\n\r\n`;
+		const { result } = await collectProviderEvents(createSplitSseResponse(wire, 20));
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toContain("Could not parse Anthropic SSE event content_block_delta");
+		expect(isRetryableAssistantError(result)).toBe(false);
+	});
+
+	it("keeps an EOF-truncated frame without message_start as a parse error", async () => {
+		const { result } = await collectProviderEvents(createSplitSseResponse(truncatedDelta, 20));
+		expect(result.errorMessage).toContain("Could not parse Anthropic SSE event");
+	});
+
+	it("accepts a valid message_stop without a final blank line", async () => {
+		const deltaFrame = `event: message_delta\r\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 1 } })}\r\n\r\n`;
+		const wire = `${messageStartFrame}${deltaFrame}event: message_stop\r\ndata: {"type":"message_stop"}`;
+		const { result } = await collectProviderEvents(createSplitSseResponse(wire, 20));
+		expect(result.stopReason).toBe("stop");
+	});
+
+	it("still fails on truncated JSON", async () => {
+		const wire = `event: content_block_delta\r\ndata: {"type":"content_block_delta",\r\n\r\n`;
+		const { result } = await collectProviderEvents(createSplitSseResponse(wire, 10));
+		expect(result.stopReason).toBe("error");
+	});
+});
 
 describe("Anthropic raw SSE parsing", () => {
 	it("forwards parsed provider stream events in order", async () => {
