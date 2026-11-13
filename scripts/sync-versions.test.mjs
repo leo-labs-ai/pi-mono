@@ -163,3 +163,40 @@ test("writes the pi-ai version constant", async () => {
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+// version-packages runs this script on the Changesets version PR. Chord's plugin-imports example
+// (packages/chord/test/next/examples/37-plugin-imports) links private fixture packages with `file:`;
+// rewriting those to the fixture's version makes its fake npm refuse them ("is not a local package").
+test("leaves local and protocol specifiers alone, even when they name a package under packages/", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-local-"));
+	try {
+		await writeManifest(root, "packages/ai", { name: "@leo-labs-ai/pi-ai", version: "2.0.0" });
+		await writeManifest(root, "packages/chord/test/examples/deps/example-greeting", {
+			name: "example-greeting",
+			version: "1.0.0",
+			private: true,
+		});
+		await writeManifest(root, "packages/chord/test/examples/plugins/report", {
+			name: "@example/report",
+			private: true,
+			dependencies: {
+				"example-greeting": "file:../../deps/example-greeting",
+				"@leo-labs-ai/pi-ai": "link:../../../../../ai",
+			},
+			devDependencies: {
+				"@leo-labs-ai/pi-ai": "github:leo-labs-ai/pi-mono",
+			},
+		});
+
+		const result = runSyncVersions(root);
+		assert.equal(result.status, 0, result.stderr);
+
+		const report = await readManifest(root, "packages/chord/test/examples/plugins/report");
+		assert.equal(report.dependencies["example-greeting"], "file:../../deps/example-greeting");
+		assert.equal(report.dependencies["@leo-labs-ai/pi-ai"], "link:../../../../../ai");
+		assert.equal(report.devDependencies["@leo-labs-ai/pi-ai"], "github:leo-labs-ai/pi-mono");
+		assert.match(result.stdout, /All inter-package dependencies are already in sync/);
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

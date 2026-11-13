@@ -62,6 +62,13 @@ for (const pkg of [...workspacePackages, ...appPackages]) {
 		}
 
 		for (const [dependencyName, currentSpecifier] of Object.entries(dependencies)) {
+			// `file:`, `link:`, git and URL specifiers name a source, not a registry version. Test fixtures
+			// such as Chord's plugin-imports example link private packages under packages/ this way, so a
+			// lockstep pin would replace a local path with a version npm cannot resolve. Registry versions
+			// and ranges contain neither `:` nor `/`.
+			if (currentSpecifier.includes(":") || currentSpecifier.includes("/")) {
+				continue;
+			}
 			// Registry aliases such as `npm:@earendil-works/pi-ai@0.1.2` are never workspace-linked,
 			// so lockstep bumping them would point at a version that is not published yet.
 			const newSpecifier = versionMap.get(dependencyName);
