@@ -38,6 +38,14 @@ agent.subscribe((event) => {
 await agent.prompt("Hello!");
 ```
 
+`streamFn` is stored on the public `agent.streamFunction` field. That field is the provider seam: `prompt()` and `continue()` read it when a run starts and call that function for every turn of the run. Assigning `agent.streamFunction` after construction is honoured on the next prompt.
+
+```typescript
+agent.streamFunction = (model, context, options) => models.streamSimple(model, context, options);
+
+await agent.prompt("Hello again");
+```
+
 ## Core Concepts
 
 ### AgentMessage vs LLM Message
@@ -227,6 +235,8 @@ const agent = new Agent({
 
   // Required stream function. Receives a TranscriptContext: the prompt and tools
   // are in the transcript's system messages, not on the context.
+  // Copied onto `agent.streamFunction`. Assigning that field after construction
+  // is what the next prompt() or continue() calls.
   streamFn: models.streamSimple.bind(models),
 
   // Session ID for provider caching

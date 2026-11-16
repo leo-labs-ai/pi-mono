@@ -111,6 +111,32 @@ describe("Agent", () => {
 		}
 	});
 
+	// #668: streamFn is stored on the public streamFunction field. The next prompt
+	// reads that field, so a replacement after construction is the function it calls.
+	it("calls a streamFunction assigned after construction on the next prompt", async () => {
+		const calls: string[] = [];
+		const streamFor = (label: string): StreamFn => {
+			return () => {
+				calls.push(label);
+				const stream = createAssistantMessageEventStream();
+				queueMicrotask(() => {
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage(label) });
+				});
+				return stream;
+			};
+		};
+		const original = streamFor("original");
+		const replacement = streamFor("replacement");
+		const agent = new Agent({ streamFn: original });
+
+		expect(agent.streamFunction).toBe(original);
+		await agent.prompt("one");
+		agent.streamFunction = replacement;
+		await agent.prompt("two");
+
+		expect(calls).toEqual(["original", "replacement"]);
+	});
+
 	it("should create an agent instance with default state", () => {
 		const agent = new Agent({ streamFn: unusedStreamFunction });
 
