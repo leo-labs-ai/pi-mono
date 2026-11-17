@@ -84,8 +84,8 @@ import {
 	estimateTokens,
 	generateBranchSummary,
 	prepareCompaction,
-	shouldCompact,
 	SPLIT_TURN_CONTINUE_INSTRUCTION,
+	shouldCompact,
 } from "./compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL, THINKING_LEVEL_OPTIONS } from "./defaults.ts";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
