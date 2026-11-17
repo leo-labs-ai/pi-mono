@@ -16,5 +16,8 @@ export default defineConfig({
 			{ find: /^@leo-labs-ai\/pi-telemetry$/, replacement: telemetrySrcIndex },
 			{ find: /^@earendil-works\/pi-telemetry$/, replacement: telemetrySrcIndex },
 		],
+		// Workspace packages without a build (pi-schema) resolve to their source.
+		conditions: ["source"],
 	},
+	ssr: { resolve: { conditions: ["source"] } },
 });

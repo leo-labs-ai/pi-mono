@@ -705,24 +705,22 @@ export function getSummarizationFailure(response: AssistantMessage, label: strin
  *   no prefix with any live session, so there is nothing to hit and caching would only pay
  *   for a write that is never read. `"none"` is correct there, and stays the default.
  *
- * Summary requests set no output cap of their own. Like a normal turn, pi-ai sends the model's
- * output limit, clamped to the room left in the context window. Providers count thinking inside
- * max_tokens, so a smaller compaction-specific cap (formerly 0.8 × reserveTokens) let thinking
- * starve the summary and fail compaction with a length stop. The summary prompt, not
+ * Summary requests set no output cap of their own and never enable thinking. Like a normal turn,
+ * pi-ai sends the model's output limit, clamped to the room left in the context window.
+ * Providers count thinking inside max_tokens, so session thinking (for example xhigh) could
+ * exhaust the cap and fail compaction with a length stop. The summary prompt, not
  * max_tokens, governs summary length.
  */
 function createSummarizationOptions(
-	model: Model<any>,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
-	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
 	cacheSafe: boolean,
 ): SimpleStreamOptions {
 	const liveRetention = getProviderEnvValue("PI_CACHE_RETENTION", env) === "long" ? "long" : "short";
-	const options: SimpleStreamOptions = {
+	return {
 		signal,
 		apiKey,
 		headers,
@@ -730,10 +728,6 @@ function createSummarizationOptions(
 		cacheRetention: cacheSafe ? liveRetention : "none",
 		sessionId,
 	};
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
-	}
-	return options;
 }
 
 function createSummaryUserMessage(promptText: string): Message {
@@ -804,7 +798,8 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -822,7 +817,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
-			reserveTokens,
+			_reserveTokens,
 			apiKey,
 			headers,
 			signal,
@@ -856,19 +851,21 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 /**
  * Generate or update a conversation summary and return its provider usage.
  *
- * `_reserveTokens` is kept for API compatibility. It no longer caps summary output; see
+ * `_reserveTokens` and `_thinkingLevel` are kept for API compatibility. Neither affects the
+ * request: summaries set no output cap and run without thinking; see
  * {@link createSummarizationOptions}.
  */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -877,12 +874,10 @@ export async function generateSummaryWithUsage(
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<{ text: string; usage: Usage }> {
 	const completionOptions = createSummarizationOptions(
-		model,
 		apiKey,
 		headers,
 		env,
 		signal,
-		thinkingLevel,
 		sessionId,
 		cacheSafeContext !== undefined,
 	);
@@ -1131,11 +1126,14 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 Only summarize information explicitly present above. Do not infer or recreate later messages.`;
 
 /**
- * Closes the summary of a split turn that the agent loop resumes right after compaction. The
- * model resumes mid-turn with a checkpoint where its own earlier work was; without an explicit
- * instruction it often answers with a status report and ends the turn instead of continuing.
+ * Tells the model to resume a turn that an automatic compaction split. The model resumes
+ * mid-turn with a checkpoint where its own earlier work was; without an explicit instruction it
+ * often answers with a status report and ends the turn instead of continuing. AgentSession adds
+ * it to the one request that resumes the turn. It is never stored in a compaction summary: a
+ * stored copy would claim the task is unfinished on every later request and could be carried
+ * into the next summary.
  */
-const SPLIT_TURN_CONTINUE_INSTRUCTION =
+export const SPLIT_TURN_CONTINUE_INSTRUCTION =
 	"This compaction ran automatically in the middle of your turn. The task is not finished. Continue it now from this summary and the messages after it; do not stop to report progress.";
 
 /**
@@ -1149,10 +1147,6 @@ const SPLIT_TURN_CONTINUE_INSTRUCTION =
  *   the node holding the cached prefix.
  * @param cacheSafeContext - The live model-facing transcript. When present, summary requests
  *   replay it instead of serializing the conversation into a standalone prompt.
- * @param continuesTurn - Whether the agent loop sends the next request for the same turn right
- *   after this compaction (after tool results, or an overflow retry). A split turn then ends
- *   with an instruction to continue; manual compaction and compaction that waits for a new user
- *   message keep the plain summary.
  */
 export async function compact(
 	preparation: CompactionPreparation,
@@ -1168,7 +1162,6 @@ export async function compact(
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
-	continuesTurn?: boolean,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -1178,7 +1171,6 @@ export async function compact(
 		tokensBefore,
 		previousSummary,
 		fileOps,
-		settings,
 	} = preparation;
 
 	// Generate summaries and merge into one
@@ -1192,7 +1184,7 @@ export async function compact(
 			const historyResult = await generateSummaryWithUsage(
 				messagesToSummarize,
 				model,
-				settings.reserveTokens,
+				undefined,
 				apiKey,
 				headers,
 				signal,
@@ -1212,7 +1204,7 @@ export async function compact(
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			env,
@@ -1223,6 +1215,7 @@ export async function compact(
 			callbacks,
 			sessionId,
 			cacheSafeContext,
+			customInstructions,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1232,7 +1225,7 @@ export async function compact(
 		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			signal,
@@ -1253,9 +1246,6 @@ export async function compact(
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
-	if (continuesTurn && isSplitTurn && turnPrefixMessages.length > 0) {
-		summary += `\n\n${SPLIT_TURN_CONTINUE_INSTRUCTION}`;
-	}
 
 	if (!firstKeptEntryId) {
 		throw new Error("First kept entry has no UUID - session may need migration");
@@ -1301,17 +1291,18 @@ function buildTurnBoundaryExcerpt(turnPrefixMessages: AgentMessage[]): string {
 export async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
 	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
+	customInstructions?: string,
 ): Promise<{ text: string; usage: Usage }> {
 	// Cache-safe path: the split-turn prefix messages are ALREADY present verbatim in
 	// cacheSafeContext.messages (the live model-facing transcript). Re-serializing them into the
@@ -1324,28 +1315,20 @@ export async function generateTurnPrefixSummary(
 	//
 	// The standalone path is unchanged and still embeds the conversation, since it builds a
 	// standalone context that does not contain these messages.
+	const focusSuffix = customInstructions ? `\n\nAdditional focus: ${customInstructions}` : "";
 	const context = cacheSafeContext
 		? buildCacheSafeSummarizationContext(
 				cacheSafeContext,
-				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
+				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
 			)
 		: buildSummarizationContext(
-				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`,
+				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}`,
 			);
 
 	const response = await completeSummarization(
 		model,
 		context,
-		createSummarizationOptions(
-			model,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
-			sessionId,
-			cacheSafeContext !== undefined,
-		),
+		createSummarizationOptions(apiKey, headers, env, signal, sessionId, cacheSafeContext !== undefined),
 		streamFn,
 		retry,
 		callbacks,

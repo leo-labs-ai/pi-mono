@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@earendil-works/chord/context";
 import { getOrThrow, type ShellOutputInfo } from "@leo-labs-ai/pi-durable/env";
 import { afterAll, describe, expect, it } from "vitest";
-import { Connection } from "../src/connection.ts";
+import { Connection, nodePlatform } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
 
@@ -70,12 +70,76 @@ describe("RemoteExecutionEnv", () => {
 		expect(Date.now() - started).toBeLessThan(10_000);
 	}, 30_000);
 
+	it("reports the remote system in Node's names", async () => {
+		const { connection } = environment();
+		const { platform, arch } = nodePlatform(await connection.info());
+		expect(platform).toBe(process.platform);
+		// CI runs the darwin-x64 release daemon on arm64 macOS through Rosetta, so it reports x64 to arm64 Node.
+		const rosetta = process.platform === "darwin" && process.arch === "arm64" && arch === "x64";
+		if (!rosetta) expect(arch).toBe(process.arch);
+		expect(nodePlatform({ os: "windows", arch: "aarch64" })).toEqual({ platform: "win32", arch: "arm64" });
+		expect(nodePlatform({ os: "macos", arch: "x86_64" })).toEqual({ platform: "darwin", arch: "x64" });
+	});
+
+	it("reports listFiles as not supported by daemons released before it", async () => {
+		const { env } = environment();
+		expect((await env.connection.info()).features).toContain("listFiles");
+		const connection = new Connection({ command: [process.execPath, join(import.meta.dirname, "old-daemon.ts")] });
+		connections.push(connection);
+		const old = new RemoteExecutionEnv({ connection, id: "pi-env:old", cwd: env.cwd });
+		const listed = await old.listFiles(".", undefined, context);
+		expect(listed.ok ? "ok" : listed.error.code).toBe("not_supported");
+	});
+
+	it("cancels a listing in the daemon", async () => {
+		const { env, connection } = environment();
+		for (let dir = 0; dir < 100; dir++) {
+			mkdirSync(join(env.cwd, `d${dir}`));
+			for (let file = 0; file < 100; file++) writeFileSync(join(env.cwd, `d${dir}`, `f${file}`), "");
+		}
+		// The cancel follows the request at once, bypassing the client's own abort check, so the daemon stops the walk.
+		const controller = new AbortController();
+		controller.abort();
+		const cancelled = connection.request("listFiles", { path: env.cwd }, { signal: controller.signal });
+		await expect(cancelled).rejects.toMatchObject({ code: "aborted" });
+		const listed = getOrThrow(await env.listFiles(".", undefined, context));
+		expect([listed.entries.length, listed.truncated]).toEqual([10_100, false]);
+		const bounded = getOrThrow(await env.listFiles(".", { maxEntries: 5000 }, context));
+		expect([bounded.entries.length, bounded.truncated]).toEqual([5000, true]);
+		// Creating 10,000 files takes several seconds on Windows CI.
+	}, 30_000);
+
 	it("times out a command that produces no output", async () => {
 		const { env } = environment();
 		const started = Date.now();
 		const result = await env.exec(["sleep", "5"], { timeout: 0.3 }, context);
 		expect(result.ok ? "ok" : result.error.code).toBe("timeout");
 		expect(Date.now() - started).toBeLessThan(3000);
+	});
+
+	// The daemon used to die on Connection.close()'s SIGTERM before killing its commands.
+	it.skipIf(process.platform === "win32")("kills running commands when the connection closes", async () => {
+		const { env, connection } = environment();
+		const pid = Promise.withResolvers<number>();
+		const running = env.exec(
+			["sh", "-c", "echo $$; exec sleep 30"],
+			{ onOutput: (text: string) => pid.resolve(Number.parseInt(text, 10)) },
+			context,
+		);
+		const command = await pid.promise;
+		connection.close();
+		await running;
+		const alive = () => {
+			try {
+				process.kill(command, 0);
+				return true;
+			} catch {
+				return false;
+			}
+		};
+		const deadline = Date.now() + 5000;
+		while (alive() && Date.now() < deadline) await new Promise((done) => setTimeout(done, 50));
+		expect(alive()).toBe(false);
 	});
 
 	it("fails requests on handles of a lost connection instead of reaching the new daemon", async () => {

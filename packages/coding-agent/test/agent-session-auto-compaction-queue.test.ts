@@ -123,7 +123,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		const runAutoCompaction = (
 			session as unknown as {
-				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				_runAutoCompaction: (
+					reason: "overflow" | "threshold",
+					willRetry: boolean,
+					continuesTurn: boolean,
+				) => Promise<boolean>;
 			}
 		)._runAutoCompaction.bind(session);
 
@@ -156,7 +160,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						willRetry: boolean,
+						continuesTurn: boolean,
+					) => Promise<void>;
 				},
 				"_runAutoCompaction",
 			)
@@ -227,7 +235,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						willRetry: boolean,
+						continuesTurn: boolean,
+					) => Promise<void>;
 				},
 				"_runAutoCompaction",
 			)
@@ -352,7 +364,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						willRetry: boolean,
+						continuesTurn: boolean,
+					) => Promise<void>;
 				},
 				"_runAutoCompaction",
 			)
@@ -433,7 +449,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const runAutoCompactionSpy = vi
 			.spyOn(
 				session as unknown as {
-					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+					_runAutoCompaction: (
+						reason: "overflow" | "threshold",
+						willRetry: boolean,
+						continuesTurn: boolean,
+					) => Promise<void>;
 				},
 				"_runAutoCompaction",
 			)

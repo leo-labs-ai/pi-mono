@@ -7,7 +7,7 @@ type SessionWithCompactionInternals = {
 	_runAutoCompaction: (
 		reason: "overflow" | "threshold",
 		willRetry: boolean,
-		continuesTurn?: boolean,
+		continuesTurn: boolean,
 	) => Promise<boolean>;
 };
 

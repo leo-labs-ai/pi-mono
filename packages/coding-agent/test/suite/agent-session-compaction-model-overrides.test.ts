@@ -197,14 +197,14 @@ describe("AgentSession compaction model overrides", () => {
 			harness.session.agent.state.model = harness.getModel("second")!;
 			return getAuth(model, ...args);
 		});
-		const requests: Array<{ id: string; maxTokens: number | undefined }> = [];
+		const requests: string[] = [];
 		harness.setResponses([
-			(_context, options, _state, model) => {
-				requests.push({ id: model.id, maxTokens: options?.maxTokens });
+			(_context, _options, _state, model) => {
+				requests.push(model.id);
 				return fauxAssistantMessage("summary");
 			},
 		]);
 		await harness.session.compact();
-		expect(requests).toEqual([{ id: "first", maxTokens: undefined }]);
+		expect(requests).toEqual(["first"]);
 	});
 });

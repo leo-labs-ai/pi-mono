@@ -2,18 +2,21 @@ import { randomUUID } from "node:crypto";
 import { type PlatformPath, posix, win32 } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import {
 	type BinaryReader,
 	type DirReader,
 	type ExecutionEnv,
 	ExecutionError,
 	err,
+	type FileChange,
 	FileError,
 	type FileInfo,
 	type FileKind,
+	type FileListing,
 	type FileWatcher,
 	type LineScan,
+	type ListFilesOptions,
 	ok,
 	type Result,
 	type ShellExecOptions,
@@ -23,11 +26,11 @@ import {
 	StreamDecoder,
 	type TextLine,
 	type TextLineReader,
-	type WatchChange,
 	type WatchTarget,
 } from "@leo-labs-ai/pi-durable/env";
-import { type Connection, type Json, RemoteError, type RemoteInfo } from "./connection.ts";
+import { type Connection, type Json, nodePlatform, RemoteError, type RemoteInfo } from "./connection.ts";
 import { abortResult, toFileError } from "./errors.ts";
+import { listFilesOver } from "./list-files.ts";
 import { RemoteWatcher, type RemoteWatchOptions } from "./watch.ts";
 
 const MAX_TIMEOUT_MS = 2_147_483_647;
@@ -63,7 +66,7 @@ type RemoteDirEntry = { name: string; raw?: number[]; info?: RemoteFileInfo; err
 
 /** Node's path rules of the remote system. */
 export async function remotePath(connection: Connection): Promise<PlatformPath> {
-	return (await connection.info()).os === "windows" ? win32 : posix;
+	return nodePlatform(await connection.info()).platform === "win32" ? win32 : posix;
 }
 
 function toInfo(path: string, remote: RemoteFileInfo, paths: PlatformPath): Result<FileInfo, FileError> {
@@ -367,10 +370,13 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 		this.#watchOptions = options.watch ?? {};
 	}
 
-	/** Node's `resolvePath` on the remote system, with its home directory and working directories. */
-	async #resolve(path: string): Promise<string> {
-		const info = await this.connection.info();
-		const windows = info.os === "windows";
+	/**
+	 * Node's `resolvePath` on the remote system, with its home directory and working directories. It connects first;
+	 * aborting `signal` stops waiting for that.
+	 */
+	async #resolve(path: string, signal: AbortSignal | undefined): Promise<string> {
+		const info = await this.connection.info(signal);
+		const windows = nodePlatform(info).platform === "win32";
 		const paths = windows ? win32 : posix;
 		let normalized = path;
 		if (normalized === "~") {
@@ -406,7 +412,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 	): Promise<Result<T, FileError>> {
 		let resolved: string;
 		try {
-			resolved = await this.#resolve(path);
+			resolved = await this.#resolve(path, context.abortSignal);
 		} catch (error) {
 			return err(toFileError(error, path));
 		}
@@ -429,9 +435,9 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 		return { handle: new Handle(this, reply.json.handle as number, reply.session, resolved), json: reply.json };
 	}
 
-	async absolutePath(path: string, _context: Context): Promise<Result<string, FileError>> {
+	async absolutePath(path: string, context: Context): Promise<Result<string, FileError>> {
 		try {
-			return ok(await this.#resolve(path));
+			return ok(await this.#resolve(path, context.abortSignal));
 		} catch (error) {
 			return err(toFileError(error, path));
 		}
@@ -662,8 +668,8 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 		let source: string;
 		let destination: string;
 		try {
-			source = await this.#resolve(sourcePath);
-			destination = await this.#resolve(destinationPath);
+			source = await this.#resolve(sourcePath, context.abortSignal);
+			destination = await this.#resolve(destinationPath, context.abortSignal);
 		} catch (error) {
 			return err(toFileError(error, sourcePath));
 		}
@@ -715,6 +721,21 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 			}
 			return infos;
 		});
+	}
+
+	/** Through the daemon; `not_supported` with a daemon released before `listFiles`. */
+	async listFiles(
+		path: string,
+		options: ListFilesOptions | undefined,
+		context: Context,
+	): Promise<Result<FileListing, FileError>> {
+		let resolved: string;
+		try {
+			resolved = await this.#resolve(path, context.abortSignal);
+		} catch (error) {
+			return err(toFileError(error, path));
+		}
+		return listFilesOver(this.connection, resolved, options, context);
 	}
 
 	async #openDir(resolved: string): Promise<{ handle: Handle }> {
@@ -775,7 +796,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 		const aborted = abortResult<string>(context.abortSignal);
 		if (aborted) return aborted;
 		try {
-			const { tmpdir } = await this.connection.info();
+			const { tmpdir } = await this.connection.info(context.abortSignal);
 			const paths = await remotePath(this.connection);
 			const { json } = await this.connection.request("mkdtemp", { path: paths.join(tmpdir, prefix ?? "tmp-") });
 			return ok(json.path as string);
@@ -808,21 +829,21 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 
 	async watch(
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		context: Context,
 	): Promise<Result<FileWatcher, FileError>> {
 		const aborted = abortResult<FileWatcher>(context.abortSignal);
 		if (aborted) return aborted;
 		try {
 			const resolved = await Promise.all(
-				targets.map(async (target) => ({ ...target, path: await this.#resolve(target.path) })),
+				targets.map(async (target) => ({ ...target, path: await this.#resolve(target.path, context.abortSignal) })),
 			);
 			const afterResolve = abortResult<FileWatcher>(context.abortSignal);
 			if (afterResolve) return afterResolve;
 			const watcher = await RemoteWatcher.open(this.connection, resolved, onChange, this.#watchOptions);
 			const afterOpen = abortResult<FileWatcher>(context.abortSignal);
 			if (afterOpen) {
-				await watcher.close(context);
+				await watcher.stop(context);
 				return afterOpen;
 			}
 			return ok(watcher);
@@ -848,13 +869,6 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 			}
 		}
 		const inheritEnv = options?.inheritEnv ?? true;
-		let cwd: string;
-		try {
-			cwd = options?.cwd ? await this.#resolve(options.cwd) : this.cwd;
-		} catch (error) {
-			return err(new ExecutionError("unknown", error instanceof Error ? error.message : String(error)));
-		}
-		if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
 		const env: Record<string, string> = {};
 		for (const [key, value] of Object.entries(
 			inheritEnv ? { ...this.#shellEnv, ...options?.env } : { ...options?.env },
@@ -862,12 +876,33 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 			if (value !== undefined) env[key.toWellFormed()] = value;
 		}
 		let callbackError: ExecutionError | undefined;
+		let timedOut = false;
 		let settled = false;
 		let running: number | undefined;
 		const controller = new AbortController();
 		const onAbort = () => controller.abort();
 		signal?.addEventListener("abort", onAbort, { once: true });
+		// The daemon enforces the timeout once it runs the command. This timer also covers starting the connection and a
+		// daemon that stopped answering (a rebooting host), so the call ends on time whatever the remote host does.
+		const timer =
+			timeout === undefined
+				? undefined
+				: setTimeout(() => {
+						if (controller.signal.aborted) return;
+						timedOut = true;
+						controller.abort();
+					}, timeout * 1000);
+		const stopped = () =>
+			timedOut ? new ExecutionError("timeout", `timeout:${timeout}`) : new ExecutionError("aborted", "aborted");
 		try {
+			let cwd: string;
+			try {
+				cwd = options?.cwd ? await this.#resolve(options.cwd, controller.signal) : this.cwd;
+			} catch (error) {
+				if (controller.signal.aborted) return err(stopped());
+				return err(new ExecutionError("unknown", error instanceof Error ? error.message : String(error)));
+			}
+			if (controller.signal.aborted) return err(stopped());
 			const { json } = await this.connection.request(
 				"exec",
 				{
@@ -916,7 +951,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 				error.code === "timeout"
 					? new ExecutionError("timeout", `timeout:${timeout}`)
 					: error.code === "aborted"
-						? new ExecutionError("aborted", "aborted")
+						? stopped()
 						: error.code === "shell_unavailable" || error.code === "spawn_error"
 							? new ExecutionError(error.code, error.message)
 							: new ExecutionError("unknown", error.message);
@@ -924,6 +959,7 @@ export class RemoteExecutionEnv implements ExecutionEnv {
 			return err(failure);
 		} finally {
 			settled = true;
+			clearTimeout(timer);
 			signal?.removeEventListener("abort", onAbort);
 			if (running !== undefined) this.#running.delete(running);
 		}

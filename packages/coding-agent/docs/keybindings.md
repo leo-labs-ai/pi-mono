@@ -12,6 +12,7 @@ Map each action identifier to one key or a list of keys:
 
 ```json
 {
+  "$schema": "https://pi.dev/schemas/keybindings.schema.json",
   "app.session.new": "ctrl+shift+n",
   "app.session.tree": ["ctrl+shift+t", "alt+shift+t"]
 }
@@ -97,7 +98,7 @@ The dedicated history actions browse prompt history regardless of cursor positio
 
 #### Fullscreen
 
-In fullscreen mode, these actions control the transcript and take precedence over editor actions using the same key.
+In fullscreen mode, these actions control the transcript and take precedence over editor actions using the same key. While an overlay or a scrollable list such as autocomplete, `/settings`, or the model selector has focus, the scrolling and prompt-jump actions go to it instead of the transcript, so `tui.select.pageUp` and `tui.select.pageDown` move the list selection. Transcript search actions keep working.
 
 | Keybinding id | Default | Description |
 |---|---|---|
@@ -115,6 +116,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `tui.altScreen.searchClose` | `escape` | Close transcript search |
 | `tui.altScreen.top` | `ctrl+home` | Scroll to the beginning of the transcript |
 | `tui.altScreen.bottom` | `ctrl+end` | Scroll to the transcript end and follow new output |
+| `tui.altScreen.copy` | `super+c` | Copy the active fullscreen selection (Cmd+C in terminals that report super keys, such as Rex, Kitty and Ghostty) |
 
 ### Application
 
@@ -125,7 +127,7 @@ In fullscreen mode, these actions control the transcript and take precedence ove
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
 | `app.suspend` | `ctrl+z` (None on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`externalEditor`, `$VISUAL`, `$EDITOR`, Notepad on Windows, or `nano` elsewhere) |
-| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows and WSL) | Paste files on macOS, images, or text from clipboard |
+| `app.clipboard.pasteImage` | `ctrl+v` (`alt+v`, `ctrl+v` on Windows and WSL) | Paste files on macOS, images, or text from clipboard |
 
 On native Windows, `app.suspend` has no default because Windows terminals do not support Unix job control. If you assign it manually, Pi shows a status message instead of suspending. WSL uses the normal `ctrl+z` and `fg` behavior.
 

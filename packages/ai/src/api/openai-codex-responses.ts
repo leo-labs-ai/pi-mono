@@ -5,7 +5,6 @@ import type {
 	ResponseInput,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
-
 import { clampThinkingLevel } from "../models.ts";
 import { registerSessionResourceCleanup } from "../session-resources.ts";
 import type {
@@ -29,8 +28,8 @@ import {
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
+import { getIdentityHeaders } from "../utils/identity.ts";
 import { resolveHttpProxyUrlForTarget } from "../utils/node-http-proxy.ts";
-import { getPiUserAgent } from "../utils/pi-user-agent.ts";
 import { getSystemMessageText } from "../utils/text.ts";
 import {
 	getDeclaredTools,
@@ -43,10 +42,11 @@ import { uuidv7 } from "../utils/uuid.ts";
 import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import {
+	CONFIGURATION_UPDATE_REQUEST_EFFORT,
 	convertResponsesMessages,
 	convertResponsesTools,
+	getResponsesToolSupport,
 	processResponsesStream,
-	resolveMidConvoEffort,
 } from "./openai-responses-shared.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
@@ -186,11 +186,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new Error("Request was aborted"));
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener("abort", () => {
+		const onAbort = () => {
 			clearTimeout(timeout);
 			reject(new Error("Request was aborted"));
-		});
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -236,7 +240,7 @@ function usesZstdRequestCompression(model: Model<"openai-codex-responses">): boo
 // Returns the zstd-compressed body bytes, or null when compression is
 // unavailable (browser/Vite builds). Callers fall back to sending the
 // uncompressed JSON when this returns null.
-function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
+function compressRequestBodyZstd(bodyJson: string): Uint8Array<ArrayBuffer> | null {
 	const zlib = loadNodeZlib();
 	if (!zlib || typeof zlib.zstdCompressSync !== "function") {
 		return null;
@@ -245,7 +249,8 @@ function compressRequestBodyZstd(bodyJson: string): Uint8Array | null {
 		const compressed = zlib.zstdCompressSync(bodyJson, {
 			params: { [zlib.constants.ZSTD_c_compressionLevel]: REQUEST_COMPRESSION_ZSTD_LEVEL },
 		});
-		return new Uint8Array(compressed.buffer, compressed.byteOffset, compressed.byteLength);
+		// A copy owns a plain ArrayBuffer, which fetch accepts as a body under every lib.
+		return new Uint8Array(compressed);
 	} catch {
 		return null;
 	}
@@ -297,21 +302,33 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			);
 			const cacheSessionId = options?.cacheRetention === "none" ? undefined : options?.sessionId;
 			const codexSessionId = clampOpenAIPromptCacheKey(cacheSessionId);
-			let body = buildRequestBody(model, normalizedContext, options, codexSessionId, grammarToolInputProperties);
-			const midConvoEffort = resolveMidConvoEffort(
-				model.compat?.supportsMidConvoEffort === true,
+			const configurationUpdateEffort = getConfigurationUpdateEffort(model, options);
+			if (configurationUpdateEffort !== undefined) output.providerThinkingLevel = configurationUpdateEffort;
+			let body = buildRequestBody(
 				model,
-				normalizedContext.messages,
-				getRequestedEffort(model, options),
+				normalizedContext,
+				options,
+				codexSessionId,
+				grammarToolInputProperties,
+				configurationUpdateEffort,
 			);
-			if (midConvoEffort) output.providerThinkingLevel = midConvoEffort.active;
 			const nextBody = await options?.onPayload?.(body, model);
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
 			const websocketRequestId = codexSessionId || uuidv7();
-			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, codexSessionId);
+			// Codex expects an originator on every request; it is not attribution.
+			const identityHeaders = { originator: "pi", ...getIdentityHeaders(model, options?.identity) };
+			const sseHeaders = buildSSEHeaders(
+				identityHeaders,
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				codexSessionId,
+			);
 			const websocketHeaders = buildWebSocketHeaders(
+				identityHeaders,
 				model.headers,
 				options?.headers,
 				accountId,
@@ -414,7 +431,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			} else {
 				sseHeaders.delete("content-encoding");
 			}
-			const sseBody: Uint8Array | string = compressedBody ?? bodyJson;
+			const sseBody: Uint8Array<ArrayBuffer> | string = compressedBody ?? bodyJson;
 
 			// Fetch with retry logic for rate limits and transient errors
 			let response: Response | undefined;
@@ -516,11 +533,6 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) {
-				// Streaming scratch buffers are only used during parsing; never persist them.
-				delete (block as { partialJson?: string }).partialJson;
-				delete (block as { customInput?: unknown }).customInput;
-			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatProviderError(normalizeProviderError(error));
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -567,20 +579,22 @@ function buildRequestBody(
 		getDeclaredTools(context.messages),
 		model.compat?.supportsOpenAIGrammarTools ?? false,
 	),
+	configurationUpdateEffort: string | undefined = undefined,
 ): RequestBody {
 	const supportsStrictMode = model.compat?.supportsStrictMode ?? true;
 	const supportsOpenAIGrammarTools = model.compat?.supportsOpenAIGrammarTools ?? false;
 	const supportsAdditionalTools = model.compat?.supportsAdditionalTools ?? false;
 	const supportsToolSearch = model.compat?.supportsToolSearch ?? false;
-	const transcriptTools = resolveTranscriptTools(context.messages, supportsAdditionalTools || supportsToolSearch);
-	const midConvoEffort = resolveMidConvoEffort(
-		model.compat?.supportsMidConvoEffort === true,
-		model,
+	const transcriptTools = resolveTranscriptTools(
 		context.messages,
-		getRequestedEffort(model, options),
+		getResponsesToolSupport({
+			supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
+			supportsAdditionalTools,
+			supportsToolSearch,
+		}),
 	);
 	const messages = convertResponsesMessages(model, context, CODEX_TOOL_CALL_PROVIDERS, {
-		midConvoEffort,
+		configurationUpdateEffort,
 		includeSystemPrompt: false,
 		grammarToolInputProperties,
 		supportsMidConvoSystemMessages: model.compat?.supportsMidConvoSystemMessages ?? false,
@@ -629,7 +643,7 @@ function buildRequestBody(
 				: (model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort);
 		if (effort !== null) {
 			body.reasoning = {
-				effort: midConvoEffort?.baseline ?? effort,
+				effort: configurationUpdateEffort === undefined ? effort : CONFIGURATION_UPDATE_REQUEST_EFFORT,
 				summary: options.reasoningSummary ?? "auto",
 			};
 		}
@@ -640,10 +654,15 @@ function buildRequestBody(
 	return body;
 }
 
-function getRequestedEffort(
+/**
+ * Effort to send in `configuration_update` items, or undefined to send it as `reasoning.effort`.
+ * Opt-in per model through `compat.supportsMidConvoEffort`; switching reasoning off is not covered.
+ */
+function getConfigurationUpdateEffort(
 	model: Model<"openai-codex-responses">,
 	options: OpenAICodexResponsesOptions | undefined,
 ): string | undefined {
+	if (model.compat?.supportsMidConvoEffort !== true) return undefined;
 	const level = options?.reasoningEffort;
 	if (level === undefined || level === "none") return undefined;
 	return model.thinkingLevelMap?.[level] ?? level;
@@ -1691,12 +1710,17 @@ function extractAccountId(token: string): string {
 }
 
 function buildBaseCodexHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 ): Headers {
-	const headers = new Headers(initHeaders);
+	// Defaults first so model and caller headers can override them, matching the other providers.
+	const headers = new Headers(defaultHeaders);
+	for (const [key, value] of Object.entries(initHeaders || {})) {
+		headers.set(key, value);
+	}
 	for (const [key, value] of Object.entries(additionalHeaders || {})) {
 		if (value === null) {
 			headers.delete(key);
@@ -1710,19 +1734,18 @@ function buildBaseCodexHeaders(
 	} else {
 		headers.delete("chatgpt-account-id");
 	}
-	headers.set("originator", "pi");
-	headers.set("User-Agent", getPiUserAgent());
 	return headers;
 }
 
 function buildSSEHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	sessionId?: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
@@ -1736,13 +1759,14 @@ function buildSSEHeaders(
 }
 
 function buildWebSocketHeaders(
+	defaultHeaders: Record<string, string>,
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: ProviderHeaders | undefined,
 	accountId: string | undefined,
 	token: string,
 	requestId: string,
 ): Headers {
-	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	const headers = buildBaseCodexHeaders(defaultHeaders, initHeaders, additionalHeaders, accountId, token);
 	headers.delete("accept");
 	headers.delete("content-type");
 	headers.delete("OpenAI-Beta");

@@ -27,6 +27,18 @@ function observeRefreshRender(): { tui: TUI; renderedAfterRefresh: Promise<void>
 	};
 }
 
+/**
+ * Filter the selector to one query and render it. Ambient provider credentials (for example a
+ * GEMINI_API_KEY in the developer or CI environment) add their built-in models to the list, which
+ * can push the models.json entry below the visible rows. Searching keeps the assertion independent
+ * of whichever other providers happen to be configured.
+ */
+function renderSearch(selector: ModelSelectorComponent, query: string): string {
+	selector.getSearchInput().setValue("");
+	for (const char of query) selector.handleInput(char);
+	return stripAnsi(selector.render(120).join("\n"));
+}
+
 function modelsJson(provider: string, model: string): Record<string, unknown> {
 	return {
 		providers: {
@@ -75,8 +87,7 @@ describe("issue #6999 models.json hot reload", () => {
 		);
 
 		await renderedAfterRefresh;
-		const rendered = stripAnsi(selector.render(120).join("\n"));
-		expect(rendered).toContain("new-model [new-provider]");
-		expect(rendered).not.toContain("old-model [old-provider]");
+		expect(renderSearch(selector, "new-model")).toContain("new-model [new-provider]");
+		expect(renderSearch(selector, "old-model")).not.toContain("old-model [old-provider]");
 	});
 });

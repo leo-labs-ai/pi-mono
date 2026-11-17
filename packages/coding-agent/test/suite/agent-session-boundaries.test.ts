@@ -594,7 +594,11 @@ describe("AgentSession actionable boundaries", () => {
 		harness.session.refreshContext();
 		const runAutoCompaction = vi.spyOn(
 			harness.session as unknown as {
-				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				_runAutoCompaction: (
+					reason: "overflow" | "threshold",
+					willRetry: boolean,
+					continuesTurn: boolean,
+				) => Promise<boolean>;
 			},
 			"_runAutoCompaction",
 		);
@@ -732,7 +736,8 @@ describe("AgentSession actionable boundaries", () => {
 		expect(harness.sessionManager.getEntries()).toContainEqual(
 			expect.objectContaining({ type: "custom", customType: "committed-after-abort", data: true }),
 		);
-		expect(harness.eventsOfType("agent_settled")).toHaveLength(1);
+		// #10607: settlement reports the abort although the last response succeeded.
+		expect(harness.eventsOfType("agent_settled")).toEqual([{ type: "agent_settled", aborted: true }]);
 	});
 });
 

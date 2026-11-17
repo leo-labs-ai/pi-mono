@@ -31,13 +31,10 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { isMcpServerOverride, mcpNamespace } from "@earendil-works/pi-mcp";
 import { CONFIG_DIR_NAME } from "../../config.ts";
-import {
-	type McpExposure,
-	type McpServerConfig,
-	mcpNamespace,
-	validateMcpServerConfig,
-} from "../../core/mcp-servers.ts";
+import { type McpExposure, type McpServerConfig, validateMcpServerConfig } from "../../core/mcp-servers.ts";
+import { stripBom } from "../../utils/text.ts";
 
 export type {
 	McpExposure,
@@ -73,11 +70,6 @@ export interface LoadedMcpConfig {
 
 const OVERRIDE_KEYS = ["enabled", "exposure", "toolExposure"];
 
-/** Whether an entry overrides a server defined elsewhere instead of defining one. */
-function isOverride(value: Record<string, unknown>): boolean {
-	return value.command === undefined && value.url === undefined && value.type === undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -93,7 +85,7 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 	if (!existsSync(path)) return;
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(readFileSync(path, "utf8"));
+		parsed = JSON.parse(stripBom(readFileSync(path, "utf8")));
 	} catch (error) {
 		errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
 		return;
@@ -105,7 +97,7 @@ function readConfigFile(path: string, scope: "global" | "project", state: McpCon
 	if (typeof parsed.autoEnableCodemode === "boolean") state.autoEnableCodemode = parsed.autoEnableCodemode;
 	else if (parsed.autoEnableCodemode !== undefined) errors.push(`${path}: autoEnableCodemode must be a boolean`);
 	for (const [name, value] of Object.entries(parsed.mcpServers ?? {})) {
-		if (scope === "project" && isRecord(value) && isOverride(value)) {
+		if (scope === "project" && isRecord(value) && isMcpServerOverride(value)) {
 			const base = servers.get(name);
 			const extra = Object.keys(value).filter((key) => !OVERRIDE_KEYS.includes(key));
 			if (!base) {
@@ -179,7 +171,7 @@ export function updateMcpServerConfig(
 			parsed.mcpServers = { ...servers, [name]: server };
 		}
 		if (!isRecord(server)) throw new Error(`${path} does not define MCP server "${name}"`);
-		const keepDefaults = isOverride(server);
+		const keepDefaults = isMcpServerOverride(server);
 		if (patch.enabled !== undefined) {
 			if (patch.enabled && !keepDefaults) delete server.enabled;
 			else server.enabled = patch.enabled;
@@ -229,7 +221,7 @@ function editMcpServers(
 	path: string,
 	edit: (servers: Record<string, unknown> | undefined, parsed: Record<string, unknown>) => boolean,
 ): void {
-	const text = existsSync(path) ? readFileSync(path, "utf8") : undefined;
+	const text = existsSync(path) ? stripBom(readFileSync(path, "utf8")) : undefined;
 	const parsed: unknown = text === undefined ? {} : JSON.parse(text);
 	if (!isRecord(parsed) || (parsed.mcpServers !== undefined && !isRecord(parsed.mcpServers))) {
 		throw new Error(`${path}: expected an object with an "mcpServers" object`);

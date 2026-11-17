@@ -6,7 +6,7 @@ import type { ThinkingLevel } from "@leo-labs-ai/pi-agent-core";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
-import type { TuiMode } from "../core/settings-manager.ts";
+import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -149,10 +149,16 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--no-builtin-tools" || arg === "-nbt") {
 			result.noBuiltinTools = true;
 		} else if ((arg === "--tools" || arg === "-t") && i + 1 < args.length) {
-			result.tools = args[++i]
+			const tools = args[++i]
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
+			const error = getToolListError(tools);
+			if (error) {
+				result.diagnostics.push({ type: "error", message: `${arg}: ${error}` });
+			} else {
+				result.tools = tools;
+			}
 		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
 			result.excludeTools = args[++i]
 				.split(",")
@@ -287,8 +293,8 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} update [source|self|pi]   Update pi, extensions, or model catalogs
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
+  ${APP_NAME} auth <command>            Log in or out, print credentials, or check provider readiness
+  ${APP_NAME} mcp <command>             Manage MCP servers
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
 
 ${chalk.bold("Options:")}
@@ -299,11 +305,11 @@ ${chalk.bold("Options:")}
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
   --print, -p                    Non-interactive mode: process prompt and exit
-  --continue, -c                 Continue previous session
-  --resume, -r                   Select a session to resume
-  --session <path|id>            Use specific session file or partial UUID
-  --session-id <id>              Use exact project session ID, creating it if missing
-  --fork <path|id>               Fork specific session file or partial UUID into a new session
+  --continue, -c                 Continue the most recent session for the current directory
+  --resume, -r                   Pick a session to resume
+  --session <path|id>            Open a session by file path or full/partial ID
+  --session-id <id>              Use the current directory's existing session with the ID, creating it otherwise
+  --fork <path|id>               Fork a session by file path or full/partial ID into the current directory
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name
@@ -313,6 +319,7 @@ ${chalk.bold("Options:")}
   --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
   --tools, -t <tools>            Comma-separated allowlist of tool names or patterns (*) to enable
                                  Keeps MCP tools unless an entry starts with mcp__
+                                 Only +name/-name entries add to or remove from the defaults
   --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
                                  Applies to all tools, MCP tools included
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
@@ -327,7 +334,7 @@ ${chalk.bold("Options:")}
   --use-theme <name[/name]>      Set the initial interactive theme for this run
   --no-themes                    Disable theme discovery and loading
   --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
-  --export <file>                Export session file to HTML and exit
+  --export <file> [output]       Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --tui-mode <mode>              TUI mode: fullscreen (default) or regular
@@ -395,6 +402,9 @@ ${chalk.bold("Examples:")}
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
 
+  # Add codemode to the default tools
+  ${APP_NAME} --tools +codemode
+
   # Codemode with only the tools of one MCP server
   ${APP_NAME} --tools read,bash,codemode,'mcp__radius__*'
 
@@ -453,6 +463,7 @@ ${chalk.bold("Environment Variables:")}
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
+  PI_SELF_UPDATE_COMMAND           - Command pi update runs to update pi itself ({packageName}, {version}, {installSpec})
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 

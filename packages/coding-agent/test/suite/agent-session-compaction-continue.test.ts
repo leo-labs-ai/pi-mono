@@ -46,7 +46,7 @@ function storedSummaries(harness: Harness): string[] {
 	return harness.sessionManager.getBranch().flatMap((entry) => (entry.type === "compaction" ? [entry.summary] : []));
 }
 
-describe("AgentSession split-turn compaction continue instruction", () => {
+describe("AgentSession split-turn compaction continue instruction (sent once, never stored)", () => {
 	const harnesses: Harness[] = [];
 
 	afterEach(() => {
@@ -56,7 +56,7 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		}
 	});
 
-	it("ends the summary with the instruction when threshold compaction splits the running turn", async () => {
+	it("sends the instruction only on the request that resumes a split turn, and never stores it", async () => {
 		const largeTool: AgentTool = {
 			name: "large_result",
 			label: "Large result",
@@ -76,6 +76,8 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		});
 		harnesses.push(harness);
 		let resumedRequest = "";
+		let nextPromptRequest = "";
+		let secondSummaryRequest = "";
 		harness.setResponses([
 			fauxAssistantMessage(`old-history:${"a".repeat(6000)}`),
 			fauxAssistantMessage(`recent-history:${"b".repeat(6000)}`),
@@ -86,6 +88,14 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 				resumedRequest = JSON.stringify(context.messages);
 				return fauxAssistantMessage("finished after compaction");
 			},
+			(context) => {
+				nextPromptRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("answered the next prompt");
+			},
+			(context) => {
+				secondSummaryRequest = JSON.stringify(context.messages);
+				return fauxAssistantMessage("## Goal\nSecond checkpoint");
+			},
 		]);
 
 		await harness.session.prompt("seed old history");
@@ -95,11 +105,24 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		expect(harness.eventsOfType("compaction_end")).toMatchObject([{ reason: "threshold", willRetry: false }]);
 		const [summary] = storedSummaries(harness);
 		expect(summary).toContain("**Turn Context (split turn):**");
-		expect(summary.endsWith(CONTINUE_INSTRUCTION)).toBe(true);
+		expect(summary).not.toContain(CONTINUE_INSTRUCTION);
 		expect(resumedRequest).toContain(CONTINUE_INSTRUCTION);
 		expect(resumedRequest).toContain("large-tool-result");
 		expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
 		expect(harness.faux.state.callCount).toBe(6);
+
+		// (a) The turn is over: the request after it still carries the summary but not the instruction.
+		await harness.session.prompt("a new question");
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
+		expect(nextPromptRequest).toContain("Summary of the earlier turns");
+		expect(nextPromptRequest).not.toContain(CONTINUE_INSTRUCTION);
+
+		// (b) A second compaction after the continued one does not replay or store the instruction.
+		const second = await harness.session.compact();
+		expect(second.summary).not.toContain(CONTINUE_INSTRUCTION);
+		expect(secondSummaryRequest).toContain("Summary of the earlier turns");
+		expect(secondSummaryRequest).not.toContain(CONTINUE_INSTRUCTION);
+		expect(storedSummaries(harness).some((stored) => stored.includes(CONTINUE_INSTRUCTION))).toBe(false);
 	});
 
 	it("keeps the plain summary when automatic compaction follows a completed answer", async () => {
@@ -149,7 +172,7 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		expect(harness.session.getLastAssistantText()).toBe("answered next prompt");
 	});
 
-	it("ends the summary with the instruction when overflow recovery retries the turn", async () => {
+	it("sends the instruction on the retry request when overflow recovery retries the turn", async () => {
 		const harness = await createHarness({
 			models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 100 }],
 			settings: { compaction: { enabled: true, reserveTokens: 0, keepRecentTokens: 1 } },
@@ -170,7 +193,7 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		expect(harness.eventsOfType("compaction_end")).toMatchObject([{ reason: "overflow", willRetry: true }]);
 		const [summary] = storedSummaries(harness);
 		expect(summary).toContain("**Turn Context (split turn):**");
-		expect(summary.endsWith(CONTINUE_INSTRUCTION)).toBe(true);
+		expect(summary).not.toContain(CONTINUE_INSTRUCTION);
 		expect(resumedRequest).toContain(CONTINUE_INSTRUCTION);
 		expect(harness.session.getLastAssistantText()).toBe("completed response");
 		expect(harness.faux.state.callCount).toBe(3);

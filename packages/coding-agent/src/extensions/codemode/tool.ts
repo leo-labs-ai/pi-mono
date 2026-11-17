@@ -11,7 +11,7 @@
  *
  * Nested results are handed to the script as follows:
  * - A tool that declares `outputSchema` resolves to its `structuredContent`, also for error
- *   results that carry one (MCP tools resolve to their `CallToolResult`, including `isError`).
+ *   results that carry one.
  * - Any other tool resolves to its text content as one string.
  * - A failed, blocked, or invalid call rejects with an Error carrying the tool's error text.
  *
@@ -24,26 +24,20 @@
 import { join } from "node:path";
 import type { CodemodeJsonSchema, CodemodeTool } from "@earendil-works/pi-codemode";
 import {
-	MCP_TYPESCRIPT_PREAMBLE,
-	mcpStructuredContentSchema,
 	renderToolOutputType,
 	renderToolSample,
+	resolveSchemaRef,
 	toCodemodeIdentifier,
 } from "@earendil-works/pi-codemode/declarations";
 import { CODEMODE_SOURCE_GRAMMAR } from "@earendil-works/pi-codemode/source";
 import type { AgentTool } from "@leo-labs-ai/pi-agent-core";
 import { type Static, Type } from "typebox";
 import { getDocsPath } from "../../config.ts";
-import type {
-	ToolDefinition,
-	ToolInfo,
-	ToolLoadout,
-	ToolLoadoutChanges,
-	ToolNamespace,
-} from "../../core/extensions/types.ts";
+import type { ToolDefinition, ToolLoadout, ToolLoadoutChanges, ToolNamespace } from "../../core/extensions/types.ts";
 import type { ModelRegistry } from "../../core/model-registry.ts";
+import { SETTINGS_DEFAULTS } from "../../core/settings-defaults.ts";
 import type { CodemodeMode } from "../../core/settings-manager.ts";
-import { wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
+import { type TypeBoxAgentTool, wrapToolDefinition } from "../../core/tools/tool-definition-wrapper.ts";
 import { loadCodemodeExecutor } from "./execute.lazy.ts";
 import { codemodeRenderers } from "./renderer.ts";
 
@@ -94,14 +88,6 @@ export const codemodeSchema = Type.Object({
 
 export type CodemodeToolInput = Static<typeof codemodeSchema>;
 
-/**
- * Whether a registered tool is this package's `codemode` tool rather than another extension's tool
- * with the same name. Compares the parameter schema, which the definition passes through by reference.
- */
-export function isCodemodeTool(tool: Pick<ToolInfo, "name" | "parameters">): boolean {
-	return tool.name === CODEMODE_TOOL_NAME && tool.parameters === codemodeSchema;
-}
-
 export type CodemodeNestedCallStatus = "running" | "ok" | "error" | "cancelled";
 
 export interface CodemodeNestedCall {
@@ -135,16 +121,16 @@ export const codemodeToolSystemPromptContribution = {
 export const CODEMODE_DOCS_PATH = join(getDocsPath(), "codemode.md");
 
 const DESCRIPTION_INTRO = `Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level \`await\` and \`return\` work. No Node, file system, network, or timers.
-- \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. Calls still running when the script ends are cancelled.
+- \`await tools.<name>({ ...args })\` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.
 - Optional first line: \`// @options: {"max_output_tokens": 10000, "timeout_ms": 60000}\``;
 
 /** One line per global. The details live in {@link CODEMODE_DOCS_PATH}. */
 function describeGlobals(models: boolean): string {
 	const lines = [
 		"Globals:",
-		"- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. `image()` also saves the image to a temp file and the result names its path.",
+		"- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` line, and `console` lines follow the other output in one `<console_output>` block. `image()` also saves the image to a temp file and the result names its path.",
 		"- `store(key, value)` and `load(key)` keep JSON values across codemode calls.",
-		"- `ALL_TOOLS`, `searchTools(query, { limit?, namespace? })`, `describeTool(name)`, `describeNamespace(name)`: find unlisted tools, such as MCP tools.",
+		"- `ALL_TOOLS`, `await searchTools(query, { limit?, namespace? })`, `await describeTool(name)`, `await describeNamespace(name)`: find unlisted tools, such as MCP tools.",
 	];
 	if (models) {
 		lines.push(`- \`models\`: classifiers and image generation. Read ${CODEMODE_DOCS_PATH} first.`);
@@ -153,7 +139,7 @@ function describeGlobals(models: boolean): string {
 }
 
 /** Default for {@link CodemodeDescriptionOptions.inlineBudget}, in estimated tokens. */
-export const DEFAULT_CODEMODE_INLINE_BUDGET = 3000;
+export const DEFAULT_CODEMODE_INLINE_BUDGET = SETTINGS_DEFAULTS.codemode.inlineBudget;
 /** Characters per token when estimating the cost of a tool section. */
 const CHARS_PER_TOKEN = 4;
 
@@ -240,10 +226,9 @@ function selectCatalog(groups: readonly CatalogGroup[], budget: number | undefin
 
 /**
  * Model-facing description: the helper list, guidance for finding tools that are not listed, the
- * shared MCP types when listed tools need them, the `models` API, and one section per listed tool,
- * grouped by namespace. Deferred tools are never listed and do not affect the description at all, so
- * it stays the same while MCP servers connect or change their tools. Tool sections are limited to
- * `inlineBudget`.
+ * `models` API, and one section per listed tool, grouped by namespace. Deferred tools are never
+ * listed and do not affect the description at all, so it stays the same while tools are registered
+ * late (for example by MCP servers that connect). Tool sections are limited to `inlineBudget`.
  */
 export function createCodemodeDescription(
 	tools: readonly AgentTool<any>[],
@@ -267,14 +252,6 @@ export function createCodemodeDescription(
 	const shown = selectCatalog(ordered, options.inlineBudget);
 
 	const sections = [DESCRIPTION_INTRO, describeGlobals(options.models === true)];
-	if (
-		declarations.some(
-			(declaration) =>
-				shown.has(declaration.name) && mcpStructuredContentSchema(declaration.outputSchema) !== undefined,
-		)
-	) {
-		sections.push(`Shared MCP Types:\n\`\`\`ts\n${MCP_TYPESCRIPT_PREAMBLE}\n\`\`\``);
-	}
 	if (declarations.length === 0) return sections.join("\n\n");
 
 	const toolSections = ["Nested tools:"];
@@ -298,25 +275,76 @@ export function createCodemodeDescription(
 }
 
 /**
- * What a script call resolves to, in one line: `a string`, the field names of an object
- * (`{ output, exit_code, full_output_path? }`), or the rendered type for anything else.
+ * The field names of an object schema, `{ output, exit_code, full_output_path? }`, with the fields of
+ * object-typed fields `depth` levels deep: `{ content, structuredContent?: { results } }`, and the
+ * value of `const` fields: `{ action: "start", id }`. Undefined for other schemas. Local `$ref`s resolve
+ * against `root`.
  */
-function describeOutput(schema: CodemodeJsonSchema | undefined): string {
+function describeFields(schema: unknown, root: CodemodeJsonSchema, depth: number): string | undefined {
+	const resolved = followRef(schema, root);
+	if (typeof resolved !== "object" || resolved === null) return undefined;
+	const { type, properties, required } = resolved as Record<string, unknown>;
+	if (type !== "object" || typeof properties !== "object" || properties === null) return undefined;
+	const requiredNames = new Set(Array.isArray(required) ? required : []);
+	const fields = Object.entries(properties).map(([name, field]) => {
+		const constValue = (followRef(field, root) as Record<string, unknown> | null)?.const;
+		const nested =
+			constValue !== undefined
+				? JSON.stringify(constValue)
+				: depth > 0
+					? describeFields(field, root, depth - 1)
+					: undefined;
+		return `${name}${requiredNames.has(name) ? "" : "?"}${nested ? `: ${nested}` : ""}`;
+	});
+	return `{ ${fields.join(", ")} }`;
+}
+
+/**
+ * What a script call resolves to, in one line: `a string`, the field names of an object (see
+ * {@link describeFields}), the field names of each object in a union, the rendered type when it
+ * fits on one line, or a pointer to `describeTool()` for anything longer. The full type of a large
+ * schema would otherwise be sent with every request (#11501).
+ */
+function describeOutput(name: string, schema: CodemodeJsonSchema | undefined): string {
 	const type = renderToolOutputType(schema);
 	if (type === "string") return "a string";
-	const object = typeof schema === "object" ? schema : undefined;
-	const properties = object?.properties;
-	if (
-		object?.type === "object" &&
-		typeof properties === "object" &&
-		properties !== null &&
-		mcpStructuredContentSchema(schema) === undefined
-	) {
-		const required = new Set(Array.isArray(object.required) ? object.required : []);
-		const fields = Object.keys(properties).map((name) => (required.has(name) ? name : `${name}?`));
-		return `\`{ ${fields.join(", ")} }\``;
+	const fields =
+		schema === undefined ? undefined : (describeFields(schema, schema, 1) ?? describeUnionFields(schema, schema));
+	if (fields) return `\`${fields}\``;
+	if (!type.includes("\n")) return `\`${type}\``;
+	return `a value; \`await describeTool(${JSON.stringify(name)})\` shows its type`;
+}
+
+/**
+ * The field names of each variant of an `anyOf`/`oneOf` whose variants are all objects, joined by
+ * `|`.
+ */
+function describeUnionFields(schema: unknown, root: CodemodeJsonSchema): string | undefined {
+	const resolved = followRef(schema, root);
+	if (typeof resolved !== "object" || resolved === null) return undefined;
+	const { anyOf, oneOf } = resolved as Record<string, unknown>;
+	const variants = anyOf ?? oneOf;
+	if (!Array.isArray(variants) || variants.length === 0) return undefined;
+	const described = variants.map((variant) => describeFields(variant, root, 0));
+	return described.every((fields) => fields !== undefined) ? described.join(" | ") : undefined;
+}
+
+/**
+ * The subschema the local `$ref` chain of `schema` names in `root`, so MCP output schemas that put their models in
+ * `$defs` still show field names. Remote, missing, and cyclic references stop at the schema holding them.
+ */
+function followRef(schema: unknown, root: CodemodeJsonSchema): unknown {
+	const seen = new Set<unknown>();
+	let current = schema;
+	while (typeof current === "object" && current !== null && !seen.has(current)) {
+		const ref = (current as Record<string, unknown>).$ref;
+		if (typeof ref !== "string") break;
+		const target = resolveSchemaRef(ref, root);
+		if (target === undefined) break;
+		seen.add(current);
+		current = target;
 	}
-	return `\`${type.replace(/\s+/g, " ")}\``;
+	return current;
 }
 
 /**
@@ -324,7 +352,7 @@ function describeOutput(schema: CodemodeJsonSchema | undefined): string {
  * arguments are the tool's declared parameters, so they are not repeated.
  */
 function describeScriptCall(tool: AgentTool<any>): string {
-	return `${tool.description.trim()}\n\nCodemode: \`tools.${toCodemodeIdentifier(tool.name)}(args)\` resolves to ${describeOutput(toCodemodeDeclaration(tool).outputSchema)}.`;
+	return `${tool.description.trim()}\n\nCodemode: \`tools.${toCodemodeIdentifier(tool.name)}(args)\` resolves to ${describeOutput(tool.name, toCodemodeDeclaration(tool).outputSchema)}.`;
 }
 
 /**
@@ -340,7 +368,7 @@ function describeScriptCall(tool: AgentTool<any>): string {
  * `tool_search` loads a tool, so loads do not redeclare codemode.
  */
 function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptions): ToolLoadoutChanges {
-	const mode = options.getMode?.() ?? "on";
+	const mode = options.getMode?.() ?? SETTINGS_DEFAULTS.codemode.mode;
 	const isDirect = (tool: AgentTool) => loadout.getExposure(tool.name) === "direct";
 	const callable = getCodemodeCallableTools(loadout.callable);
 	const callableNames = new Set(callable.map((tool) => tool.name));
@@ -377,6 +405,19 @@ function prepareCodemodeLoadout(loadout: ToolLoadout, options: CodemodeToolOptio
 	};
 }
 
+/** Script globals that list or look up tools and namespaces, which the script may then call by any name. */
+const DISCOVERY_GLOBALS = /\b(searchTools|describeNamespace|describeTool|ALL_TOOLS)\b/;
+
+/**
+ * The tools a script may call (`ToolDefinition.reachesTools`): every tool when it uses a discovery
+ * global, else the words of its source, so `tools.mcp__docs__search` and
+ * `tools["mcp__docs__" + name]` both name the `mcp__docs` namespace.
+ */
+function getScriptReach(code: unknown): "all" | readonly string[] {
+	if (typeof code !== "string") return [];
+	return DISCOVERY_GLOBALS.test(code) ? "all" : (code.match(/\w+/g) ?? []);
+}
+
 export function createCodemodeToolDefinition(
 	options: CodemodeToolOptions = {},
 ): ToolDefinition<typeof codemodeSchema, CodemodeToolDetails | undefined> {
@@ -391,6 +432,7 @@ export function createCodemodeToolDefinition(
 		// Scripts must not start other scripts.
 		exposure: "model-only",
 		prepareLoadout: (loadout) => prepareCodemodeLoadout(loadout, options),
+		reachesTools: (input) => getScriptReach(input.code),
 		// Capable models write the script as raw text instead of a JSON-escaped string.
 		constrainedSampling: { type: "grammar", variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR } },
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
@@ -407,7 +449,7 @@ export function createCodemodeToolDefinition(
 export function createCodemodeTool(
 	tools: readonly AgentTool<any>[] = [],
 	options: CodemodeToolOptions = {},
-): AgentTool<typeof codemodeSchema> {
+): TypeBoxAgentTool<typeof codemodeSchema> {
 	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {

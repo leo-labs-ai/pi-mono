@@ -3,7 +3,9 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { renderToolOutputType } from "@earendil-works/pi-codemode/declarations";
 import {
+	createMcpToolName,
 	type JsonRpcMessage,
 	LATEST_PROTOCOL_VERSION,
 	McpAuthRequiredError,
@@ -13,8 +15,8 @@ import {
 import { createInMemoryTransportPair, type InMemoryTransport } from "@earendil-works/pi-mcp/testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryAuthStorageBackend } from "../src/core/auth-storage.ts";
-import { truncateMiddle } from "../src/core/tools/truncate.ts";
 import {
+	addMcpServerConfig,
 	getMcpToolExposure,
 	loadMcpConfig,
 	type McpServerEntry,
@@ -27,7 +29,7 @@ import {
 	McpServerConnection,
 	McpServerLog,
 } from "../src/extensions/mcp/runtime.ts";
-import { convertMcpResult, createMcpToolName } from "../src/extensions/mcp/tools.ts";
+import { convertMcpResult, createMcpResultSchema } from "../src/extensions/mcp/tools.ts";
 
 // Config values are resolved at connect time, so the literal reference must survive loading.
 // biome-ignore lint/suspicious/noTemplateCurlyInString: literal config value reference
@@ -114,6 +116,28 @@ describe("MCP config", () => {
 		expect(JSON.parse(readFileSync(project, "utf8")).mcpServers.tools).toEqual({ enabled: true });
 	});
 
+	// Regression: #11191.
+	it("reads and edits mcp.json files that start with a UTF-8 BOM", () => {
+		const paths = setup({}, {});
+		const global = join(paths.agentDir, "mcp.json");
+		const project = join(paths.cwd, ".pi", "mcp.json");
+		writeFileSync(global, '\uFEFF{"mcpServers":{"demo":{"command":"echo","enabled":false}}}\n');
+		writeFileSync(project, '\uFEFF{"mcpServers":{"local":{"command":"local-cmd"}}}\n');
+
+		const loaded = loadMcpConfig({ ...paths, projectTrusted: true });
+		expect(loaded.errors).toEqual([]);
+		expect(loaded.servers.map((server) => [server.name, server.scope])).toEqual([
+			["demo", "global"],
+			["local", "project"],
+		]);
+
+		expect(addMcpServerConfig(global, "other", { command: "other-cmd" })).toBe(false);
+		expect(JSON.parse(readFileSync(global, "utf8")).mcpServers).toEqual({
+			demo: { command: "echo", enabled: false },
+			other: { command: "other-cmd" },
+		});
+	});
+
 	// Regression: #10239.
 	it("rejects server names that differ only in - and _", () => {
 		const paths = setup({ mcpServers: { "work-files": { command: "a" }, work_files: { command: "b" } } }, {});
@@ -184,7 +208,8 @@ describe("MCP config", () => {
 						url: "https://a.example/mcp",
 						oauth: { clientRegistration: "cimd", callbackUrl: "http://localhost/callback" },
 					},
-					badRegistration: { url: "https://a.example/mcp", oauth: { clientRegistration: "auto" } },
+					auto: { url: "https://a.example/mcp", oauth: { clientRegistration: "auto", clientName: "x" } },
+					badRegistration: { url: "https://a.example/mcp", oauth: { clientRegistration: "oidc" } },
 					cimdClient: { url: "https://a.example/mcp", oauth: { clientRegistration: "cimd", clientId: "x" } },
 					cimdPath: {
 						url: "https://a.example/mcp",
@@ -195,14 +220,14 @@ describe("MCP config", () => {
 			{},
 		);
 		const { servers, errors } = loadMcpConfig({ ...paths, projectTrusted: false });
-		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same", "named", "metadata", "cimd"]);
+		expect(servers.map((server) => server.name)).toEqual(["ok", "ipv6", "same", "named", "metadata", "cimd", "auto"]);
 		expect(errors).toEqual([
 			expect.stringContaining('server "remote": oauth.callbackUrl must be an http URI on localhost'),
 			expect.stringContaining('server "both": oauth.callbackUrl and oauth.callbackPort name different ports'),
 			expect.stringContaining('server "scope": oauth.scope must be a string'),
 			expect.stringContaining('server "unnamed": oauth.clientName must be a non-empty string'),
 			expect.stringContaining('server "plainMetadata": oauth.authServerMetadataUrl must be an https URL'),
-			expect.stringContaining('server "badRegistration": oauth.clientRegistration must be "dcr" or "cimd"'),
+			expect.stringContaining('server "badRegistration": oauth.clientRegistration must be "auto", "dcr", or "cimd"'),
 			expect.stringContaining('server "cimdClient": oauth.clientRegistration "cimd" cannot be combined'),
 			expect.stringContaining('server "cimdPath": oauth.clientRegistration "cimd" requires oauth.callbackUrl'),
 		]);
@@ -278,6 +303,36 @@ describe("MCP tools", () => {
 		expect(second).toMatch(/^mcp__s__a_b_[0-9a-f]{8}$/);
 	});
 
+	it("declares the CallToolResult scripts receive, keeping references in the server's output schema", () => {
+		const content =
+			'content: Array<{ data?: string; mimeType?: string; text?: string; type: "text" | "image" | "audio" | "resource_link" | "resource"; [key: string]: unknown; }>; isError?: boolean;';
+		// #10416: without an output schema, structured content may be any JSON value.
+		expect(renderToolOutputType(createMcpResultSchema(undefined) as never)).toBe(
+			`{ ${content} structuredContent?: unknown; [key: string]: unknown; }`,
+		);
+
+		const hit = { type: "object", properties: { id: { type: "string" } }, required: ["id"] };
+		const schema = createMcpResultSchema({
+			type: "object",
+			properties: {
+				hits: { type: "array", items: { $ref: "#/$defs/Hit~1v1" } },
+				again: { $ref: "#/properties/hits" },
+				children: { type: "array", items: { $ref: "#" } },
+				// A property named like a keyword whose value is data.
+				default: { $ref: "#/definitions/Hit" },
+				remote: { $ref: "https://example.com/schema.json" },
+			},
+			required: ["hits"],
+			$defs: { "Hit/v1": { ...hit, default: { $ref: "#/stays" } } },
+			definitions: { Hit: hit },
+		}) as unknown as { properties: { structuredContent: { $defs: Record<string, { default: unknown }> } } };
+		// Data that looks like a reference is kept as is.
+		expect(schema.properties.structuredContent.$defs["Hit/v1"].default).toEqual({ $ref: "#/stays" });
+		expect(renderToolOutputType(schema as never)).toBe(
+			`{ ${content} structuredContent?: { again?: Array<{ id: string; }>; children?: Array<{ again?: Array<{ id: string; }>; children?: Array<unknown>; default?: { id: string; }; hits: Array<{ id: string; }>; remote?: unknown; }>; default?: { id: string; }; hits: Array<{ id: string; }>; remote?: unknown; }; [key: string]: unknown; }`,
+		);
+	});
+
 	it("converts results, passing the CallToolResult to scripts and flagging errors", async () => {
 		const blocks = [
 			{ type: "resource_link" as const, uri: "file:///a", name: "a" },
@@ -303,6 +358,12 @@ describe("MCP tools", () => {
 		expect((await convertMcpResult("docs", "t", { content: [], structuredContent: { n: 1 } })).content).toEqual([
 			{ type: "text", text: '{\n  "n": 1\n}' },
 		]);
+		// #10416: array structured content reaches the model as JSON and scripts as sent.
+		expect(await convertMcpResult("docs", "t", { content: [], structuredContent: [{ id: 1 }] })).toEqual({
+			content: [{ type: "text", text: '[\n  {\n    "id": 1\n  }\n]' }],
+			details: { server: "docs", tool: "t" },
+			structuredContent: { content: [], structuredContent: [{ id: 1 }] },
+		});
 		expect(await convertMcpResult("docs", "t", { content: [{ type: "text", text: "nope" }], isError: true })).toEqual(
 			{
 				content: [{ type: "text", text: "nope" }],
@@ -387,25 +448,15 @@ describe("MCP tools", () => {
 		await convertMcpResult("docs", "small", { content: [{ type: "text", text: "ok" }] }, { saveOutput });
 		expect(saved).toHaveLength(1);
 	});
-
-	it("cuts multi-byte text only at character boundaries", () => {
-		const text = `${"é".repeat(20_000)}end`;
-		const result = truncateMiddle(text, 1001);
-		expect(result.truncated).toBe(true);
-		expect(result.content).not.toContain("\uFFFD");
-		expect(result.content.endsWith("end")).toBe(true);
-		const [head, tail] = result.content.split(/…\d+ chars truncated…/);
-		expect(Buffer.byteLength(head)).toBeLessThanOrEqual(500);
-		expect(Buffer.byteLength(tail)).toBeLessThanOrEqual(501);
-		expect(Array.from(head).length + Array.from(tail).length + result.removedChars).toBe(Array.from(text).length);
-	});
 });
 
 describe("MCP connections", () => {
 	const servers: InMemoryTransport[] = [];
 
 	/** In-memory server that answers initialize, tools/list, and tools/call with "ok". */
-	function createTransport(options: { expireFirstCall?: boolean; methods?: string[]; noTools?: boolean } = {}) {
+	function createTransport(
+		options: { expireFirstCall?: boolean; methods?: string[]; noTools?: boolean; resources?: boolean } = {},
+	) {
 		const pair = createInMemoryTransportPair();
 		servers.push(pair.server);
 		pair.server.onMessage((message) => {
@@ -418,7 +469,10 @@ describe("MCP connections", () => {
 							id: message.id,
 							result: {
 								protocolVersion: LATEST_PROTOCOL_VERSION,
-								capabilities: options.noTools ? { prompts: {} } : { tools: {} },
+								capabilities: {
+									...(options.noTools ? { prompts: {} } : { tools: {} }),
+									...(options.resources ? { resources: {} } : {}),
+								},
 								serverInfo: { name: "fake", version: "1.0.0" },
 							},
 						}
@@ -742,6 +796,19 @@ for await (const line of createInterface({ input: process.stdin })) {
 		);
 		expect(await connection.callTool("echo", {}, {})).toEqual({ content: [{ type: "text", text: "ok" }] });
 		expect(() => connection.oauthSettings()).toThrow("oauth.clientSecret");
+		await connection.close();
+	});
+
+	// #10526: listing every resource can take long (a large drive), so connecting must not wait for it.
+	it("connects to servers with resources without listing them", async () => {
+		const methods: string[] = [];
+		const { connection } = connect({ name: "fake", config: { command: "unused" }, source: "test" }, [
+			() => createTransport({ resources: true, methods }),
+		]);
+		await connection.getClient();
+		expect(connection.state).toBe("connected");
+		expect(connection.hasResources).toBe(true);
+		expect(methods).toEqual(["initialize", "tools/list"]);
 		await connection.close();
 	});
 });

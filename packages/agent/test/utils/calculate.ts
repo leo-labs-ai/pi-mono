@@ -1,5 +1,5 @@
+import { obj, type Static, str } from "@earendil-works/pi-schema";
 import type { Usage } from "@leo-labs-ai/pi-ai";
-import { type Static, Type } from "typebox";
 import type { AgentTool, AgentToolResult } from "../../src/types.ts";
 
 export interface CalculateResult extends AgentToolResult<undefined> {
@@ -16,9 +16,11 @@ export function calculate(expression: string): CalculateResult {
 	}
 }
 
-const calculateSchema = Type.Object({
-	expression: Type.String({ description: "The mathematical expression to evaluate" }),
-});
+const calculateSchema = obj(
+	{ expression: str({ description: "The mathematical expression to evaluate" }) },
+	// Open, as the tool accepted extra arguments before it moved from TypeBox.
+	{ open: true },
+);
 
 type CalculateParams = Static<typeof calculateSchema>;
 

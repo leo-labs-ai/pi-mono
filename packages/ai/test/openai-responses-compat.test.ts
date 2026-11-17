@@ -36,15 +36,18 @@ async function captureOpenAIResponseHeaders(
 	clientRequestId: string | null;
 	xSessionId: string | null;
 	sessionAffinity: string | null;
+	legacySessionId: string | null;
 }> {
 	const captured = {
 		sessionId: null as string | null,
 		clientRequestId: null as string | null,
 		xSessionId: null as string | null,
 		sessionAffinity: null as string | null,
+		legacySessionId: null as string | null,
 	};
 	vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
-		captured.sessionId = getHeader(init?.headers, "session_id");
+		captured.sessionId = getHeader(init?.headers, "session-id");
+		captured.legacySessionId = getHeader(init?.headers, "session_id");
 		captured.clientRequestId = getHeader(init?.headers, "x-client-request-id");
 		captured.xSessionId = getHeader(init?.headers, "x-session-id");
 		captured.sessionAffinity = getHeader(init?.headers, "x-session-affinity");
@@ -75,8 +78,9 @@ describe("openai-responses provider defaults", () => {
 		vi.restoreAllMocks();
 	});
 
+	// #2567: Copilot rejected reasoning.effort "none". gpt-6-sol has off: "none", so this exercises the Copilot exception.
 	it("omits reasoning when no reasoning is requested", async () => {
-		const model = getModel("github-copilot", "gpt-5-mini");
+		const model = getModel("github-copilot", "gpt-6-sol");
 		let capturedPayload: unknown;
 
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
@@ -121,7 +125,7 @@ describe("openai-responses provider defaults", () => {
 		);
 
 		const stream = streamOpenAIResponses(
-			getModel("openai", "gpt-5.4"),
+			getModel("openai", "gpt-5.6-luna"),
 			normalizeContext({
 				messages: [
 					{
@@ -151,9 +155,10 @@ describe("openai-responses provider defaults", () => {
 			if (event.type === "done" || event.type === "error") break;
 		}
 
+		// gpt-5.6-luna declares its tools in additional_tools items; tool_choice applies to them.
 		expect(capturedPayload).toMatchObject({
 			tool_choice: "required",
-			tools: [expect.objectContaining({ name: "ping" })],
+			input: [{ type: "additional_tools", tools: [expect.objectContaining({ name: "ping" })] }, expect.anything()],
 		});
 	});
 
@@ -296,6 +301,7 @@ describe("openai-responses provider defaults", () => {
 		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" });
 
 		expect(captured.sessionId).toBe("session-123");
+		expect(captured.legacySessionId).toBeNull();
 		expect(captured.clientRequestId).toBe("session-123");
 	});
 
@@ -482,7 +488,7 @@ describe("openai-responses provider defaults", () => {
 		expect(capturedPayload?.prompt_cache_key).toBe("session-opencode");
 	});
 
-	it("can omit OpenAI session_id header while preserving other affinity data", async () => {
+	it("can omit OpenAI session-id header while preserving other affinity data", async () => {
 		const proxyModel: Model<"openai-responses"> = {
 			...getModel("openai", "gpt-5.4"),
 			provider: "opencode",
@@ -509,7 +515,7 @@ describe("openai-responses provider defaults", () => {
 		const captured = await captureOpenAIResponseHeaders({
 			sessionId: "session-123",
 			headers: {
-				session_id: "override-session",
+				"session-id": "override-session",
 				"x-client-request-id": "override-request",
 			},
 		});

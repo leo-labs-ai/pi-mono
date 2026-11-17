@@ -19,7 +19,7 @@ type SessionWithCompactionInternals = {
 	_runAutoCompaction: (
 		reason: "overflow" | "threshold",
 		willRetry: boolean,
-		continuesTurn?: boolean,
+		continuesTurn: boolean,
 	) => Promise<boolean>;
 };
 
@@ -337,11 +337,10 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
-	it("keeps the session's thinking level for compaction summaries, with no reserve-based output cap", async () => {
-		// Summaries used to force thinking "off" because thinking could use up the
-		// 0.8 × reserveTokens output cap and fail compaction with a length stop. The cap is gone
-		// (pi-ai applies the model limit, clamped to the context window), so the summary keeps the
-		// session's level and the same thinking settings as the turn that wrote the cached prefix.
+	it("runs compaction summaries without thinking, with no reserve-based output cap", async () => {
+		// Thinking counts inside max_tokens. At xhigh it exhausted the summary's output cap and
+		// compaction failed with a length stop, so summaries never enable thinking, whatever the
+		// session level. pi-ai applies the model limit, clamped to the context window.
 		const harness = await createHarness({
 			models: [{ id: "faux-reasoning", reasoning: true }],
 			settings: { compaction: { keepRecentTokens: 1 } },
@@ -360,7 +359,7 @@ describe("AgentSession compaction characterization", () => {
 
 		expect(requestOptions.length).toBeGreaterThan(0);
 		for (const options of requestOptions) {
-			expect(options?.reasoning).toBe("high");
+			expect(options?.reasoning).toBeUndefined();
 			expect(options?.maxTokens).toBeUndefined();
 		}
 	});
@@ -441,7 +440,7 @@ describe("AgentSession compaction characterization", () => {
 		const getStreamCallCount = useSummaryStreamFn(harness, "auto summary from custom stream");
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await sessionInternals._runAutoCompaction("threshold", false);
+		await sessionInternals._runAutoCompaction("threshold", false, false);
 
 		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
 		const compactionEnd = harness.eventsOfType("compaction_end").at(-1);
@@ -474,7 +473,7 @@ describe("AgentSession compaction characterization", () => {
 		};
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(false);
+		await expect(sessionInternals._runAutoCompaction("threshold", false, false)).resolves.toBe(false);
 
 		expect(harness.eventsOfType("compaction_end").at(-1)).toMatchObject({
 			reason: "threshold",
@@ -854,7 +853,7 @@ describe("AgentSession compaction characterization", () => {
 
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
-		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(true);
+		await expect(sessionInternals._runAutoCompaction("threshold", false, false)).resolves.toBe(true);
 	});
 
 	it("does not retry overflow recovery more than once", async () => {
