@@ -131,7 +131,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 			}
 		)._runAutoCompaction.bind(session);
 
-		await expect(runAutoCompaction("threshold", false)).resolves.toBe(true);
+		await expect(runAutoCompaction("threshold", false, false)).resolves.toBe(true);
 
 		expect(continueSpy).not.toHaveBeenCalled();
 	});
