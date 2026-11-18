@@ -3,6 +3,11 @@ import { delimiter, join, win32 } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
+/** Quote one argument for a POSIX shell. */
+export function quotePosixArgument(value: string): string {
+	return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface ShellConfig {
 	shell: string;
 	args: string[];

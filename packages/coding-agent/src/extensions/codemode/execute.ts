@@ -41,6 +41,7 @@ import {
 	type CodemodeToolInput,
 	type CodemodeToolOptions,
 	getCodemodeCallableTools,
+	shellQuoteGlobal,
 	toCodemodeDeclaration,
 } from "./tool.ts";
 
@@ -584,6 +585,7 @@ export async function executeCodemode(
 		sandbox = new CodemodeSandbox({
 			tools: sandboxTools,
 			globals: [
+				shellQuoteGlobal,
 				...createDiscoveryGlobals(callable, samples, options),
 				...(options.models && ctx
 					? createModelGlobals(ctx.modelRegistry, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
