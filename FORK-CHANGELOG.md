@@ -50,6 +50,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Added
 
+- **Codemode `await shq(value)`** quotes one string for use as a literal POSIX shell argument without changing the `bash` tool.
 - **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
 
 ### Fixed
