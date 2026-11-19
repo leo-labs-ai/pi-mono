@@ -761,6 +761,55 @@ describe("codemode options and store", () => {
 		expect(text).toContain("Earlier steps may have completed.");
 	});
 
+	it.skipIf(process.platform === "win32")("passes shq() values to bash byte for byte", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "bash"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		const values = [
+			"'single quotes'",
+			'"double quotes"',
+			"`printf expanded`",
+			"$VAR",
+			"$(printf expanded)",
+			" leading and trailing spaces ",
+			"first\nsecond\n",
+			"",
+			"-n",
+			"café 雪 🌱",
+		];
+		const result = await run(
+			harness,
+			`
+				const args = await Promise.all(${JSON.stringify(values)}.map(value => shq(value)));
+				const result = await tools.bash({ command: "set -- " + args.join(" ") + "; printf '%s\\\\0' \\"$@\\" > argv.bin" });
+				return result.exit_code;
+			`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(resultText(result)).toBe("0");
+		// NUL delimiters preserve argument boundaries, even for an empty argument or a trailing newline.
+		expect(readFileSync(join(harness.tempDir, "argv.bin"))).toEqual(Buffer.from(`${values.join("\0")}\0`));
+	});
+
+	it("declares shq() and rejects values that cannot be passed as shell arguments", async () => {
+		const harness = await setup();
+		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(codemode?.description).toContain("declare function shq(value: string): Promise<string>;");
+		const result = await run(
+			harness,
+			`const results = await Promise.allSettled([shq(42), shq("bad\\0arg"), shq("\\ud800")]);
+			return results.map(result => result.status === "rejected" ? result.reason.message : result.value);`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(JSON.parse(resultText(result))).toEqual([
+			"shq() expects a string",
+			"shq() cannot quote a string containing NUL",
+			"shq() expects well-formed Unicode",
+		]);
+	});
+
 	// https://github.com/earendil-works/pi/issues/10251
 	it("resolves read calls to text for text files and to image blocks that image() shows", async () => {
 		const harness = await createHarness({
