@@ -307,13 +307,21 @@ jobs:
           const UPSTREAM = "clawrouter.myhorizon.co.za";
           http.createServer((req, res) => {
             if (req.url === "/health") { res.end("ok"); return; }
+            // Only the Messages API the review uses; ClawRouter's USD 30/month policy cap bounds spend.
+            if (!(req.method === "POST" && /^\/v1\/messages(\/count_tokens)?(\?|$)/.test(req.url ?? ""))) { res.writeHead(403); res.end("sidecar: route not allowed"); return; }
             const headers = { ...req.headers, host: UPSTREAM, "x-api-key": key, "cf-access-client-id": id, "cf-access-client-secret": secret };
             delete headers.authorization;
             const up = https.request({ host: UPSTREAM, port: 443, method: req.method, path: req.url, headers }, (r) => {
               res.writeHead(r.statusCode ?? 502, r.headers);
+              r.on("error", () => res.destroy());
               r.pipe(res);
             });
-            up.on("error", (e) => { res.writeHead(502); res.end(`sidecar upstream error: ${e.code ?? e.message}`); });
+            up.on("error", (e) => {
+              if (res.headersSent) { res.destroy(); return; }
+              res.writeHead(502); res.end(`sidecar upstream error: ${e.code ?? e.message}`);
+            });
+            // Abandoned client request: stop upstream generation and billing.
+            res.on("close", () => { if (!res.writableFinished) up.destroy(); });
             req.pipe(up);
           }).listen(9100, "127.0.0.1", () => console.log("clawrouter sidecar listening on 127.0.0.1:9100"));
           JS
