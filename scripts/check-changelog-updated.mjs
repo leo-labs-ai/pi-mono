@@ -47,7 +47,7 @@ function isTestOnly(path) {
 }
 
 // Generated lockfiles have no documentable surface. Match by basename, not an exact root
-// path: the fork's npm-shrinkwrap.json lives at packages/coding-agent/npm-shrinkwrap.json.
+// path, so a lockfile nested in a workspace is ignored too.
 function isLockfile(path) {
 	return /(^|\/)(package-lock\.json|npm-shrinkwrap\.json)$/.test(path);
 }
