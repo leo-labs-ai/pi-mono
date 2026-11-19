@@ -32,12 +32,12 @@ describe.skipIf(process.platform === "win32")("issue #11613 bash timeout after t
 		);
 		expect(message).toContain("boom");
 		expect(message).toMatch(
-			/Command timed out after 1 seconds\. The shell exited with code 3 after 0\.\d seconds, but background processes it started kept writing output until the timeout\.$/,
+			/Command timed out after 1 seconds\. The shell exited with code 3 after 0\.\d seconds, but background processes it started kept writing output until the timeout\. Earlier steps may have completed\.$/,
 		);
 	});
 
-	it("keeps the plain timeout message when the shell was still running at the deadline", async () => {
-		const message = await runExpectingTimeout("echo started; sleep 30", 0.3);
-		expect(message).toMatch(/started\s+Command timed out after 0\.3 seconds$/);
+	it("keeps partial output and warns about completed steps while the shell was still running", async () => {
+		const message = await runExpectingTimeout("echo started && sleep 30", 0.3);
+		expect(message).toMatch(/started\s+Command timed out after 0\.3 seconds\. Earlier steps may have completed\.$/);
 	});
 });

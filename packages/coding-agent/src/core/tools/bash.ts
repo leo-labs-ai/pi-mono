@@ -404,13 +404,13 @@ export function createShellToolDefinition(
 					}
 					if (err instanceof Error && err.message.startsWith("timeout:")) {
 						const timeoutSecs = err.message.split(":")[1];
-						let status = `Command timed out after ${timeoutSecs} seconds`;
+						let status = `Command timed out after ${timeoutSecs} seconds.`;
 						if (err instanceof ShellTimeoutError && err.shellExit) {
 							// Both facts matter: the command's real result, and that its background processes
 							// were still writing output when the timeout hit (#11613).
-							status += `. The shell exited with code ${err.shellExit.exitCode} after ${err.shellExit.afterSeconds} seconds, but background processes it started kept writing output until the timeout.`;
+							status += ` The shell exited with code ${err.shellExit.exitCode} after ${err.shellExit.afterSeconds} seconds, but background processes it started kept writing output until the timeout.`;
 						}
-						throw new Error(appendStatus(text, status));
+						throw new Error(appendStatus(text, `${status} Earlier steps may have completed.`));
 					}
 					throw err;
 				}

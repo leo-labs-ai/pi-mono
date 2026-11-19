@@ -18,6 +18,7 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
+import { createBashToolDefinition } from "../../src/core/tools/bash.ts";
 import {
 	createToolDefinitionFromAgentTool,
 	type TypeBoxAgentTool,
@@ -685,7 +686,7 @@ describe("codemode options and store", () => {
 		expect(large / small).toBeLessThan(12);
 	});
 
-	it("resolves bash calls to structured results, also for non-zero exit codes", async () => {
+	it("resolves small, empty, failing and large bash calls to structured results", async () => {
 		const harness = await createHarness({
 			initialActiveToolNames: ["codemode", "bash"],
 			extensionFactories: [createCodemodeExtension()],
@@ -693,10 +694,120 @@ describe("codemode options and store", () => {
 		harnesses.push(harness);
 		const result = await run(
 			harness,
-			'const r = await tools.bash({ command: "echo out; exit 3" });\ntext(JSON.stringify([r.output, r.exit_code, typeof r.wall_time_seconds]));',
+			`
+			const small = await tools.bash({ command: "printf small" });
+			const empty = await tools.bash({ command: ":" });
+			const failed = await tools.bash({ command: "printf out; exit 3" });
+			const medium = await tools.bash({ command: "printf '%8192s' x" });
+			const large = await tools.bash({ command: "printf 'start%1100000send' x" });
+			return {
+				small, empty, failed,
+				medium: { ...medium, output: medium.output === " ".repeat(8191) + "x" },
+				large: {
+					...large,
+					output: [large.output.slice(0, 5), large.output.includes("bytes omitted"), large.output.slice(-4)],
+				},
+			};
+		`,
 		);
 		expect(result.isError).toBe(false);
-		expect(resultText(result)).toBe('["out\\n",3,"number"]');
+		const value = JSON.parse(resultText(result)) as { large: { full_output_path?: string } };
+		const path = value.large.full_output_path;
+		try {
+			expect(value).toEqual({
+				small: { output: "small", truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				empty: { output: "", truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				failed: { output: "out", truncated: false, exit_code: 3, wall_time_seconds: expect.any(Number) },
+				medium: { output: true, truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				large: {
+					output: ["start", true, "xend"],
+					truncated: true,
+					full_output_path: expect.any(String),
+					exit_code: 0,
+					wall_time_seconds: expect.any(Number),
+				},
+			});
+			if (!path) throw new Error("No full bash output file");
+			expect(readFileSync(path, "utf8")).toBe(`start${" ".repeat(1099999)}xend`);
+		} finally {
+			if (path) rmSync(path, { force: true });
+		}
+	});
+
+	it("keeps partial bash output and warns about earlier steps on timeout", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "bash"],
+			extensionFactories: [
+				createCodemodeExtension(),
+				(pi) => {
+					pi.registerTool(
+						createBashToolDefinition(process.cwd(), {
+							operations: {
+								exec: async (_command, _cwd, { onData }) => {
+									onData(Buffer.from("first step finished"));
+									throw new Error("timeout:1");
+								},
+							},
+						}),
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		const result = await run(harness, 'await tools.bash({ command: "printf first && sleep 60", timeout: 1 });');
+		expect(result.isError).toBe(true);
+		const text = resultText(result);
+		expect(text).toContain("first step finished\n\nCommand timed out after 1 seconds");
+		expect(text).toContain("Earlier steps may have completed.");
+	});
+
+	it.skipIf(process.platform === "win32")("passes shq() values to bash byte for byte", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "bash"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		const values = [
+			"'single quotes'",
+			'"double quotes"',
+			"`printf expanded`",
+			"$VAR",
+			"$(printf expanded)",
+			" leading and trailing spaces ",
+			"first\nsecond\n",
+			"",
+			"-n",
+			"café 雪 🌱",
+		];
+		const result = await run(
+			harness,
+			`
+				const args = await Promise.all(${JSON.stringify(values)}.map(value => shq(value)));
+				const result = await tools.bash({ command: "set -- " + args.join(" ") + "; printf '%s\\\\0' \\"$@\\" > argv.bin" });
+				return result.exit_code;
+			`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(resultText(result)).toBe("0");
+		// NUL delimiters preserve argument boundaries, even for an empty argument or a trailing newline.
+		expect(readFileSync(join(harness.tempDir, "argv.bin"))).toEqual(Buffer.from(`${values.join("\0")}\0`));
+	});
+
+	it("declares shq() and rejects values that cannot be passed as shell arguments", async () => {
+		const harness = await setup();
+		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(codemode?.description).toContain("declare function shq(value: string): Promise<string>;");
+		const result = await run(
+			harness,
+			`const results = await Promise.allSettled([shq(42), shq("bad\\0arg"), shq("\\ud800")]);
+			return results.map(result => result.status === "rejected" ? result.reason.message : result.value);`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(JSON.parse(resultText(result))).toEqual([
+			"shq() expects a string",
+			"shq() cannot quote a string containing NUL",
+			"shq() expects well-formed Unicode",
+		]);
 	});
 
 	// https://github.com/earendil-works/pi/issues/10251

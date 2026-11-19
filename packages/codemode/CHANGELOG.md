@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Printing or returning `ALL_TOOLS` directly with more than 20 tools now shows the count and the first 20 names rather than every description. The catalog itself and explicitly filtered or mapped output are unchanged.
+
 ## [1.5.2] - 2026-11-10
 
 ## [1.5.1] - 2026-11-09

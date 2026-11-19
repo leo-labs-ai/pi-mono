@@ -50,6 +50,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Added
 
+- **Codemode `await shq(value)`** quotes one string for use as a literal POSIX shell argument without changing the `bash` tool.
 - **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
 
 ### Fixed
@@ -89,6 +90,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 - **Linked extension entries resolve relative imports beside their targets.** Canonicalize the module path before Jiti imports it, matching Node’s default module resolution. This keeps the configured/user-visible link identity while allowing the Tokenjuice policy wrapper to find its existing sibling policy module. A linked-entry regression is red before the fix and green afterward.
 - **Upstream-scoped extensions reuse the fork’s host modules.** Restore `@earendil-works/pi-{coding-agent,agent-core,tui,ai}` aliases (including existing compat/oauth/providers-all entries) in both the unbundled Node loader and embedded virtual modules. Third-party extensions such as the pinned Codex adapter and pi-fff no longer fail to resolve host imports; aliases point at the same module instances, not a second installed runtime.
 - **Compaction distinguishes volatile snapshots from standing constraints (PMF-1).** The prompts keep observation time and source for quota, load, remote heads, and board state and instruct the next agent to re-read them. Split-turn checkpoint requests include the early turn's evidence so newer direct user decisions can clear stale blockers.
+- **Codemode keeps error names and messages in JSON**, including `Promise.allSettled()` rejection reasons. Bash timeouts still show partial output and now warn that earlier steps may have completed. Tool descriptions are unchanged.
 
 ### Changed
 
