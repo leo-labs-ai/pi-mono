@@ -136,7 +136,7 @@ export function isConfigValueConfigured(config: string, env?: Record<string, str
 }
 
 /**
- * Resolve a config value (API key, header value, etc.) to an actual value.
+ * Resolve a config value (API key, header value, etc.) to its actual value.
  * - If starts with "!", executes the rest as a shell command and uses stdout (cached)
  * - Interpolates "$ENV_VAR" or "${ENV_VAR}" references with the named environment variable
  * - In non-command values, "$$" escapes a literal "$" and "$!" escapes a literal "!"
