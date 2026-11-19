@@ -20,7 +20,8 @@ function fixture(t) {
 		mkdirSync(join(cwd, dirname(path)), { recursive: true });
 		writeFileSync(join(cwd, path), text);
 	};
-	const manifest = (version) => file(manifestPath, `{"name":"@leo-labs-ai/pi-ai",\n\t"version": "${version}"\n}\n`);
+	const manifest = (version, nestedVersion = "1.5.2") =>
+		file(manifestPath, `${JSON.stringify({ name: "@leo-labs-ai/pi-ai", version, nested: { version: nestedVersion } }, null, "\t")}\n`);
 	const versionModule = (version, rest = "") =>
 		file(versionPath, `export const PI_AI_VERSION = "${version}";\n${rest}`);
 	const chordPin = (version) => {
@@ -70,14 +71,15 @@ test("changelog check accepts a generated pi-ai constant bump with the matching 
 });
 
 test("changelog check still requires a changelog for non-mechanical pi-ai source changes", async (t) => {
-	for (const [name, manifestVersion, sourceVersion, rest] of [
+	for (const [name, manifestVersion, sourceVersion, rest, nestedVersion] of [
 		["no corresponding manifest bump", "1.5.2", "1.5.3", ""],
 		["mismatched bump", "1.5.3", "1.5.4", ""],
 		["additional source change", "1.5.3", "1.5.3", "export const extra = true;\n"],
+		["only a nested manifest property changed", "1.5.2", "1.5.3", "", "1.5.3"],
 	]) {
 		await t.test(name, (subtest) => {
 			const f = fixture(subtest);
-			f.manifest(manifestVersion);
+			f.manifest(manifestVersion, nestedVersion);
 			f.versionModule(sourceVersion, rest);
 			f.commit();
 			const result = f.check();

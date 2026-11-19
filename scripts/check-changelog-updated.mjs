@@ -105,20 +105,23 @@ function isGeneratedAiVersion(path) {
 		const committed = diff(diffRange, path);
 		const staged = diff("--cached", path);
 		if (committed && (staged || diff("--cached", AI_MANIFEST))) return false;
-		const manifestChanges = patchLines(diff(committed ? diffRange : "--cached", AI_MANIFEST));
-		const manifestVersion = (sign) =>
-			manifestChanges
-				.filter((line) => line.startsWith(sign))
-				.map((line) => line.slice(1).trim().match(new RegExp(String.raw`^"version":\s*("${SEMVER}"),?$`))?.[1])
-				.filter(Boolean);
-		const before = manifestVersion("-");
-		const after = manifestVersion("+");
-		if (before.length !== 1 || after.length !== 1 || before[0] === after[0]) return false;
-		const changes = patchLines(committed || staged);
+		const comparison = committed ? diffRange : "--cached";
+		const manifestDiff = git(["diff", "--raw", "--no-abbrev", "--no-renames", comparison, "--", AI_MANIFEST]);
+		const blobs = /^:\d+ \d+ ([0-9a-f]+) ([0-9a-f]+) M\t/.exec(manifestDiff);
+		if (!blobs) return false;
+		const version = (blob) => JSON.parse(git(["cat-file", "blob", blob])).version;
+		const before = version(blobs[1]);
+		const after = version(blobs[2]);
+		const semver = new RegExp(`^${SEMVER}$`);
+		if (before === after || typeof before !== "string" || typeof after !== "string") return false;
+		if (!semver.test(before) || !semver.test(after)) return false;
+		const sourceDiff = committed || staged;
+		if (/^old mode /m.test(sourceDiff)) return false;
+		const changes = patchLines(sourceDiff);
 		return (
 			changes.length === 2 &&
-			changes[0] === `-export const PI_AI_VERSION = ${before[0]};` &&
-			changes[1] === `+export const PI_AI_VERSION = ${after[0]};`
+			changes[0] === `-export const PI_AI_VERSION = "${before}";` &&
+			changes[1] === `+export const PI_AI_VERSION = "${after}";`
 		);
 	} catch {
 		return false;
