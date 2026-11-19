@@ -375,14 +375,11 @@ describe("findCutPoint", () => {
 	});
 
 	it("distinguishes a split earlier turn from a split in the latest turn", () => {
+		const earlierPrompt = createMessageEntry(createUserMessage("earlier"));
 		const earlierResponse = createMessageEntry(createAssistantMessage("x".repeat(4000)));
+		const laterPrompt = createMessageEntry(createUserMessage("later"));
 		const laterResponse = createMessageEntry(createAssistantMessage("ok"));
-		const entries = [
-			createMessageEntry(createUserMessage("earlier")),
-			earlierResponse,
-			createMessageEntry(createUserMessage("later")),
-			laterResponse,
-		];
+		const entries = [earlierPrompt, earlierResponse, laterPrompt, laterResponse];
 		expect(prepareCompaction(entries, { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 100 })).toMatchObject({
 			firstKeptEntryId: earlierResponse.id,
 			isSplitTurn: true,

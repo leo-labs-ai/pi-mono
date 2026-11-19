@@ -56,51 +56,63 @@ describe("AgentSession split-turn compaction continue instruction", () => {
 		}
 	});
 
-	it("ends the summary with the instruction when threshold compaction splits the running turn", async () => {
-		const largeTool: AgentTool = {
-			name: "large_result",
-			label: "Large result",
-			description: "Returns enough content to cross the compaction threshold",
-			parameters: Type.Object({}),
-			execute: async () => ({
-				content: [{ type: "text", text: `large-tool-result:${"x".repeat(16000)}` }],
-				details: {},
-			}),
-		};
-		// The tool result (about 4000 tokens) crosses the threshold mid-run and exceeds keepRecentTokens,
-		// so the cut lands on the tool call: the turn's prompt is summarized and the result is kept.
-		const harness = await createHarness({
-			models: [{ id: "faux-1", contextWindow: 6700, maxTokens: 100 }],
-			settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
-			tools: [largeTool],
-		});
-		harnesses.push(harness);
-		let resumedRequest = "";
-		harness.setResponses([
-			fauxAssistantMessage(`old-history:${"a".repeat(6000)}`),
-			fauxAssistantMessage(`recent-history:${"b".repeat(6000)}`),
-			fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
-			fauxAssistantMessage("## Goal\nSummary of the earlier turns"),
-			fauxAssistantMessage("## Original Request\nRun the large tool"),
-			(context) => {
-				resumedRequest = JSON.stringify(context.messages);
-				return fauxAssistantMessage("finished after compaction");
-			},
-		]);
+	it.each([false, true])(
+		"adds the threshold continuation hint only if the tool did not terminate: %s",
+		async (terminate) => {
+			const largeTool: AgentTool = {
+				name: "large_result",
+				label: "Large result",
+				description: "Returns enough content to cross the compaction threshold",
+				parameters: Type.Object({}),
+				execute: async () => {
+					if (terminate) await harness.session.followUp("start a new task");
+					return {
+						content: [{ type: "text", text: `large-tool-result:${"x".repeat(16000)}` }],
+						details: {},
+						terminate,
+					};
+				},
+			};
+			// The tool result (about 4000 tokens) crosses the threshold mid-run and exceeds keepRecentTokens,
+			// so the cut lands on the tool call: the turn's prompt is summarized and the result is kept.
+			const harness = await createHarness({
+				models: [{ id: "faux-1", contextWindow: 6700, maxTokens: 100 }],
+				settings: { compaction: { enabled: true, reserveTokens: 400, keepRecentTokens: 1750 } },
+				tools: [largeTool],
+			});
+			harnesses.push(harness);
+			let resumedRequest = "";
+			harness.setResponses([
+				fauxAssistantMessage(`old-history:${"a".repeat(6000)}`),
+				fauxAssistantMessage(`recent-history:${"b".repeat(6000)}`),
+				fauxAssistantMessage(fauxToolCall("large_result", {}), { stopReason: "toolUse" }),
+				fauxAssistantMessage("## Goal\nSummary of the earlier turns"),
+				fauxAssistantMessage("## Original Request\nRun the large tool"),
+				(context) => {
+					resumedRequest = JSON.stringify(context.messages);
+					return fauxAssistantMessage("finished after compaction");
+				},
+			]);
 
-		await harness.session.prompt("seed old history");
-		await harness.session.prompt("seed recent history");
-		await harness.session.prompt("run the large tool");
+			await harness.session.prompt("seed old history");
+			await harness.session.prompt("seed recent history");
+			await harness.session.prompt("run the large tool");
 
-		expect(harness.eventsOfType("compaction_end")).toMatchObject([{ reason: "threshold", willRetry: false }]);
-		const [summary] = storedSummaries(harness);
-		expect(summary).toContain("**Turn Context (split turn):**");
-		expect(summary.endsWith(CONTINUE_INSTRUCTION)).toBe(true);
-		expect(resumedRequest).toContain(CONTINUE_INSTRUCTION);
-		expect(resumedRequest).toContain("large-tool-result");
-		expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
-		expect(harness.faux.state.callCount).toBe(6);
-	});
+			expect(harness.eventsOfType("compaction_end")).toMatchObject([{ reason: "threshold", willRetry: false }]);
+			const [summary] = storedSummaries(harness);
+			expect(summary).toContain("**Turn Context (split turn):**");
+			expect(summary.endsWith(CONTINUE_INSTRUCTION)).toBe(!terminate);
+			if (terminate) {
+				expect(resumedRequest).not.toContain(CONTINUE_INSTRUCTION);
+				expect(resumedRequest).toContain("start a new task");
+			} else {
+				expect(resumedRequest).toContain(CONTINUE_INSTRUCTION);
+			}
+			expect(resumedRequest).toContain("large-tool-result");
+			expect(harness.session.getLastAssistantText()).toBe("finished after compaction");
+			expect(harness.faux.state.callCount).toBe(6);
+		},
+	);
 
 	it("keeps the plain summary when automatic compaction follows a completed answer", async () => {
 		const harness = await createHarness({

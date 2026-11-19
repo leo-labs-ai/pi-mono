@@ -1059,8 +1059,11 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			// After tool results the same turn continues; otherwise a queued user message follows.
-			const context = await this._compactBeforeNextAssistantResponse(turn.context, turn.toolResults.length > 0);
+			// Terminating tools also return results, but don't schedule a continuation.
+			const context = await this._compactBeforeNextAssistantResponse(
+				turn.context,
+				turn.continuesAfterTools === true,
+			);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions =

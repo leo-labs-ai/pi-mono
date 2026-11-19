@@ -188,7 +188,10 @@ export type PrepareRequest = (
 	signal?: AbortSignal,
 ) => AgentRequestUpdate | void | Promise<AgentRequestUpdate | undefined> | Promise<void>;
 
-export interface PrepareNextTurnContext extends AgentTurnContext {}
+export interface PrepareNextTurnContext extends AgentTurnContext {
+	/** The loop would request another response for these tool results even without queued messages. */
+	continuesAfterTools?: boolean;
+}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
