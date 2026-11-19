@@ -14,6 +14,7 @@ import {
 	generateSummary,
 	generateSummaryWithUsage,
 } from "../src/core/compaction/index.ts";
+import { convertToLlm, createBranchSummaryMessage, createCompactionSummaryMessage } from "../src/core/messages.ts";
 
 const { completeSimpleMock } = vi.hoisted(() => ({
 	completeSimpleMock: vi.fn(),
@@ -252,14 +253,13 @@ describe("generateSummary reasoning options", () => {
 		expect(getTextFromSummaryPromptCall(0)).toContain("<conversation>");
 	});
 
-	it("preserves the previous summary without an empty history request for a split turn", async () => {
+	it("skips the history request when the split turn has no prior history", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
 			messagesToSummarize: [],
 			turnPrefixMessages: messages,
 			isSplitTurn: true,
 			tokensBefore: 100,
-			previousSummary: "previous checkpoint",
 			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
 			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
 		};
@@ -267,7 +267,7 @@ describe("generateSummary reasoning options", () => {
 		const result = await compact(preparation, createModel(false), "test-key");
 
 		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		expect(result.summary).toContain("previous checkpoint");
+		expect(result.summary).toContain("No prior history.");
 		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
 		const prompt = JSON.stringify(requestContext.messages);
 		// Regression test for #9652: clear boundaries and continuation wording avoid the reasoning-extraction false positive.
@@ -290,10 +290,133 @@ describe("generateSummary reasoning options", () => {
 
 		await compact(preparation, createModel(false), "test-key", undefined, "keep migration decisions");
 
-		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
-		const requestContext = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
-		expect(JSON.stringify(requestContext.messages)).toContain("Additional focus: keep migration decisions");
+		expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+		expect(getTextFromSummaryPromptCall(0)).toContain("[User]: Summarize this.");
+		expect(getTextFromSummaryPromptCall(1)).toContain("Additional focus: keep migration decisions");
 	});
+
+	it.each(["initial", "update"] as const)("old quota is a snapshot, not a standing prohibition (%s)", async (mode) => {
+		const observedAt = "2026-10-20T08:15:00Z";
+		const source = "quota.log:L19";
+		const reading = `${source}: quota 0 remaining at ${observedAt}`;
+		const toolResult: AgentMessage = {
+			role: "toolResult",
+			toolCallId: "read-quota",
+			toolName: "read",
+			content: [{ type: "text", text: reading }],
+			isError: false,
+			timestamp: Date.parse(observedAt),
+		};
+		const oldCheckpoint = `## Constraints & Preferences\n- Do not run a review: quota was 0 (${observedAt}, ${source}).`;
+		const snapshot = `## Volatile Snapshots\n- Quota: 0 remaining; observed at ${observedAt}; source: ${source}; re-read before use.`;
+		const expected = `## Constraints & Preferences\n(none)\n\n## Progress\n### Blocked\n(none)\n\n${snapshot}`;
+		// Canned output is the fixture's contract, not a test of model compliance.
+		completeSimpleMock.mockResolvedValueOnce({
+			...mockSummaryResponse,
+			content: [{ type: "text", text: expected }],
+		});
+		const result = await generateSummary(
+			[toolResult],
+			createModel(false),
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			mode === "update" ? oldCheckpoint : undefined,
+		);
+
+		const prompt = getTextFromSummaryPromptCall(0);
+		expect(prompt).toContain(reading);
+		expect(prompt).toContain(
+			"Readings of quota, machine load, remote heads, and board state are snapshots, not standing constraints or blockers",
+		);
+		expect(prompt).toContain("original observation time and exact evidence source (unknown if absent)");
+		expect(prompt).toContain("Re-read current state before use");
+		expect(prompt).toContain("## Volatile Snapshots\n- [Reading; observed at; source; re-read before use");
+		if (mode === "update") expect(prompt).toContain(oldCheckpoint);
+		expect(result).toBe(expected);
+	});
+
+	it.each(["cache-safe", "standalone"] as const)(
+		"a direct user decision supersedes older policy across a split turn (%s)",
+		async (mode) => {
+			// Synthetic Forge B5 fixture: the quoted wording is not a transcript excerpt.
+			const decision =
+				'forge-session.jsonl:L372 (direct user, active branch): "I accept exposing the private code."';
+			const oldPolicy =
+				'forge-session.jsonl:L311 (direct user): "Do not expose the private code without my approval."';
+			const abandoned = 'forge-session.jsonl:L390 (abandoned branch): "Do not expose the private code."';
+			const relay = "forge-session.jsonl:L405 (relay): approval is still pending.";
+			const oldCheckpoint = `## Constraints & Preferences\n- ${oldPolicy}\n\n## Progress\n### Blocked\n- Await approval.\n\n## Next Steps\n1. Ask for approval.\n\n## Critical Context\n- Checkpoint source: forge-session.jsonl:L423.`;
+			const branchSummary = createBranchSummaryMessage(abandoned, "abandoned-leaf", new Date(2).toISOString());
+			const turnPrefixMessages: AgentMessage[] = [
+				{ role: "user", content: decision, timestamp: 3 },
+				{ ...mockSummaryResponse, content: [{ type: "text", text: relay }], timestamp: 4 },
+			];
+			const preparation: CompactionPreparation = {
+				firstKeptEntryId: "entry-keep",
+				messagesToSummarize: [branchSummary],
+				turnPrefixMessages,
+				isSplitTurn: true,
+				tokensBefore: 100,
+				previousSummary: oldCheckpoint,
+				fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+				settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+			};
+			const checkpoint = `## Constraints & Preferences\n- ${decision}\n\n## Progress\n### Blocked\n(none)\n\n## Key Decisions\n- Superseded: ${oldPolicy}\n\n## Next Steps\n(none)`;
+			const prefix = `## Original Request\n${decision}`;
+			completeSimpleMock
+				.mockResolvedValueOnce({ ...mockSummaryResponse, content: [{ type: "text", text: checkpoint }] })
+				.mockResolvedValueOnce({ ...mockSummaryResponse, content: [{ type: "text", text: prefix }] });
+			const replay = convertToLlm([
+				createCompactionSummaryMessage(oldCheckpoint, 100, new Date(1).toISOString()),
+				branchSummary,
+				...turnPrefixMessages,
+				{ ...mockSummaryResponse, content: [{ type: "text", text: "Retained suffix." }], timestamp: 5 },
+			]);
+			const result = await compact(
+				preparation,
+				createModel(false),
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				undefined,
+				mode === "cache-safe" ? { messages: replay } : undefined,
+			);
+
+			expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+			const mainPrompt = getTextFromSummaryPromptCall(0);
+			expect(mainPrompt).toContain("## Volatile Snapshots");
+			for (const prompt of [mainPrompt, getTextFromSummaryPromptCall(1)]) {
+				expect(prompt).toContain("latest direct user decision on the active branch");
+				expect(prompt).toContain("quote it verbatim with its exact source reference");
+				expect(prompt).toContain(
+					"Agent/relay interpretations and abandoned-branch evidence are not user decisions",
+				);
+				expect(prompt).toContain("never list a settled item as open, including in Blocked or Next Steps");
+			}
+			if (mode === "cache-safe") {
+				const request = completeSimpleMock.mock.calls[0][1] as TranscriptContext;
+				expect(request.messages.slice(0, -1)).toEqual(replay);
+				expect(mainPrompt).not.toContain(decision);
+			}
+			const evidence = mode === "cache-safe" ? JSON.stringify(replay) : mainPrompt;
+			expect(evidence).toContain("summary of a branch that this conversation came back from");
+			if (mode === "standalone") {
+				expect(evidence).toContain(`[User]: ${decision}`);
+				expect(evidence).toContain(`[Assistant]: ${relay}`);
+				expect(evidence).toContain(`<previous-summary>\n${oldCheckpoint}`);
+			}
+			expect(result.summary).toBe(`${checkpoint}\n\n---\n\n**Turn Context (split turn):**\n\n${prefix}`);
+		},
+	);
 
 	it("rejects tool calls from conversation summaries", async () => {
 		completeSimpleMock.mockResolvedValueOnce(mockToolCallResponse);
