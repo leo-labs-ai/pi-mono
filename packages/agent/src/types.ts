@@ -174,6 +174,8 @@ export interface PrepareRequestContext {
 	context: AgentContext;
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	/** Tool results from this invocation scheduled the next response, not just queued messages. */
+	continuesAfterTools?: boolean;
 }
 
 /** Replacement runtime state for the provider request being prepared. */

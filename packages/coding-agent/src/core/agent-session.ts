@@ -968,8 +968,7 @@ export class AgentSession {
 			// failure rejects, which ends the run with an error response. Only messages the user wrote
 			// start a turn; extension messages can follow them, e.g. from before_agent_start.
 			const lastResponse = context.messages.findLastIndex((message) => message.role === "assistant");
-			const messagesSinceResponse = context.messages.slice(lastResponse + 1);
-			const userTurn = messagesSinceResponse.some((message) => message.role === "user");
+			const userTurn = context.messages.slice(lastResponse + 1).some((message) => message.role === "user");
 			const state = getVirtualModelState(this.sessionManager.getBranch(), model.provider, model.id);
 			const route = await this._modelRuntime.resolveModel(model, convertToLlm(context.messages), {
 				reason: failed ? "retry" : userTurn ? "user" : "continuation",
@@ -988,11 +987,9 @@ export class AgentSession {
 			// The route stands: the router already decided this request. The state entry does not change
 			// the projection.
 			if (this._exceedsCompactionThreshold(route.model, projection)) {
-				// A routed request without a user message is not necessarily a continuation:
-				// e.g. an extension can start a fresh run with a custom message.
-				const continuesTurn =
-					!userTurn &&
-					(failed !== undefined || messagesSinceResponse.some((message) => message.role === "toolResult"));
+				// A custom message can start a fresh run after a terminating tool, so past tool results
+				// are not enough to tell whether this request continues the interrupted turn.
+				const continuesTurn = !userTurn && (failed !== undefined || request.continuesAfterTools === true);
 				await this._runAutoCompaction("threshold", false, continuesTurn);
 				({ previous, context } = await prepare());
 			}
