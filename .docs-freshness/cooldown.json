@@ -7,6 +7,13 @@
       "lastSuggestedAt": "2026-11-13T01:30:00Z",
       "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/682",
       "outcome": "applied"
+    },
+    {
+      "kind": "rewrite-content-vs-code-drift-uncontained",
+      "area": "FORK-CHANGELOG.md",
+      "lastSuggestedAt": "2026-11-19T14:44:55Z",
+      "prUrl": "https://github.com/leo-labs-ai/pi-mono/pull/660",
+      "outcome": "deferred"
     }
   ]
 }

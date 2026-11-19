@@ -55,6 +55,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Fixed
 
+- **CodeMode syntax errors suggest escaping template content.** Scripts containing backticks receive a possible cause and safe writing options when they fail with a syntax error (#614).
 - **The Release job no longer fails while opening the version PR because private `p2` has no `CHANGELOG.md`.** `@changesets/config@3.1.4` treats a missing `privatePackages` key as `{ version: true, tag: false }`. With that default, `updateInternalDependencies: "patch"` bumps private `p2` whenever the fixed group bumps, and `changesets/action` then reads `CHANGELOG.md` for every package whose version changed. `"changelog": false` does not create that file, so the action throws `ENOENT` on `apps/p2/CHANGELOG.md` after `changeset version` has already succeeded. `.changeset/config.json` now sets `privatePackages` to `{ version: false, tag: false }`, so private packages are not versioned or tagged. `changeset publish` already skips `private: true`. `p2` stays at `0.0.3`; its exact dependency pins still follow the published packages. No changelog files were added.
 
 - **A non-array `extensions`, `skills`, `prompts` or `themes` value in `settings.json` no longer stops startup (#670).** `"extensions": {}` used to throw `entries is not iterable`. The value is now ignored and reported as a settings warning.

@@ -377,7 +377,11 @@ function formatCallSummary(calls: readonly CodemodeNestedCall[]): string {
 	return `Tool calls made before the failure (they are not undone): ${calls.map((call) => `${call.name} (${call.status})`).join(", ")}`;
 }
 
-function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: readonly CodemodeNestedCall[]): string {
+function formatError(
+	result: Extract<CodemodeResult, { ok: false }>,
+	calls: readonly CodemodeNestedCall[],
+	code: string,
+): string {
 	const { error } = result;
 	const head =
 		error.kind === "script"
@@ -387,7 +391,14 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 				: error.kind === "aborted"
 					? `Script aborted: ${error.message}`
 					: `Script sandbox failed: ${error.message}`;
-	return `${head}\n\n${formatCallSummary(calls)}`;
+	const hint =
+		error.kind === "script" &&
+		error.phase === "parse" &&
+		error.name === "SyntaxError" &&
+		/\b(?:content|markdown)\s*[:=]\s*`/i.test(code)
+			? "\n\nA template literal may contain unescaped backticks or ${. Use a quoted string with escaped newlines, keep the template literal with escaped backticks and \\${, or use the write tool directly when available."
+			: "";
+	return `${head}${hint}\n\n${formatCallSummary(calls)}`;
 }
 
 /** Write the full text output to a temp file, like bash does for truncated output. */
@@ -626,7 +637,7 @@ export async function executeCodemode(
 		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
 	const items = formatOutput(scriptOutput);
-	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls)}` });
+	if (!result.ok) items.push({ type: "text", text: `Script error:\n${formatError(result, calls, code)}` });
 	if (generatedImages > 0 && !items.some((item) => item.type === "image")) {
 		items.push({
 			type: "text",

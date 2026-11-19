@@ -74,6 +74,8 @@ export type CodemodeErrorKind =
 
 export interface CodemodeError {
 	kind: CodemodeErrorKind;
+	/** Set only when compiling the script fails, not when its execution throws. */
+	phase?: "parse";
 	name?: string;
 	message: string;
 	stack?: string;
