@@ -17,8 +17,8 @@
  * with a successful "done".
  *
  * Evaluates to a function `(bridge, toolsJson, globalsJson, storeJson) => { settle, run, stalled }`.
- * `settle(id, ok, payload, propertiesJson)` settles call `id`; a rejection's `Error` gets the own properties of the
- * `propertiesJson` object, except `name`, `message`, and `stack`.
+ * `settle(id, ok, payload, propertiesJson, errorName)` settles call `id`; a rejection's `Error` gets the own
+ * properties of the `propertiesJson` object, except `name`, `message`, and `stack`.
  * `toolsJson` lists `{ name, jsName, description }`: `tools[jsName]` and `tools[name]` call the
  * tool, and `ALL_TOOLS` lists `{ name: jsName, description }`.
  * `stalled()` reports a script that has not finished while no host call is pending: with no timers
@@ -47,6 +47,13 @@ const IMAGE_HELPER_EXPECTS =
 
 export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson) {
 	"use strict";
+
+	// Error's name and message are not enumerable. Keep them in JSON, including nested rejection reasons.
+	Object.defineProperty(Error.prototype, "toJSON", {
+		value() { return { ...this, name: String(this.name), message: String(this.message) }; },
+		writable: true,
+		configurable: true,
+	});
 
 	// Freeze every object reachable from the built-in globals, plus the intrinsics that are only
 	// reachable from instances (iterator and generator prototypes, %TypedArray%).
@@ -458,12 +465,15 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	Object.defineProperty(globalThis, "exit", { value: exit, enumerable: true });
 
 	return {
-		settle(id, ok, payload, propertiesJson) {
+		settle(id, ok, payload, propertiesJson, errorName) {
 			const entry = pending.get(id);
 			if (!entry) return;
 			pending.delete(id);
 			if (!ok) {
 				const error = new ErrorCtor(payload);
+				if (errorName !== undefined && errorName !== error.name) {
+					Object.defineProperty(error, "name", { value: errorName, writable: true, configurable: true });
+				}
 				if (propertiesJson !== undefined) {
 					const properties = parse(propertiesJson);
 					for (const key of Object.keys(properties)) {
