@@ -233,6 +233,15 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	Object.freeze(tools);
 	Object.freeze(allTools);
 
+	// Only summarize direct output of the original catalog, not explicit copies or projections.
+	function summarizeToolCatalog(value) {
+		const limit = 20;
+		if (value !== allTools || allTools.length <= limit) return value;
+		const names = allTools.slice(0, limit).map((tool) => tool.name).join(", ");
+		return "ALL_TOOLS: " + allTools.length + " tools (first " + limit + "): " + names +
+			"\\nUse searchTools(query) to find tools and describeTool(name) for details.";
+	}
+
 	// Reading a member that does not exist throws an error that names the close matches, instead of
 	// a later "not a function". \`in\` checks still work.
 	const comparable = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -375,7 +384,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	function text(value) {
 		let rendered;
 		try {
-			rendered = outputText(value);
+			rendered = outputText(summarizeToolCatalog(value));
 		} catch (error) {
 			throw new TypeErrorCtor(error instanceof ErrorCtor ? error.message : String(error));
 		}
@@ -452,7 +461,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const console = {};
 	for (const level of ["log", "info", "warn", "error", "debug"]) {
 		console[level] = (...args) => {
-			output("console", args.map(format).join(" "));
+			output("console", args.map((value) => format(summarizeToolCatalog(value))).join(" "));
 		};
 	}
 	Object.freeze(console);
@@ -506,7 +515,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 				(value) => {
 					let json;
 					try {
-						json = serialize(value);
+						json = serialize(summarizeToolCatalog(value));
 					} catch (error) {
 						done(false, describeError(error));
 						return;

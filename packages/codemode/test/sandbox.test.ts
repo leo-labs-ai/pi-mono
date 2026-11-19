@@ -340,6 +340,61 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
+		describe("ALL_TOOLS output", () => {
+			const entries = Array.from({ length: 500 }, (_, i) => ({ name: `tool_${i}`, description: `Tool ${i}` }));
+			const catalogTools = entries.map((entry) => ({ ...entry, execute: () => null }));
+
+			it("summarizes a large catalog when emitted directly or through an alias", async () => {
+				const sandbox = createSandbox(catalogTools);
+				const result = await sandbox.execute(`
+					const catalog = ALL_TOOLS;
+					text(ALL_TOOLS);
+					text(catalog);
+					console.log(catalog);
+					return ALL_TOOLS;
+				`);
+				const names = entries.slice(0, 20).map((entry) => entry.name);
+				const summary = `ALL_TOOLS: 500 tools (first 20): ${names.join(", ")}\nUse searchTools(query) to find tools and describeTool(name) for details.`;
+				expect(result).toMatchObject({
+					ok: true,
+					value: summary,
+					output: [
+						{ type: "text", text: summary },
+						{ type: "text", text: summary },
+						{ type: "text", text: summary, console: true },
+					],
+				});
+			});
+
+			it("leaves filtered and mapped copies of the catalog untouched", async () => {
+				const sandbox = createSandbox(catalogTools);
+				const result = await sandbox.execute(`
+					text(ALL_TOOLS.filter((tool) => tool.name === "tool_499"));
+					text(ALL_TOOLS.map((tool) => tool.name));
+					return ALL_TOOLS.filter(() => true);
+				`);
+				expect(result).toMatchObject({
+					ok: true,
+					value: entries,
+					output: [
+						{ type: "text", text: JSON.stringify(entries.slice(-1)) },
+						{ type: "text", text: JSON.stringify(entries.map((entry) => entry.name)) },
+					],
+				});
+			});
+
+			it("prints a small catalog in full", async () => {
+				const sandbox = createSandbox(catalogTools.slice(0, 2));
+				const result = await sandbox.execute("text(ALL_TOOLS); return ALL_TOOLS;");
+				const small = entries.slice(0, 2);
+				expect(result).toMatchObject({
+					ok: true,
+					value: small,
+					output: [{ type: "text", text: JSON.stringify(small) }],
+				});
+			});
+		});
+
 		it("passes undefined arguments and results through", async () => {
 			const sandbox = createSandbox([{ name: "noop", execute: (args) => args }]);
 			const result = await sandbox.execute("return [await tools.noop(), await tools.noop(null)]");
