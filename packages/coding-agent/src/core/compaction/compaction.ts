@@ -517,16 +517,14 @@ const SNAPSHOT_AND_DECISION_RULES = `- Readings of quota, machine load, remote h
 const VOLATILE_SNAPSHOTS_SECTION = `## Volatile Snapshots
 - [Reading; observed at; source; re-read before use, or "(none)"]`;
 
-const GROUNDING_RULES = `GROUNDING RULES (these override formatting):
+const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
+
+GROUNDING RULES (these override formatting):
 - Record ONLY what actually happened in the conversation. Never invent progress, decisions, or next steps.
 - If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
 - Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
 - Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
-${SNAPSHOT_AND_DECISION_RULES}`;
-
-const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
-
-${GROUNDING_RULES}
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
@@ -571,7 +569,12 @@ const CACHE_SAFE_SUMMARIZATION_PROMPT = `The conversation above is the active se
 
 If an earlier compaction summary appears, update it with later evidence, including user decisions in a split turn. Recent messages may remain in context after compaction, but the summary must still capture durable goals, decisions, constraints, files, errors, and current next steps.
 
-${GROUNDING_RULES}
+GROUNDING RULES (these override formatting):
+- Record ONLY what actually happened in the conversation. Never invent progress, decisions, or next steps.
+- If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
+- Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
+- Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
@@ -640,7 +643,12 @@ const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summar
 - PRESERVE exact file paths, function names, and error messages
 - If something is no longer relevant, you may remove it
 
-${GROUNDING_RULES}
+GROUNDING RULES (these override formatting):
+- Record ONLY what actually happened in the conversation. Never invent progress, decisions, or next steps.
+- If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
+- Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
+- Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
