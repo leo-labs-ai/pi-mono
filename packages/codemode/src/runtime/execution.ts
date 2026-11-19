@@ -85,6 +85,12 @@ export function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+function serializeToolValue(value: unknown): string | undefined {
+	return JSON.stringify(value, (_key, member: unknown) =>
+		member instanceof Error ? { ...member, name: member.name, message: member.message } : member,
+	);
+}
+
 function serializeStore(store: Readonly<Record<string, unknown>> | undefined): Record<string, string> {
 	const serialized: Record<string, string> = {};
 	for (const [key, value] of Object.entries(store ?? {})) {
@@ -273,11 +279,7 @@ class Execution {
 			}
 		}
 		// Serialized before anything is recorded, so a value JSON cannot hold leaves the call waiting for another answer.
-		const payload = outcome.ok
-			? outcome.value === undefined
-				? undefined
-				: JSON.stringify(outcome.value)
-			: outcome.message;
+		const payload = outcome.ok ? serializeToolValue(outcome.value) : outcome.message;
 		const properties =
 			!outcome.ok && outcome.properties !== undefined ? JSON.stringify(outcome.properties) : undefined;
 		this.delivered.add(seq);
@@ -390,10 +392,16 @@ class Execution {
 			if (!tool) throw new Error(`Unknown ${isTool ? "tool" : "global"} "${name}"`);
 			const args: unknown = message.args === undefined ? undefined : JSON.parse(message.args);
 			const value = await tool.execute(args, { signal: pending.controller.signal });
-			reply = { type: "result", id, ok: true, payload: value === undefined ? undefined : JSON.stringify(value) };
+			reply = { type: "result", id, ok: true, payload: serializeToolValue(value) };
 			status = "ok";
 		} catch (error) {
-			reply = { type: "result", id, ok: false, payload: errorMessage(error) };
+			reply = {
+				type: "result",
+				id,
+				ok: false,
+				payload: errorMessage(error),
+				...(error instanceof Error ? { errorName: error.name } : {}),
+			};
 			status = "error";
 		}
 

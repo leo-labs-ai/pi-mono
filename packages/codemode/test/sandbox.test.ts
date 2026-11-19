@@ -422,6 +422,55 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			expect(result.calls).toMatchObject([{ name: "fail", status: "error" }]);
 		});
 
+		it("preserves names and messages when serializing settled rejections", async () => {
+			const sandbox = createSandbox([
+				echo,
+				{
+					name: "fail",
+					execute: () => {
+						throw new RangeError("tool limit exceeded");
+					},
+				},
+			]);
+			const result = await sandbox.execute(`
+				const settled = await Promise.allSettled([
+					tools.echo(42),
+					tools.fail(),
+					Promise.reject(Object.assign(new TypeError("script rejected"), { code: 7 })),
+				]);
+				if (!(settled[1].reason instanceof Error)) throw new Error("missing Error instance");
+				text(settled);
+				text(JSON.stringify(settled));
+				return settled;
+			`);
+			const expected = [
+				{ status: "fulfilled", value: 42 },
+				{ status: "rejected", reason: { name: "RangeError", message: "tool limit exceeded" } },
+				{ status: "rejected", reason: { name: "TypeError", message: "script rejected", code: 7 } },
+			];
+			expect(result).toMatchObject({ ok: true, value: expected });
+			expect(result.output.map((item) => (item.type === "text" ? JSON.parse(item.text) : item))).toEqual([
+				expected,
+				expected,
+			]);
+		});
+
+		it("preserves serialized errors in successful tool arguments and results", async () => {
+			const sandbox = createSandbox([
+				{
+					name: "report",
+					execute: (args) => ({ args, error: new RangeError("tool error data") }),
+				},
+			]);
+			expect(await sandbox.execute('return await tools.report(new TypeError("script error data"))')).toMatchObject({
+				ok: true,
+				value: {
+					args: { name: "TypeError", message: "script error data" },
+					error: { name: "RangeError", message: "tool error data" },
+				},
+			});
+		});
+
 		it("rejects calls to unknown tools", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute("return await tools.missing()");
