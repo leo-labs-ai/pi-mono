@@ -19,8 +19,8 @@ a laptop. Fork packages publish to GitHub Packages under the restricted `@leo-la
    - with pending changesets it opens or updates the PR **"chore(release): version fork packages"**
      (branch `changeset-release/main`, author `valkyriweb-clawsweeper[bot]`) by running
      `npm run version-packages`;
-   - with none pending it runs `npm run publish:changesets`, which publishes every public workspace
-     package whose version is not yet on its registry.
+   - with none pending it runs `npm run publish:changesets`, which attempts to publish public workspace
+     versions that are missing from their registries. See the vendored-package caveat below.
 3. **Releasing means merging the version PR.** It is reviewed like any PR, its checks are the normal
    checks, and the land queue merges it on `ready-to-land`. The push of its merge commit starts the
    publish run.
@@ -37,21 +37,25 @@ a laptop. Fork packages publish to GitHub Packages under the restricted `@leo-la
 [`.changeset/config.json`](../.changeset/config.json) fixes six packages to one version (`fixed`):
 `@leo-labs-ai/pi-ai`, `pi-agent-core`, `pi-tui`, `pi-telemetry`, `pi-durable` and `pi-coding-agent`.
 `@leo-labs-ai/pi-env` is public and fork-owned but outside the group: Changesets bumps it as a dependent
-of `pi-durable`, and `scripts/sync-versions.js` (run by `version-packages`) fails the version PR if any
-public `@leo-labs-ai/*` package falls out of lockstep. `@leo-labs-ai/pi-evals` is private and never
-published.
+of `pi-durable`. On current `main`, `version-packages` runs `changeset version` and then refreshes the
+root and coding-agent install locks. #664 proposes adding `scripts/sync-versions.js` between those
+steps to regenerate `PI_AI_VERSION` and check fork lockstep. `@leo-labs-ai/pi-evals` and `apps/p2`
+are private: #676 opts private packages out of versioning and tagging, but their dependency pins can
+still change. Changesets does not publish private packages.
 
-The vendored upstream packages `@earendil-works/chord`, `@earendil-works/pi-codemode`,
-`@earendil-works/pi-mcp` and `@earendil-works/pi-schema` (added in the 1.5.0 sync) keep upstream's
-version numbers and are never published by the fork: `changeset publish` skips a version that already
-exists on npmjs, and consumers of the fork's packages resolve them from npmjs (the root `.npmrc` routes
-only `@leo-labs-ai` and `@valkyriweb` to GitHub Packages). See "Known gaps" for the chord exception.
+The intended policy is to keep the vendored `@earendil-works/chord`, `@earendil-works/pi-codemode`,
+`@earendil-works/pi-mcp` and `@earendil-works/pi-schema` on upstream releases resolved from npmjs,
+not to publish them from this fork. The policy is not enforced by `privatePackages` or the empty
+Changesets `ignore` list: a public vendored package can still be bumped as a dependent. `changeset
+publish` skips an existing registry version but may attempt to publish a missing one. See "Known gaps"
+for Chord.
 
 Bump types: `patch` for fixes and additions, `minor` for breaking changes; the group takes the highest
 bump among the pending changesets. Numbers continue from the last upstream sync: an upstream
 `Release vX.Y.Z` commit sets the manifests, fork-only releases then go `X.Y.Z+1`, `X.Y.Z+2`, and so on.
-`"access": "restricted"` in the config and `publishConfig.registry` in each manifest keep everything on
-GitHub Packages; the root `.npmrc` routes the `@leo-labs-ai` and legacy `@valkyriweb` scopes there.
+`"access": "restricted"` in the config and the fork packages' `publishConfig.registry` target GitHub
+Packages. The root `.npmrc` routes the `@leo-labs-ai` and legacy `@valkyriweb` scopes there, not
+`@earendil-works`.
 
 ## Adding a changeset
 
@@ -86,8 +90,9 @@ Before merging:
    around a red check with `--admin`: `release.yml` mints a GitHub App token
    (`CLAWSWEEPER_APP_PRIVATE_KEY`) precisely so the version PR's pushes trigger the required checks.
 2. The diff is mechanical: manifests, `package-lock.json`, `packages/coding-agent/install-lock/*`,
-   `packages/ai/src/utils/version.ts`, and the consumed `.changeset/*.md` files removed. Anything else
-   means `version-packages` did something unexpected; stop and look before merging.
+   the consumed `.changeset/*.md` files removed, and `packages/ai/src/utils/version.ts` once #664
+   lands. Check that `PI_AI_VERSION` matches the pi-ai manifest and that vendored pins resolve to
+   approved upstream releases. Stop if either is wrong or if the diff includes unexpected changes.
 3. `FORK-CHANGELOG.md` `[Unreleased]` reflects what ships. Nothing cuts that section automatically
    (`"changelog": false`): insert `## [X.Y.Z] - YYYY-MM-DD` above the shipping entries, either as a
    commit on `changeset-release/main` before merging or as a follow-up on `main`. The numbering and
@@ -167,21 +172,21 @@ explicit, maintainer-reviewed fallback.
 
 - `CLAWSWEEPER_APP_PRIVATE_KEY`: private key of the repo-installed valkyriweb-clawsweeper GitHub App
   (client id `Iv23lirdjmVqYd1gwY26`, the same App the land queue uses). The workflow fails fast without
-  it; copy the secret from `my-pi` if it is missing.
+  it; ask the maintainer to provision it if missing.
 - `GITHUB_TOKEN` with `packages: write`, used as `NODE_AUTH_TOKEN` for GitHub Packages. No npm token.
 
-## Known gaps (2026-11-10)
+## Known gaps (2026-11-19 snapshot)
 
-- The version PR (#663, 1.5.1 since the 1.5.0 sync) is red on `unit-tests` until #664 lands:
-  `packages/ai/test/identity.test.ts` sees `PI_AI_VERSION` still on the previous version because
-  `version-packages` did not run `sync-versions.js`.
-- It is also red on `check` and `fork-safety-check`: `check:changelog` asks for
-  `packages/durable/CHANGELOG.md` and `packages/env/CHANGELOG.md`. `changeset version` bumps the vendored
-  `@earendil-works/chord` because it depends on `@leo-labs-ai/pi-telemetry`, and rewrites the chord pins
-  in `durable` and `env`. The publish then depends on npmjs. When upstream has already released chord at
-  the fork's new number (1.5.1 and 1.5.2 exist as of 2026-11-10), `changeset publish` skips it and the
-  fork's `durable` and `env` resolve upstream's chord. When it has not (1.4.1 on 2026-11-04), the publish
-  fails on chord after the `@leo-labs-ai/*` packages are out, as `@earendil-works/pi-env@1.1.1` did
-  (ENEEDAUTH). Decide how chord is versioned before merging a version PR that bumps it.
+- Generated version PR #663 bumps pi-ai from 1.5.2 to 1.5.3 but leaves `PI_AI_VERSION` at 1.5.2,
+  failing `packages/ai/test/identity.test.ts`. #664 fixes generation of the constant, not the
+  existing generated branch; rerun generation after the source fixes land.
+- #663 also bumps public `@earendil-works/chord` to 1.5.3 because it depends on
+  `@leo-labs-ai/pi-telemetry`. The resulting Chord pins in `durable` and `env` are not a recognized
+  fork-only version bump, so `check:changelog` asks for changelog updates. #676's private-package
+  opt-out and #664's identity fix do not address this. A version already on npmjs can be skipped by
+  `changeset publish`, but registry presence alone does not establish that the upstream package is
+  compatible. If the version is missing, publish may attempt it and fail, potentially after other
+  packages have been published. The maintainer must decide how to keep Chord on an approved upstream
+  release, verify its resolution, and regenerate a green version PR before approving the release.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0; every release since is under
   `[Unreleased]`.

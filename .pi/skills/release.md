@@ -15,8 +15,10 @@ ship adds `.changeset/<name>.md`. Each push to `main` lets `changesets/action` o
 `@leo-labs-ai/*` packages to GitHub Packages, creates one GitHub Release per package and, when
 `pi-coding-agent` ships, builds the `v<version>` binaries. Six packages move in lockstep
 (`.changeset/config.json` `fixed`): pi-ai, pi-agent-core, pi-tui, pi-telemetry, pi-durable and
-pi-coding-agent; `pi-env` follows as a dependent. Vendored `@earendil-works/*` packages keep upstream's
-versions and are never published by the fork.
+pi-coding-agent; `pi-env` follows as a dependent. Private packages are not versioned, tagged or
+published, though their dependency pins may change. Vendored `@earendil-works/*` packages are intended
+to stay on upstream npmjs releases, not be published by the fork. Changesets does not enforce that
+policy for public vendored dependents such as Chord.
 
 ## Add a changeset to a PR
 
@@ -41,9 +43,10 @@ the bump.
    ship.
 2. Find the version PR: `gh pr list --head changeset-release/main`. Check it with `gh pr checks <n>` and
    `gh pr diff <n>`. The diff must contain only manifests, `package-lock.json`,
-   `packages/coding-agent/install-lock/*`, `packages/ai/src/utils/version.ts` and removed `.changeset/*.md`
-   files. Anything else is a `version-packages` problem: report it, do not patch the branch (the action
-   force-pushes it on every push to `main`).
+   `packages/coding-agent/install-lock/*`, removed `.changeset/*.md` files and, once #664 lands,
+   `packages/ai/src/utils/version.ts`. Verify that the pi-ai constant matches the manifest and that
+   vendored pins resolve to approved upstream releases. Report discrepancies or unexpected diffs; do
+   not patch the generated branch (the action regenerates it on pushes to `main`).
 3. Confirm `FORK-CHANGELOG.md` `[Unreleased]` covers what ships. Nothing cuts the section automatically.
    Propose a `## [X.Y.Z] - YYYY-MM-DD` heading above the shipping entries; commit it only when the user
    asks.
@@ -92,10 +95,11 @@ After the version PR merges, the Release run on the merge commit must be green:
   or `npm run publish`, and never push tags by hand. The `release:*` and `publish` scripts are upstream's
   legacy laptop flow and target public npm.
 
-## Known gaps (2026-11-10)
+## Known gaps (2026-11-19 snapshot)
 
-- A version PR that bumps `@earendil-works/chord` (it depends on `@leo-labs-ai/pi-telemetry`) fails
-  `check:changelog`. Its publish skips chord when upstream already released that version on npmjs, and
-  fails on chord, after the `@leo-labs-ai/*` packages are out, when upstream has not. Flag it to the user
-  instead of working around it.
+- #663 (1.5.3) leaves `PI_AI_VERSION` at 1.5.2; #664 is the proposed generation fix.
+- #663 also bumps public `@earendil-works/chord` through its telemetry dependency; the changed pins
+  in `durable` and `env` fail `check:changelog`. The private-package opt-out does not protect Chord,
+  and publish may try to publish a version missing from npmjs. Stop and ask the maintainer to decide
+  the Chord policy and verify the dependency before allowing Release to regenerate the PR.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0.

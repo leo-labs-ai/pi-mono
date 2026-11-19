@@ -15,7 +15,9 @@ Do not follow the legacy local tag/WebAuthn/public-npm flow in `scripts/release.
 
 ## Current package set
 
-The Changesets fixed group (`.changeset/config.json`) holds the six fork-owned publishable workspaces: `@leo-labs-ai/pi-ai`, `pi-agent-core`, `pi-tui`, `pi-telemetry`, `pi-durable` and `pi-coding-agent`. `@leo-labs-ai/pi-env` is public and fork-owned but outside the group; it is bumped as a dependent and `scripts/sync-versions.js` keeps every public `@leo-labs-ai/*` package in lockstep. `@leo-labs-ai/pi-evals` is private. The vendored `@earendil-works/chord`, `pi-codemode`, `pi-mcp` and `pi-schema` keep upstream's versions and are not published by the fork. `protocol`, `client` and `server` were removed in the 1.3.0 upstream sync and the orchestrator workspace earlier; neither set may be reintroduced into the group.
+The Changesets fixed group (`.changeset/config.json`) holds the six fork-owned publishable workspaces: `@leo-labs-ai/pi-ai`, `pi-agent-core`, `pi-tui`, `pi-telemetry`, `pi-durable` and `pi-coding-agent`. `@leo-labs-ai/pi-env` is public and fork-owned but outside the group; it is bumped as a dependent. #664 proposes running `scripts/sync-versions.js` during version PR generation to update the pi-ai version constant and check lockstep. Private workspaces such as `pi-evals` and `p2` are not versioned or tagged, although their pins can change. `protocol`, `client` and `server` were removed in the 1.3.0 upstream sync and the orchestrator workspace earlier; neither set should be reintroduced into the group.
+
+The intended policy is to consume `@earendil-works/chord`, `pi-codemode`, `pi-mcp` and `pi-schema` from upstream npmjs releases, not publish them from the fork. That is not a guarantee: Changesets can still bump public Chord as a dependent. As of version PR #663 (1.5.3), that policy gap is open; see the [runbook](../RELEASING.md#known-gaps-2026-11-19-snapshot).
 
 ## Change records
 
