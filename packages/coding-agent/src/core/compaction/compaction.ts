@@ -511,6 +511,12 @@ export function findCutPoint(
 // Summarization
 // ============================================================================
 
+const SNAPSHOT_AND_DECISION_RULES = `- Readings of quota, machine load, remote heads, and board state are snapshots, not standing constraints or blockers. Keep the original observation time and exact evidence source (unknown if absent). Re-read current state before use.
+- Use the latest direct user decision on the active branch per issue; quote it verbatim with its exact source reference when present. Agent/relay interpretations and abandoned-branch evidence are not user decisions. Mark superseded policy historical; never list a settled item as open, including in Blocked or Next Steps.`;
+
+const VOLATILE_SNAPSHOTS_SECTION = `## Volatile Snapshots
+- [Reading; observed at; source; re-read before use, or "(none)"]`;
+
 const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
 GROUNDING RULES (these override formatting):
@@ -518,6 +524,7 @@ GROUNDING RULES (these override formatting):
 - If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
 - Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
 - Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
@@ -554,17 +561,20 @@ Use this EXACT format:
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
 
+${VOLATILE_SNAPSHOTS_SECTION}
+
 Keep each section concise. Preserve exact file paths, function names, error messages, and key code identifiers verbatim -- a paraphrased path or symbol is useless to the next reader.`;
 
 const CACHE_SAFE_SUMMARIZATION_PROMPT = `The conversation above is the active session context. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
-If an earlier compaction summary appears in the conversation, preserve it and update it with later progress. Recent messages may remain in context after compaction, but the summary must still capture durable goals, decisions, constraints, files, errors, and current next steps.
+If an earlier compaction summary appears, update it with later evidence, including user decisions in a split turn. Recent messages may remain in context after compaction, but the summary must still capture durable goals, decisions, constraints, files, errors, and current next steps.
 
 GROUNDING RULES (these override formatting):
 - Record ONLY what actually happened in the conversation. Never invent progress, decisions, or next steps.
 - If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
 - Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
 - Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
@@ -600,6 +610,8 @@ Use this EXACT format:
 ## Critical Context
 - [Any data, examples, or references needed to continue]
 - [Or "(none)" if not applicable]
+
+${VOLATILE_SNAPSHOTS_SECTION}
 
 Keep each section concise. Preserve exact file paths, function names, error messages, and key code identifiers verbatim -- a paraphrased path or symbol is useless to the next reader.`;
 
@@ -616,14 +628,15 @@ Use this EXACT format:
 - [Key decisions and work done in the prefix]
 
 ## Context for Suffix
-- [Information needed to understand the retained suffix]
+- [Information needed to understand the retained suffix, including relevant labeled snapshots]
 
 Record only what actually occurred in the prefix. If the prefix contains no real content for a section, write "(none)" rather than inferring plausible content. Preserve any user correction or instruction in the user's own words.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Be concise. Preserve exact file paths, function names, and error messages needed to connect the prefix to the retained suffix.`;
 
 const UPDATE_SUMMARIZATION_INSTRUCTIONS = `Update the existing structured summary with new information. RULES:
-- PRESERVE all existing information from the previous summary
+- PRESERVE existing information that still applies or is useful as history
 - ADD new progress, decisions, and context from the new messages
 - UPDATE the Progress section: move items from "In Progress" to "Done" when completed
 - UPDATE "Next Steps" based on what was accomplished
@@ -635,6 +648,7 @@ GROUNDING RULES (these override formatting):
 - If a section has no real content, write "(none)" and move on. An empty section is correct; a plausible-sounding invented one is a defect.
 - Preserve the user's explicit instructions, corrections, and rejections in their own words. If the user corrected you or ruled something out, that survives compaction verbatim -- it is the highest-value content here.
 - Weight the MOST RECENT work most heavily: whoever reads this resumes from there.
+${SNAPSHOT_AND_DECISION_RULES}
 
 Use this EXACT format:
 
@@ -642,7 +656,7 @@ Use this EXACT format:
 [Preserve existing goals, add new ones if the task expanded]
 
 ## Constraints & Preferences
-- [Preserve existing, add new ones discovered]
+- [Current user constraints and preferences]
 
 ## Progress
 ### Done
@@ -668,6 +682,8 @@ Use this EXACT format:
 
 ## Critical Context
 - [Preserve important context, add new if needed]
+
+${VOLATILE_SNAPSHOTS_SECTION}
 
 Keep each section concise. Preserve exact file paths, function names, error messages, and key code identifiers verbatim -- a paraphrased path or symbol is useless to the next reader.`;
 
@@ -705,24 +721,22 @@ export function getSummarizationFailure(response: AssistantMessage, label: strin
  *   no prefix with any live session, so there is nothing to hit and caching would only pay
  *   for a write that is never read. `"none"` is correct there, and stays the default.
  *
- * Summary requests set no output cap of their own. Like a normal turn, pi-ai sends the model's
- * output limit, clamped to the room left in the context window. Providers count thinking inside
- * max_tokens, so a smaller compaction-specific cap (formerly 0.8 × reserveTokens) let thinking
- * starve the summary and fail compaction with a length stop. The summary prompt, not
+ * Summary requests set no output cap of their own and never enable thinking. Like a normal turn,
+ * pi-ai sends the model's output limit, clamped to the room left in the context window.
+ * Providers count thinking inside max_tokens, so session thinking (for example xhigh) could
+ * exhaust the cap and fail compaction with a length stop. The summary prompt, not
  * max_tokens, governs summary length.
  */
 function createSummarizationOptions(
-	model: Model<any>,
 	apiKey: string | undefined,
 	headers: Record<string, string> | undefined,
 	env: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
-	thinkingLevel: ThinkingLevel | undefined,
 	sessionId: string | undefined,
 	cacheSafe: boolean,
 ): SimpleStreamOptions {
 	const liveRetention = getProviderEnvValue("PI_CACHE_RETENTION", env) === "long" ? "long" : "short";
-	const options: SimpleStreamOptions = {
+	return {
 		signal,
 		apiKey,
 		headers,
@@ -730,10 +744,6 @@ function createSummarizationOptions(
 		cacheRetention: cacheSafe ? liveRetention : "none",
 		sessionId,
 	};
-	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
-		options.reasoning = thinkingLevel;
-	}
-	return options;
 }
 
 function createSummaryUserMessage(promptText: string): Message {
@@ -804,7 +814,8 @@ export async function completeSummarization(
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
@@ -822,7 +833,7 @@ export async function generateSummary(
 		await generateSummaryWithUsage(
 			currentMessages,
 			model,
-			reserveTokens,
+			_reserveTokens,
 			apiKey,
 			headers,
 			signal,
@@ -856,19 +867,21 @@ function buildSummarizationContext(promptText: string): TranscriptContext {
 /**
  * Generate or update a conversation summary and return its provider usage.
  *
- * `_reserveTokens` is kept for API compatibility. It no longer caps summary output; see
+ * `_reserveTokens` and `_thinkingLevel` are kept for API compatibility. Neither affects the
+ * request: summaries set no output cap and run without thinking; see
  * {@link createSummarizationOptions}.
  */
 export async function generateSummaryWithUsage(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	// Unused. Kept for existing callers; summaries use the model's output limit (#9512).
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	env?: Record<string, string>,
 	retry?: RetryPolicy,
@@ -877,12 +890,10 @@ export async function generateSummaryWithUsage(
 	cacheSafeContext?: CacheSafeCompactionContext,
 ): Promise<{ text: string; usage: Usage }> {
 	const completionOptions = createSummarizationOptions(
-		model,
 		apiKey,
 		headers,
 		env,
 		signal,
-		thinkingLevel,
 		sessionId,
 		cacheSafeContext !== undefined,
 	);
@@ -954,6 +965,8 @@ export interface CompactionPreparation {
 	turnPrefixMessages: AgentMessage[];
 	/** Whether this is a split turn (cut point in middle of turn) */
 	isSplitTurn: boolean;
+	/** The cut splits an older turn, not the newest one in the retained tail. */
+	splitsEarlierTurn?: boolean;
 	tokensBefore: number;
 	/** Summary from previous compaction, for iterative update */
 	previousSummary?: string;
@@ -1104,6 +1117,8 @@ export function prepareCompaction(
 		messagesToSummarize,
 		turnPrefixMessages,
 		isSplitTurn: cutPoint.isSplitTurn,
+		splitsEarlierTurn:
+			cutPoint.isSplitTurn && projectedEntries.slice(cutPoint.firstKeptEntryIndex + 1).some(isProjectedTurnStart),
 		tokensBefore,
 		previousSummary,
 		fileOps,
@@ -1126,9 +1141,10 @@ Create a concise checkpoint of the user's request and the progress shown above. 
 - [Key decisions and work completed in these messages]
 
 ## Context Needed to Continue
-- [Information from these messages needed to understand the later work]
+- [Information from these messages needed to understand the later work, including relevant labeled snapshots]
 
-Only summarize information explicitly present above. Do not infer or recreate later messages.`;
+Only summarize information explicitly present above. Do not infer or recreate later messages.
+${SNAPSHOT_AND_DECISION_RULES}`;
 
 /**
  * Closes the summary of a split turn that the agent loop resumes right after compaction. The
@@ -1150,9 +1166,9 @@ const SPLIT_TURN_CONTINUE_INSTRUCTION =
  * @param cacheSafeContext - The live model-facing transcript. When present, summary requests
  *   replay it instead of serializing the conversation into a standalone prompt.
  * @param continuesTurn - Whether the agent loop sends the next request for the same turn right
- *   after this compaction (after tool results, or an overflow retry). A split turn then ends
- *   with an instruction to continue; manual compaction and compaction that waits for a new user
- *   message keep the plain summary.
+ *   after this compaction (after tool results, or an overflow retry). If this is the turn split
+ *   by the cut, end the summary with an instruction to continue. Cuts in older turns, manual
+ *   compaction, and compaction that waits for a new message keep the plain summary.
  */
 export async function compact(
 	preparation: CompactionPreparation,
@@ -1178,7 +1194,6 @@ export async function compact(
 		tokensBefore,
 		previousSummary,
 		fileOps,
-		settings,
 	} = preparation;
 
 	// Generate summaries and merge into one
@@ -1186,13 +1201,15 @@ export async function compact(
 	let summaryUsage: Usage;
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
-		let historyText = previousSummary ?? "No prior history.";
+		let historyText = "No prior history.";
 		let historyUsage: Usage | undefined;
-		if (messagesToSummarize.length > 0) {
+		if (messagesToSummarize.length > 0 || previousSummary) {
+			// A decision in the split-turn prefix can resolve a blocker in the checkpoint.
+			// Cache-safe requests already see that evidence; standalone requests need it explicitly.
 			const historyResult = await generateSummaryWithUsage(
-				messagesToSummarize,
+				cacheSafeContext ? messagesToSummarize : [...messagesToSummarize, ...turnPrefixMessages],
 				model,
-				settings.reserveTokens,
+				undefined,
 				apiKey,
 				headers,
 				signal,
@@ -1212,7 +1229,7 @@ export async function compact(
 		const turnPrefixResult = await generateTurnPrefixSummary(
 			turnPrefixMessages,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			env,
@@ -1223,6 +1240,7 @@ export async function compact(
 			callbacks,
 			sessionId,
 			cacheSafeContext,
+			customInstructions,
 		);
 		// Merge into single summary
 		summary = `${historyText}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
@@ -1232,7 +1250,7 @@ export async function compact(
 		const result = await generateSummaryWithUsage(
 			messagesToSummarize,
 			model,
-			settings.reserveTokens,
+			undefined,
 			apiKey,
 			headers,
 			signal,
@@ -1253,7 +1271,7 @@ export async function compact(
 	// Compute file lists and append to summary
 	const { readFiles, modifiedFiles } = computeFileLists(fileOps);
 	summary += formatFileOperations(readFiles, modifiedFiles);
-	if (continuesTurn && isSplitTurn && turnPrefixMessages.length > 0) {
+	if (continuesTurn && isSplitTurn && !preparation.splitsEarlierTurn && turnPrefixMessages.length > 0) {
 		summary += `\n\n${SPLIT_TURN_CONTINUE_INSTRUCTION}`;
 	}
 
@@ -1301,17 +1319,18 @@ function buildTurnBoundaryExcerpt(turnPrefixMessages: AgentMessage[]): string {
 export async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
-	_reserveTokens: number,
+	_reserveTokens: number | undefined,
 	apiKey: string | undefined,
 	headers?: Record<string, string>,
 	env?: Record<string, string>,
 	signal?: AbortSignal,
-	thinkingLevel?: ThinkingLevel,
+	_thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
 	sessionId?: string,
 	cacheSafeContext?: CacheSafeCompactionContext,
+	customInstructions?: string,
 ): Promise<{ text: string; usage: Usage }> {
 	// Cache-safe path: the split-turn prefix messages are ALREADY present verbatim in
 	// cacheSafeContext.messages (the live model-facing transcript). Re-serializing them into the
@@ -1322,30 +1341,21 @@ export async function generateTurnPrefixSummary(
 	// compaction). Instead, point the model at the messages it can already see and mark the
 	// prefix/suffix boundary with a short excerpt of the LAST prefix message.
 	//
-	// The standalone path is unchanged and still embeds the conversation, since it builds a
-	// standalone context that does not contain these messages.
+	// The standalone path embeds the conversation because its context does not contain these messages.
+	const focusSuffix = customInstructions ? `\n\nAdditional focus: ${customInstructions}` : "";
 	const context = cacheSafeContext
 		? buildCacheSafeSummarizationContext(
 				cacheSafeContext,
-				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
+				`${CACHE_SAFE_TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}\n\n<boundary>\n${buildTurnBoundaryExcerpt(messages)}\n</boundary>`,
 			)
 		: buildSummarizationContext(
-				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`,
+				`# Conversation\n${serializeConversation(convertToLlm(messages))}\n\n# Instructions\n${TURN_PREFIX_SUMMARIZATION_PROMPT}${focusSuffix}`,
 			);
 
 	const response = await completeSummarization(
 		model,
 		context,
-		createSummarizationOptions(
-			model,
-			apiKey,
-			headers,
-			env,
-			signal,
-			thinkingLevel,
-			sessionId,
-			cacheSafeContext !== undefined,
-		),
+		createSummarizationOptions(apiKey, headers, env, signal, sessionId, cacheSafeContext !== undefined),
 		streamFn,
 		retry,
 		callbacks,

@@ -9,21 +9,23 @@
  *
  * Output helpers: `text(value)` appends a text item (non-strings are
  * JSON-stringified), `image(urlOrItem)` appends an image from a base64 `data:` URL, an
- * `{ image_url }` object, or an MCP `ImageContent` block, and `exit()` ends the script
- * successfully. `console.*` appends text items like `text()`.
+ * `{ image_url }` object, or an image block `{ type: "image", data, mimeType }`, and `exit()` ends the script
+ * successfully. `console.*` appends text items marked as console output.
  *
  * `store(key, value)` and `load(key)` are synchronous: they work on a snapshot of
  * JSON text passed in as `storeJson`, and the keys the script wrote are reported
  * with a successful "done".
  *
  * Evaluates to a function `(bridge, toolsJson, globalsJson, storeJson) => { settle, run, stalled }`.
+ * `settle(id, ok, payload, propertiesJson, errorName)` settles call `id`; a rejection's `Error` gets the own
+ * properties of the `propertiesJson` object, except `name`, `message`, and `stack`.
  * `toolsJson` lists `{ name, jsName, description }`: `tools[jsName]` and `tools[name]` call the
  * tool, and `ALL_TOOLS` lists `{ name: jsName, description }`.
  * `stalled()` reports a script that has not finished while no host call is pending: with no timers
  * or I/O in the VM, nothing can ever resume it.
  * `globalsJson` lists `{ name, spread }`; `a.b` names are grouped into a frozen `a` object.
  * `bridge(kind, a, b, c)` with kind "call" or "global" (id, name, argsJson),
- * "output" ("text", text) or ("image", data, mimeType), or "done" (ok, valueJsonOrErrorJson, writesJson).
+ * "output" ("text" or "console", text) or ("image", data, mimeType), or "done" (ok, valueJsonOrErrorJson, writesJson).
  *
  * Before anything else the prelude freezes the built-ins and makes the built-in globals read-only.
  * The prelude shares them with the script, so a script that patched one (for example
@@ -41,10 +43,17 @@ export const MAX_OUTPUT_CHARS = 16 * 1024 * 1024;
 export const MAX_OUTPUT_ITEMS = 100_000;
 
 const IMAGE_HELPER_EXPECTS =
-	"image expects a non-empty image URL string, an object with image_url, or a raw MCP image block";
+	'image expects a non-empty image URL string, an object with image_url, or an image block { type: "image", data, mimeType }';
 
 export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson) {
 	"use strict";
+
+	// Error's name and message are not enumerable. Keep them in JSON, including nested rejection reasons.
+	Object.defineProperty(Error.prototype, "toJSON", {
+		value() { return { ...this, name: String(this.name), message: String(this.message) }; },
+		writable: true,
+		configurable: true,
+	});
 
 	// Freeze every object reachable from the built-in globals, plus the intrinsics that are only
 	// reachable from instances (iterator and generator prototypes, %TypedArray%).
@@ -171,6 +180,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	function format(value) {
 		if (typeof value === "string") return value;
 		if (value instanceof ErrorCtor) return errorText(value);
+		// JSON.stringify turns NaN and Infinity into "null".
+		if (typeof value === "number") return String(value);
 		try {
 			const json = stringify(value);
 			return json === undefined ? String(value) : json;
@@ -221,6 +232,15 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	}
 	Object.freeze(tools);
 	Object.freeze(allTools);
+
+	// Only summarize direct output of the original catalog, not explicit copies or projections.
+	function summarizeToolCatalog(value) {
+		const limit = 20;
+		if (value !== allTools || allTools.length <= limit) return value;
+		const names = allTools.slice(0, limit).map((tool) => tool.name).join(", ");
+		return "ALL_TOOLS: " + allTools.length + " tools (first " + limit + "): " + names +
+			"\\nUse searchTools(query) to find tools and describeTool(name) for details.";
+	}
 
 	// Reading a member that does not exist throws an error that names the close matches, instead of
 	// a later "not a function". \`in\` checks still work.
@@ -364,7 +384,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	function text(value) {
 		let rendered;
 		try {
-			rendered = outputText(value);
+			rendered = outputText(summarizeToolCatalog(value));
 		} catch (error) {
 			throw new TypeErrorCtor(error instanceof ErrorCtor ? error.message : String(error));
 		}
@@ -382,9 +402,9 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 		}
 		if (typeof value.type !== "string") throw new TypeErrorCtor(${JSON.stringify(IMAGE_HELPER_EXPECTS)});
 		if (value.type !== "image") {
-			throw new TypeErrorCtor('image only accepts MCP image blocks, got "' + value.type + '"');
+			throw new TypeErrorCtor('image only accepts image blocks, got "' + value.type + '"');
 		}
-		if (typeof value.data !== "string" || value.data === "") throw new TypeErrorCtor("image expected MCP image data");
+		if (typeof value.data !== "string" || value.data === "") throw new TypeErrorCtor("image expected image block data");
 		if (value.data.toLowerCase().startsWith("data:")) return value.data;
 		return "data:;base64," + value.data;
 	}
@@ -441,7 +461,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const console = {};
 	for (const level of ["log", "info", "warn", "error", "debug"]) {
 		console[level] = (...args) => {
-			output("text", args.map(format).join(" "));
+			output("console", args.map((value) => format(summarizeToolCatalog(value))).join(" "));
 		};
 	}
 	Object.freeze(console);
@@ -454,12 +474,23 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	Object.defineProperty(globalThis, "exit", { value: exit, enumerable: true });
 
 	return {
-		settle(id, ok, payload) {
+		settle(id, ok, payload, propertiesJson, errorName) {
 			const entry = pending.get(id);
 			if (!entry) return;
 			pending.delete(id);
 			if (!ok) {
-				entry.reject(new ErrorCtor(payload));
+				const error = new ErrorCtor(payload);
+				if (errorName !== undefined && errorName !== error.name) {
+					Object.defineProperty(error, "name", { value: errorName, writable: true, configurable: true });
+				}
+				if (propertiesJson !== undefined) {
+					const properties = parse(propertiesJson);
+					for (const key of Object.keys(properties)) {
+						if (key === "name" || key === "message" || key === "stack") continue;
+						Object.defineProperty(error, key, { value: properties[key], writable: true, enumerable: true, configurable: true });
+					}
+				}
+				entry.reject(error);
 				return;
 			}
 			let value;
@@ -484,7 +515,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 				(value) => {
 					let json;
 					try {
-						json = serialize(value);
+						json = serialize(summarizeToolCatalog(value));
 					} catch (error) {
 						done(false, describeError(error));
 						return;

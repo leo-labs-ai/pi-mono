@@ -21,7 +21,8 @@ name: Upstream Sync
 #
 # Secrets:
 #   - UPSTREAM_SYNC_TOKEN (optional): fine-grained PAT with contents:write +
-#     pull-requests:write. Falls back to GITHUB_TOKEN when absent.
+#     pull-requests:write. Falls back to GITHUB_TOKEN when absent or when the
+#     token cannot push to this repo (#637).
 #
 # Labels expected on the repo (create if missing):
 #   gh label create upstream-sync   --color 0075ca --description "Automated upstream sync PR"
@@ -58,7 +59,33 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          # The push credential is chosen in the next step, so do not persist one here.
+          persist-credentials: false
+
+      # UPSTREAM_SYNC_TOKEN is a personal token. It stops working when its owner loses
+      # write access (e.g. after the repo moved orgs, #637). Probe it first and fall back
+      # to GITHUB_TOKEN, which this workflow grants contents:write + pull-requests:write.
+      # A push dry-run asks the remote for write access without changing anything.
+      - name: Select push credential
+        id: cred
+        env:
+          SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+          DEFAULT_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REPO_URL="github.com/${GITHUB_REPOSITORY}.git"
+          TOKEN="${DEFAULT_TOKEN}"
+          USE_SYNC_TOKEN=false
+          if [ -n "${SYNC_TOKEN}" ]; then
+            if GIT_TERMINAL_PROMPT=0 git -c credential.helper= push --dry-run --quiet "https://x-access-token:${SYNC_TOKEN}@${REPO_URL}" "HEAD:refs/heads/sync/credential-probe" >/dev/null 2>&1; then
+              TOKEN="${SYNC_TOKEN}"
+              USE_SYNC_TOKEN=true
+            else
+              echo "::warning::UPSTREAM_SYNC_TOKEN cannot push to ${GITHUB_REPOSITORY}; using GITHUB_TOKEN. Sync PRs opened with GITHUB_TOKEN do not start CI runs. Rotate the secret to restore that."
+            fi
+          fi
+          git remote set-url origin "https://x-access-token:${TOKEN}@${REPO_URL}"
+          echo "use_sync_token=${USE_SYNC_TOKEN}" >> "$GITHUB_OUTPUT"
 
       - name: Add upstream remote and fetch
         run: |
@@ -81,7 +108,7 @@ jobs:
 
       # Dry-run: report diff summary and exit cleanly without touching the remote.
       - name: Dry-run report
-        if: steps.check.outputs.skip != 'true' && inputs.dry_run == 'true'
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run == true
         run: |
           BEHIND="${{ steps.check.outputs.behind }}"
           echo "::notice::DRY RUN — would open/refresh sync PR for ${BEHIND} upstream commit(s)."
@@ -95,9 +122,9 @@ jobs:
           echo "Dry run complete. No branches pushed, no PRs opened."
 
       - name: Clean up stale sync branches
-        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.cred.outputs.use_sync_token == 'true' && secrets.UPSTREAM_SYNC_TOKEN || github.token }}
         run: |
           set -euo pipefail
 
@@ -120,13 +147,13 @@ jobs:
             done
 
       - name: Configure git author
-        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
       - name: Create sync branch and attempt merge
-        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != true
         id: merge
         run: |
           set -euo pipefail
@@ -192,15 +219,16 @@ jobs:
           git push origin "${BRANCH}" --force-with-lease
 
       - name: Open or update PR
-        if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true'
+        if: steps.check.outputs.skip != 'true' && inputs.dry_run != true
         env:
-          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.cred.outputs.use_sync_token == 'true' && secrets.UPSTREAM_SYNC_TOKEN || github.token }}
           BRANCH: ${{ steps.merge.outputs.branch }}
           DRAFT: ${{ steps.merge.outputs.draft }}
           CONFLICTS: ${{ steps.merge.outputs.conflicts }}
           BEHIND: ${{ steps.check.outputs.behind }}
           COMMIT_LOG: ${{ steps.merge.outputs.commit_log }}
           DIFFSTAT: ${{ steps.merge.outputs.diffstat }}
+          USE_SYNC_TOKEN: ${{ steps.cred.outputs.use_sync_token }}
         run: |
           set -e
 
@@ -265,14 +293,24 @@ jobs:
           else
             DRAFT_JSON=false
             [ "${DRAFT}" = "true" ] && DRAFT_JSON=true
-            PR_JSON=$(gh api \
+            PR_ERROR="${RUNNER_TEMP}/sync-pr-error.txt"
+            if ! PR_JSON=$(gh api \
               --method POST \
               "repos/${GITHUB_REPOSITORY}/pulls" \
               -f base="${FORK_BRANCH}" \
               -f head="${BRANCH}" \
               -f title="${TITLE}" \
               -f body="${BODY}" \
-              -F draft="${DRAFT_JSON}")
+              -F draft="${DRAFT_JSON}" 2>"${PR_ERROR}"); then
+              cat "${PR_ERROR}" >&2
+              # GITHUB_TOKEN may not open pull requests unless the repo setting allows it.
+              # The sync branch is already pushed, so report that instead of failing daily.
+              if [ "${USE_SYNC_TOKEN}" != "true" ] && grep -q "not permitted to create or approve pull requests" "${PR_ERROR}"; then
+                echo "::warning::Pushed ${BRANCH}, but GITHUB_TOKEN may not open pull requests here. Open it by hand: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${FORK_BRANCH}...${BRANCH} . Rotate UPSTREAM_SYNC_TOKEN, or allow GitHub Actions to create pull requests, to restore automatic sync PRs."
+                exit 0
+              fi
+              exit 1
+            fi
             PR_URL=$(echo "${PR_JSON}" | jq -r '.html_url')
             PR_NUM=$(echo "${PR_JSON}" | jq -r '.number')
             echo "::notice::Opened ${PR_URL}"
@@ -291,7 +329,7 @@ jobs:
       # Uncomment and wire WARDEN_ANTHROPIC_API_KEY when runner is ready.
       #
       # - name: Warden review
-      #   if: steps.check.outputs.skip != 'true' && inputs.dry_run != 'true' && steps.merge.outputs.draft != 'true'
+      #   if: steps.check.outputs.skip != 'true' && inputs.dry_run != true && steps.merge.outputs.draft != 'true'
       #   env:
       #     ANTHROPIC_API_KEY: ${{ secrets.WARDEN_ANTHROPIC_API_KEY }}
       #     BRANCH: ${{ steps.merge.outputs.branch }}

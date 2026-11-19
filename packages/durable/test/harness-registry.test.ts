@@ -1,4 +1,4 @@
-import { Type } from "@leo-labs-ai/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
 import {
 	type AgentState,
 	CompactionTask,
@@ -25,8 +25,8 @@ function tool(name: string, extra: Partial<AppTool> = {}): AppTool {
 	return {
 		name,
 		description: `${name} tool`,
-		parameters: Type.Object({}),
-		execute: async () => ({ content: [] }),
+		parameters: obj({}),
+		execute: async () => ({ output: [] }),
 		...extra,
 	};
 }
@@ -142,6 +142,7 @@ describe("settings", () => {
 		expect(resolveSettings({ progress: { partialIntervalMs: undefined, outputIntervalMs: 250 } }).progress).toEqual({
 			partialIntervalMs: 100,
 			outputIntervalMs: 250,
+			persistWithinMs: 1000,
 		});
 	});
 });
@@ -285,8 +286,10 @@ describe("agent resolution", () => {
 			defineExtension<AppTool>({ name: "a", hooks: [hook(ToolTask, first), hook(GenerationTask, onYield)] }),
 		);
 		local.install(defineExtension<AppTool>({ name: "b", hooks: [hook(ToolTask, second)] }));
-		expect(agentHooks(resolve(undefined, local.snapshot()), "pi.tool")).toEqual([first, second]);
-		expect(agentHooks(resolve({ extensions: ["b", "a"] }, local.snapshot()), "pi.tool")).toEqual([second, first]);
+		const a = { extension: "a", handlers: first };
+		const b = { extension: "b", handlers: second };
+		expect(agentHooks(resolve(undefined, local.snapshot()), "pi.tool")).toEqual([a, b]);
+		expect(agentHooks(resolve({ extensions: ["b", "a"] }, local.snapshot()), "pi.tool")).toEqual([b, a]);
 		expect(agentHooks(resolve({ extensions: ["b"] }, local.snapshot()), "pi.generation")).toEqual([]);
 
 		const defaults = resolve(undefined, local.snapshot());

@@ -1,4 +1,5 @@
-import { type SystemMessage, type Tool, Type } from "@leo-labs-ai/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
+import type { SystemMessage, Tool } from "@leo-labs-ai/pi-ai";
 import { getCurrentTools, toToolDeclaration } from "@leo-labs-ai/pi-ai/utils/transcript";
 import {
 	type Conversation,
@@ -62,7 +63,7 @@ function section(key: string, render: PromptSection<ToolRegistration>["render"],
 
 const input: PromptInput<ToolRegistration> = {
 	conversationId: 1 as never,
-	agent: { thinkingLevel: "off", extensions: [], tools: [], sections: [] },
+	agent: { thinkingLevel: "off", extensions: [], tools: [], callable: [], deferred: [], sections: [] },
 	env: undefined,
 	shown: {},
 	read: { snapshot: async () => undefined, snapshotAsOf: async () => undefined },
@@ -207,7 +208,7 @@ describe("tool loadout preparation", () => {
 	const declaration = (name: string, description = name): Tool => ({
 		name,
 		description,
-		parameters: Type.Object({}),
+		parameters: obj({}),
 	});
 
 	/** Plan tools only, append the plan, check that replay offers `tools` in order, and return each message's changes. */

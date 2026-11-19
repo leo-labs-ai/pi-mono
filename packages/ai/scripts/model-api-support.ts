@@ -52,9 +52,12 @@ export function unknownAdapterSkip(provider: string, modelId: string, npm: strin
 		modelId,
 		reason: "unknown-adapter",
 		npm,
-		message: `${provider}/${modelId}: unknown npm adapter ${npm}. Map it in generate-models.ts (OpenCode loop) if pi can serve it.`,
+		message: `${provider}/${modelId}: unknown npm adapter ${npm}. Map it in catalog/providers/opencode.ts (opencodeApi) if pi can serve it.`,
 	};
 }
+
+/** Upstream entries the generator skipped because pi cannot serve their API. */
+export const skippedModels: SkippedModel[] = [];
 
 /** Return a skip record when the resolved API is not registered by the provider. */
 export function unsupportedApiSkip(provider: string, modelId: string, api: string, npm?: string): SkippedModel | undefined {

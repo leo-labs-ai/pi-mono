@@ -1,24 +1,43 @@
-import type { Context } from "@earendil-works/chord";
-import { type Static, Type } from "typebox";
+import type { Context } from "@earendil-works/chord/context";
+import { bool, num, obj, opt, type Static, str } from "@earendil-works/pi-schema";
 import { defineTool } from "../harness/define.ts";
-import type { ToolExecutionApi, ToolRegistration } from "../harness/types.ts";
+import type { ToolExecutionApi, ToolExecutionResult, ToolRegistration } from "../harness/types.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "../truncate.ts";
 import { requireEnv } from "./env.ts";
 
 const MAX_TIMEOUT_SECONDS = 2_147_483_647 / 1000;
 
-const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
-});
+// Open objects, as the tools accepted extra arguments when their schemas were TypeBox's.
+const bashSchema = obj(
+	{
+		command: str({ description: "Bash command to execute" }),
+		timeout: opt(num({ description: "Timeout in seconds (optional, no default timeout)" })),
+	},
+	{ open: true },
+);
 
-const powershellSchema = Type.Object({
-	command: Type.String({ description: "PowerShell command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
-});
+const powershellSchema = obj(
+	{
+		command: str({ description: "PowerShell command to execute" }),
+		timeout: opt(num({ description: "Timeout in seconds (optional, no default timeout)" })),
+	},
+	{ open: true },
+);
+
+/** What a program that calls `bash` or `powershell` receives. */
+const shellStructuredOutputSchema = obj(
+	{
+		output: str({ description: "Combined stdout and stderr: the retained tail, as the model sees it" }),
+		truncated: bool({ description: "Whether earlier output was dropped" }),
+		fullOutputPath: opt(str({ description: "File with the complete output, when it was spilled" })),
+		exitCode: num(),
+	},
+	{ open: true },
+);
 
 export type BashToolInput = Static<typeof bashSchema>;
 export type PowerShellToolInput = Static<typeof powershellSchema>;
+export type ShellStructuredOutput = Static<typeof shellStructuredOutputSchema>;
 
 /** A command about to run, which `prepare` may change: the script, its working directory and environment. */
 export interface BashExecution {
@@ -72,7 +91,8 @@ async function prepareExecution(
 
 /**
  * Run each command form in turn until one starts, streaming output to `api.output()` within the retained window, and
- * turn the result into the tool's outcome: a spill diagnostic, and a thrown error for a failure or a nonzero exit.
+ * turn the result into the tool's result: a spill diagnostic, an error result for a nonzero exit, and a thrown error for
+ * a failure such as a timeout. The structured output repeats the retained output with the exit code.
  */
 async function runCommand(
 	commands: readonly (string | readonly string[])[],
@@ -80,7 +100,7 @@ async function runCommand(
 	timeout: number | undefined,
 	api: ToolExecutionApi,
 	context: Context,
-): Promise<void> {
+): Promise<ToolExecutionResult> {
 	const env = requireEnv(api);
 	let result: Awaited<ReturnType<typeof env.exec>> | undefined;
 	for (const command of commands) {
@@ -112,27 +132,37 @@ async function runCommand(
 		if (result.error.code === "aborted") throw new Error("Command aborted");
 		throw result.error;
 	}
-	if (result.value.exitCode !== 0) throw new Error(`Command exited with code ${result.value.exitCode}`);
+	const exitCode = result.value.exitCode;
+	const retained = api.retainedOutput();
+	const structuredOutput: ShellStructuredOutput = {
+		output: retained.text,
+		truncated: retained.truncated,
+		...(spillPath === undefined ? {} : { fullOutputPath: spillPath }),
+		exitCode,
+	};
+	if (exitCode === 0) return { structuredOutput };
+	const exited = { severity: "error", code: "exit_code", message: `Command exited with code ${exitCode}` } as const;
+	return { structuredOutput, isError: true, diagnostics: [exited] };
 }
 
 /**
  * Runs a command through the environment's shell. Its output streams to `api.output()`, where the Harness keeps the
  * tail within the default limits; the result content is that retained output. The retained window goes to the
  * environment, which may omit output outside it and report how much it omitted, so dropped counts stay exact. Output
- * beyond the limits is spilled to a file whose path is reported as a diagnostic. A nonzero exit or timeout throws, which
- * makes an error result that still carries the output and diagnostics.
+ * beyond the limits is spilled to a file whose path is reported as a diagnostic. A nonzero exit is an error result with
+ * the exit code; a timeout throws, which makes an error result that still carries the output and diagnostics.
  */
 export function createBashTool(options?: BashToolOptions): ToolRegistration<typeof bashSchema> {
 	return defineTool({
 		name: "bash",
 		description: `Execute a bash command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: bashSchema,
+		structuredOutputSchema: shellStructuredOutputSchema,
 		outputLimits: { retain: "tail" },
 		async execute(args, api, context) {
 			validateTimeout(args.timeout);
 			const execution = await prepareExecution(args.command, options, api, context);
-			await runCommand([execution.command], execution, args.timeout, api, context);
-			return {};
+			return runCommand([execution.command], execution, args.timeout, api, context);
 		},
 	});
 }
@@ -151,14 +181,14 @@ export function createPowerShellTool(options?: PowerShellToolOptions): ToolRegis
 		name: "powershell",
 		description: `Execute a PowerShell command in the current working directory. Returns combined stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		parameters: powershellSchema,
+		structuredOutputSchema: shellStructuredOutputSchema,
 		outputLimits: { retain: "tail" },
 		async execute(args, api, context) {
 			validateTimeout(args.timeout);
 			const execution = await prepareExecution(args.command, options, api, context);
 			const script = `${UTF8_OUTPUT}\n${execution.command}`;
 			const commands = programs.map((program) => [program, ...POWERSHELL_ARGS, script]);
-			await runCommand(commands, execution, args.timeout, api, context);
-			return {};
+			return runCommand(commands, execution, args.timeout, api, context);
 		},
 	});
 }

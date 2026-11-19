@@ -100,6 +100,9 @@ export function sshArguments(
 		...option("RemoteCommand=none"),
 		...option("PermitLocalCommand=no"),
 		...option("SendEnv=-*"),
+		// A host that is down or rebooting fails a connection attempt within 15 s, instead of the system's TCP timeout
+		// (about two minutes on Linux); keepalives end an established connection whose host stopped answering.
+		...option("ConnectTimeout=15"),
 		...option("ServerAliveInterval=15"),
 		...option(`StrictHostKeyChecking=${strictHostKeys ? "yes" : "accept-new"}`),
 		...option(`UserKnownHostsFile=${configPath("known hosts file", knownHostsFile)}`),
@@ -356,6 +359,15 @@ export async function detectPlatform(target: SshTarget): Promise<RemotePlatform>
 export function packagedDaemon(remote: Pick<RemotePlatform, "platform" | "arch">): string {
 	const name = `pi-env-${remote.platform}-${remote.arch}`;
 	return join(packageRoot, "bin", name, remote.platform === "windows" ? "pi-env.exe" : "pi-env");
+}
+
+/** The daemon this package ships for the machine it runs on, e.g. for terminals of local sessions. */
+export function localDaemon(): string {
+	const platform = process.platform === "win32" ? "windows" : process.platform;
+	if (platform !== "linux" && platform !== "android" && platform !== "darwin" && platform !== "windows") {
+		throw new Error(`No pi-env daemon for ${process.platform}`);
+	}
+	return packagedDaemon({ platform, arch: normalizeArch(process.arch) });
 }
 
 function quotePosix(text: string): string {

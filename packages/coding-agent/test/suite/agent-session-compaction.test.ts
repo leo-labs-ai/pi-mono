@@ -15,7 +15,7 @@ import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
-	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
+	_checkCompaction: (assistantMessage: AssistantMessage, phase?: "pre-prompt" | "post-run") => Promise<boolean>;
 	_runAutoCompaction: (
 		reason: "overflow" | "threshold",
 		willRetry: boolean,
@@ -337,11 +337,10 @@ describe("AgentSession compaction characterization", () => {
 		expect(harness.faux.state.callCount).toBe(1);
 	});
 
-	it("keeps the session's thinking level for compaction summaries, with no reserve-based output cap", async () => {
-		// Summaries used to force thinking "off" because thinking could use up the
-		// 0.8 × reserveTokens output cap and fail compaction with a length stop. The cap is gone
-		// (pi-ai applies the model limit, clamped to the context window), so the summary keeps the
-		// session's level and the same thinking settings as the turn that wrote the cached prefix.
+	it("runs compaction summaries without thinking, with no reserve-based output cap", async () => {
+		// Thinking counts inside max_tokens. At xhigh it exhausted the summary's output cap and
+		// compaction failed with a length stop, so summaries never enable thinking, whatever the
+		// session level. pi-ai applies the model limit, clamped to the context window.
 		const harness = await createHarness({
 			models: [{ id: "faux-reasoning", reasoning: true }],
 			settings: { compaction: { keepRecentTokens: 1 } },
@@ -360,7 +359,7 @@ describe("AgentSession compaction characterization", () => {
 
 		expect(requestOptions.length).toBeGreaterThan(0);
 		for (const options of requestOptions) {
-			expect(options?.reasoning).toBe("high");
+			expect(options?.reasoning).toBeUndefined();
 			expect(options?.maxTokens).toBeUndefined();
 		}
 	});
@@ -947,7 +946,7 @@ describe("AgentSession compaction characterization", () => {
 
 		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
-		await sessionInternals._checkCompaction(staleAssistant, false);
+		await sessionInternals._checkCompaction(staleAssistant, "pre-prompt");
 
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});

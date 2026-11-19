@@ -33,6 +33,45 @@ checking against the application's own known-hosts file under a fixed alias, no 
 connections or configured commands, and without forwarding the local locale. On Windows, detection and deployment go
 through PowerShell, and the daemon starts through the server's default shell (cmd.exe or PowerShell).
 
+`env.listFiles(path, options, context)` lists the tree below a directory in the daemon, as `fd --hidden --exclude .git`
+does without following symbolic links: files, directories and links as relative `/` paths, skipping what git ignores
+inside work trees, bounded by `maxEntries`, `maxBytes` and `timeoutMs` with a `truncated` flag, and stopped by aborting
+the context. It is Durable's optional `ExecutionEnv.listFiles`. A daemon released before it reports `not_supported`
+(`hello.features` lacks `listFiles`), and callers fall back to their own walk. For local sessions,
+`LocalExecutionEnv` is `NodeExecutionEnv` plus `listFiles` through a daemon on the same machine:
+
+```ts
+const local = new Connection({ command: [localDaemon()] }); // owned by the caller; close() it at shutdown
+const env = new LocalExecutionEnv({ cwd: "/home/me/project", connection: local });
+const listing = await env.listFiles(".", { exclude: ["node_modules"] }, context);
+// { ok: true, value: { entries: [{ path: "src", kind: "directory" }, { path: "src/a.ts", kind: "file" }], truncated } }
+```
+
+`nodePlatform(await connection.info())` gives the remote system in Node's names (`win32`, `darwin`, `x64`, `arm64`),
+as `process.platform` and `process.arch` spell them.
+
+`openTerminal(connection, options)` runs a program, by default the user's login shell, in a pseudo-terminal of the
+daemon: raw output, input, resizing and its exit code, for interactive terminals. `localDaemon()` is the daemon for this
+machine, for terminals without SSH (`new Connection({ command: [localDaemon()] })`). Terminals are not supported on
+Windows yet.
+
+`openProcess(connection, options)` runs a program with plain pipes, for programs that speak a protocol on stdin and
+stdout, such as an MCP server: `write()` and `closeStdin()` for its input, raw stdout and stderr bytes through
+`onStdout` and `onStderr`, `close()` to kill its process group, and `exited` for its exit code. When the program exits,
+what it started in its process group is killed too, so a wrapper such as `npx` leaves nothing running. Nothing is
+echoed, translated or merged, unlike a terminal; it works on every supported system. A daemon released before it fails
+the open with `not_supported`. `argv` runs as an `exec` argv command does: on Windows, batch files such as `npx.cmd` are
+refused, as Node refuses them without a shell, so callers start them through `cmd.exe`.
+
+```ts
+const server = await openProcess(connection, {
+	cwd: "/home/me/project",
+	argv: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."],
+	onStdout: (bytes) => parser.push(bytes),
+});
+server.write(`${JSON.stringify(initialize)}\n`);
+```
+
 Supported remote systems: Linux, macOS, Android (Termux) and Windows, on x86-64 and arm64. On Windows, string commands
 run through Git Bash as `NodeExecutionEnv` runs them there; argv commands run directly.
 

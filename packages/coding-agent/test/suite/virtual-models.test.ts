@@ -263,19 +263,15 @@ describe("AgentSession virtual models", () => {
 				: defaultRoute(request, ctx);
 		const { harness, dispatched } = await createRoutedHarness(route, {
 			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
-						compaction: { summary: "compacted", firstKeptEntryId, tokensBefore },
-					}));
-				},
-			],
 		});
 		let compactedBeforeSmall = false;
+		let resumedRequest = "";
 		harness.setResponses([
 			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
-			() => {
+			fauxAssistantMessage("## Original Request\nEcho the input"),
+			(context) => {
 				compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
+				resumedRequest = JSON.stringify(context.messages);
 				return fauxAssistantMessage("small answer");
 			},
 		]);
@@ -285,6 +281,13 @@ describe("AgentSession virtual models", () => {
 
 		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
 		expect(compactedBeforeSmall).toBe(true);
+		const [summary] = harness.sessionManager
+			.getBranch()
+			.flatMap((entry) => (entry.type === "compaction" ? [entry.summary] : []));
+		expect(summary).toContain("**Turn Context (split turn):**");
+		const end = "Continue it now from this summary and the messages after it; do not stop to report progress.";
+		expect(summary.endsWith(end)).toBe(true);
+		expect(resumedRequest).toContain(end);
 		expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
 	});
 
@@ -368,13 +371,13 @@ describe("AgentSession virtual models", () => {
 		expect(reasons()).toEqual(["user", "user"]);
 	});
 
-	it("routes compaction summaries before sizing them", async () => {
+	it("routes compaction summaries to the resolved model", async () => {
 		const summaries: string[] = [];
 		const { harness, reasons } = await createRoutedHarness(defaultRoute, {
 			settings: { compaction: { keepRecentTokens: 1 } },
 		});
 		const summary: FauxResponseStep = (_context, options, _state, model) => {
-			summaries.push(`${model.id}:${options?.reasoning ?? "off"}:${options?.maxTokens}`);
+			summaries.push(`${model.id}:${options?.reasoning ?? "off"}`);
 			return fauxAssistantMessage("summary");
 		};
 		// Compaction summarizes the history and the split turn prefix with one routed model.
@@ -391,8 +394,8 @@ describe("AgentSession virtual models", () => {
 
 		expect(result.summary).toContain("summary");
 		expect(reasons()).toEqual(["user", "user", "direct"]);
-		// The router's thinking level applies. Summaries set no output cap of their own, so pi-ai sizes
-		// them from the routed large model.
-		expect(summaries).toEqual(["large:low:undefined", "large:low:undefined"]);
+		// Summaries run without thinking, whatever level the router picked. The provider layer sizes
+		// output from the routed large model.
+		expect(summaries).toEqual(["large:off", "large:off"]);
 	});
 });

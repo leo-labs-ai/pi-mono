@@ -235,11 +235,11 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		const checkCompaction = (
 			session as unknown as {
-				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
+				_checkCompaction: (assistantMessage: AssistantMessage, phase?: "pre-prompt" | "post-run") => Promise<void>;
 			}
 		)._checkCompaction.bind(session);
 
-		await checkCompaction(staleAssistant, false);
+		await checkCompaction(staleAssistant, "pre-prompt");
 
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});

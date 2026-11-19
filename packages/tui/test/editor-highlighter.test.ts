@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { Editor, type EditorHighlightRange, type LayoutLine } from "../src/components/editor.ts";
+import { FAKE_CURSOR_END, FAKE_CURSOR_START } from "../src/tui.ts";
 import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
@@ -82,9 +83,12 @@ describe("Editor highlighter", () => {
 		editor.setHighlighter((text) => rangesFor(text, "/polish"));
 
 		const rendered = renderText(editor);
-		const cursorAt = rendered.indexOf("\x1b[7m");
+		const cursorAt = rendered.indexOf(FAKE_CURSOR_START);
 		assert.ok(cursorAt !== -1, "cursor rendered");
-		assert.ok(rendered.slice(cursorAt).startsWith("\x1b[7mt"), "cursor still covers 't', not a shifted byte");
+		assert.ok(
+			rendered.slice(cursorAt).startsWith(`${FAKE_CURSOR_START}t`),
+			"cursor still covers 't', not a shifted byte",
+		);
 	});
 
 	it("leaves the grapheme under the cursor unstyled so the cursor stays visible", () => {
@@ -95,11 +99,20 @@ describe("Editor highlighter", () => {
 		editor.setHighlighter((text) => rangesFor(text, "/polish"));
 
 		const rendered = renderText(editor);
-		const cursorAt = rendered.indexOf("\x1b[7m");
+		const cursorAt = rendered.indexOf(FAKE_CURSOR_START);
 		assert.ok(cursorAt !== -1, "cursor rendered");
-		assert.ok(rendered.slice(cursorAt).startsWith("\x1b[7mo"), "cursor grapheme is plain, not an escape byte");
+		assert.ok(
+			rendered.slice(cursorAt).startsWith(`${FAKE_CURSOR_START}o`),
+			"cursor grapheme is plain, not an escape byte",
+		);
 		assert.ok(rendered.includes(MARK_OPEN), "the rest of the token is still styled");
-		assert.equal(stripVTControlCharacters(rendered).includes("/polish"), true, "text is not duplicated or dropped");
+		assert.equal(
+			stripVTControlCharacters(rendered.replaceAll(FAKE_CURSOR_START, "").replaceAll(FAKE_CURSOR_END, "")).includes(
+				"/polish",
+			),
+			true,
+			"text is not duplicated or dropped",
+		);
 	});
 
 	it("ignores inverted and overlapping ranges", () => {

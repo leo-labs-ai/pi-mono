@@ -53,8 +53,9 @@ describe("truncated response recovery for custom-message turns", () => {
 		const session = active.session;
 		seedCompactableSession(active);
 		active.setResponses(
-			Array.from({ length: 8 }, () => () =>
-				session.isCompacting ? fauxAssistantMessage("summary") : lengthStopAfterBoundary(active),
+			Array.from(
+				{ length: 8 },
+				() => () => (session.isCompacting ? fauxAssistantMessage("summary") : lengthStopAfterBoundary(active)),
 			),
 		);
 

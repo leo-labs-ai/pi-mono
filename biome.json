@@ -34,6 +34,7 @@
 			"scripts/model-catalog-protocol.test.ts",
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
+			"packages/ai/catalog/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
 			"packages/agent/examples/**/*.ts",
 			"!**/node_modules/**/*",
@@ -43,7 +44,8 @@
 			"!**/models.generated.ts",
 			"!**/*.models.ts",
 			"!packages/mom/data/**/*",
-			"!!**/node_modules"
+			"!!**/node_modules",
+			"!!apps"
 		]
 	},
 	"plugins": ["./scripts/biome/model-type-comparison.grit"]

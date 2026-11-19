@@ -374,6 +374,27 @@ describe("findCutPoint", () => {
 		expect(customFitsBudget.turnStartIndex).toBe(-1);
 	});
 
+	it("distinguishes a split earlier turn from a split in the latest turn", () => {
+		const earlierResponse = createMessageEntry(createAssistantMessage("x".repeat(4000)));
+		const laterResponse = createMessageEntry(createAssistantMessage("ok"));
+		const entries = [
+			createMessageEntry(createUserMessage("earlier")),
+			earlierResponse,
+			createMessageEntry(createUserMessage("later")),
+			laterResponse,
+		];
+		expect(prepareCompaction(entries, { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 100 })).toMatchObject({
+			firstKeptEntryId: earlierResponse.id,
+			isSplitTurn: true,
+			splitsEarlierTurn: true,
+		});
+		expect(prepareCompaction(entries, { ...DEFAULT_COMPACTION_SETTINGS, keepRecentTokens: 1 })).toMatchObject({
+			firstKeptEntryId: laterResponse.id,
+			isSplitTurn: true,
+			splitsEarlierTurn: false,
+		});
+	});
+
 	// Regression test for #9740.
 	it("should fall back to the latest valid cut point before oversized trailing tool results", () => {
 		const oldUser = createMessageEntry(createUserMessage("old history"));
