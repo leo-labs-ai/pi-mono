@@ -64,7 +64,7 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 - **OpenAI** (including the Decisions classifier API)
 - **Ant Ling**
 - **Azure OpenAI (Responses)**
-- **OpenAI Codex (legacy)** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
+- **OpenAI Codex** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
 - **Radius** (API key or OAuth, with a dynamically refreshed gateway catalog)
 - **TypeSafe** (System One classifier API)
 - **DeepSeek**
@@ -103,15 +103,16 @@ Unified LLM API with provider collections, automatic auth resolution, token and 
 npm install @earendil-works/pi-ai
 ```
 
-TypeBox exports are re-exported from `@earendil-works/pi-ai`: `Type`, `Static`, and `TSchema`.
+Tool parameters are JSON Schema. The examples build them with `@earendil-works/pi-schema`, which also types the arguments (`npm install @earendil-works/pi-schema`); TypeBox schemas and plain JSON Schema objects work as well.
 
 ## Quick Start
 
 You build a `Models` collection of providers and stream through it. The quickest start registers every built-in provider; apps that care about bundle size register individual providers instead (see [Provider Factories](#provider-factories) and [Bundling and Tree Shaking](#bundling-and-tree-shaking)).
 
 ```typescript
-import { Type, type Context, type Tool } from '@earendil-works/pi-ai';
+import { type Context, type Tool } from '@earendil-works/pi-ai';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
+import { obj, opt, str } from '@earendil-works/pi-schema';
 
 // A Models collection with every built-in provider registered
 const models = builtinModels();
@@ -119,12 +120,12 @@ const models = builtinModels();
 // Sync lookup against the collection
 const model = models.getModel('openai', 'gpt-4o-mini')!;
 
-// Define tools with TypeBox schemas for type safety and validation
+// Define tools with JSON Schema; pi-schema's builders also type the arguments
 const tools: Tool[] = [{
   name: 'get_time',
   description: 'Get the current time',
-  parameters: Type.Object({
-    timezone: Type.Optional(Type.String({ description: 'Optional timezone (e.g., America/New_York)' }))
+  parameters: obj({
+    timezone: opt(str({ description: 'Optional timezone (e.g., America/New_York)' }))
   })
 }];
 
@@ -233,7 +234,11 @@ for (const block of response.content) {
 }
 ```
 
+`usage.cost.totalFromProvider` is `true` when `usage.cost.total` is the billed cost reported by the provider and `false` when it is estimated from the model's catalog rates. A missing value, as in sessions recorded before this field existed, also means `false`.
+
 Snippets in the rest of this README assume a `models` collection set up like this (with the relevant providers registered).
+
+`usage.cost.total` is the best available total cost. For OpenRouter chat responses, it uses the cost reported by OpenRouter, including both the OpenRouter charge and upstream inference cost for BYOK requests. When provider accounting is unavailable or invalid, it falls back to the model's catalog rates. The `input`, `output`, `cacheRead`, and `cacheWrite` cost components remain catalog estimates and may not sum to a provider-reported total.
 
 ## Providers and Models
 
@@ -519,6 +524,7 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 | Qwen Token Plan (existing catalog) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (Individual) | `QWEN_TOKEN_PLAN_API_KEY` |
 | Qwen Token Plan (China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
+| Qwen Token Plan (Individual, China) | `QWEN_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` |
@@ -528,40 +534,43 @@ Built-in providers resolve these env vars (Node.js; in browsers pass `apiKey` ex
 `qwen-token-plan-individual` and `qwen-token-plan` share the international endpoint and
 `QWEN_TOKEN_PLAN_API_KEY`. The Individual provider exposes only the models documented for Individual
 subscriptions, while the existing provider retains its broader catalog for backward compatibility.
+`qwen-token-plan-individual-cn` applies the same Individual catalog to the China endpoint and
+`QWEN_TOKEN_PLAN_CN_API_KEY`.
 Stored credentials remain provider-scoped, so save the key under the provider ID you register.
 
 Amazon Bedrock resolves ambient AWS credentials (`AWS_PROFILE`, access key pairs, `AWS_BEARER_TOKEN_BEDROCK`, ECS task roles, web identity tokens); its provider-owned login flow supports bearer tokens, AWS profiles, and the existing credential chain. Vertex AI resolves either an explicit key or gcloud Application Default Credentials plus project/location, with a provider-owned login flow for API keys, ADC, and service-account files.
 
 ## Tools
 
-Tools enable LLMs to interact with external systems. This library uses TypeBox schemas for type-safe tool definitions with automatic validation using TypeBox's built-in validator and value conversion utilities. TypeBox schemas can be serialized and deserialized as plain JSON, making them ideal for distributed systems.
+Tools enable LLMs to interact with external systems. A tool's `parameters` is a JSON Schema object: built with `@earendil-works/pi-schema`'s builders (which also type the arguments through its `Static`), with TypeBox, or written by hand. `validateToolCall()` and `validateToolArguments()` validate with pi-schema, coercing loosely typed arguments first (numeric strings, `"true"`, a single value for an array, `null` for an omitted optional property). Schemas are plain JSON, so they serialize with the rest of a context.
 
 ### Defining Tools
 
 ```typescript
-import { Type, type Tool, StringEnum } from '@earendil-works/pi-ai';
+import { type Tool, StringEnum } from '@earendil-works/pi-ai';
+import { arr, obj, str } from '@earendil-works/pi-schema';
 
-// Define tool parameters with TypeBox
+// Define tool parameters with pi-schema's builders
 const weatherTool: Tool = {
   name: 'get_weather',
   description: 'Get current weather for a location',
-  parameters: Type.Object({
-    location: Type.String({ description: 'City name or coordinates' }),
+  parameters: obj({
+    location: str({ description: 'City name or coordinates' }),
     units: StringEnum(['celsius', 'fahrenheit'], { default: 'celsius' })
   })
 };
 
-// Note: For Google API compatibility, use StringEnum helper instead of Type.Enum
-// Type.Enum generates anyOf/const patterns that Google doesn't support
+// Note: StringEnum gives { type: "string", enum: [...] }, which every provider accepts,
+// including Google's, which rejects anyOf/const patterns
 
 const bookMeetingTool: Tool = {
   name: 'book_meeting',
   description: 'Schedule a meeting',
-  parameters: Type.Object({
-    title: Type.String({ minLength: 1 }),
-    startTime: Type.String({ format: 'date-time' }),
-    endTime: Type.String({ format: 'date-time' }),
-    attendees: Type.Array(Type.String({ format: 'email' }), { minItems: 1 })
+  parameters: obj({
+    title: str({ minLength: 1 }),
+    startTime: str({ format: 'date-time' }),
+    endTime: str({ format: 'date-time' }),
+    attendees: arr(str({ format: 'email' }), { minItems: 1 })
   })
 };
 ```
@@ -574,10 +583,7 @@ Tools can opt in to provider-side constrained sampling. For JSON-schema tools, `
 const strictTool: Tool = {
   name: 'edit_file',
   description: 'Edit a file',
-  parameters: Type.Object({
-    path: Type.String(),
-    content: Type.String()
-  }, { additionalProperties: false }),
+  parameters: obj({ path: str(), content: str() }), // obj() is closed: additionalProperties: false
   constrainedSampling: { type: 'json_schema', strict: 'prefer' }
 };
 ```
@@ -588,9 +594,7 @@ Strict JSON-schema constrained sampling is supported for OpenAI, Anthropic, supp
 const patchTool: Tool = {
   name: 'apply_patch',
   description: 'Apply a patch',
-  parameters: Type.Object({
-    input: Type.String()
-  }, { additionalProperties: false }),
+  parameters: obj({ input: str() }),
   constrainedSampling: {
     type: 'grammar',
     variants: {
@@ -694,7 +698,7 @@ for await (const event of s) {
 
 ### Validating Tool Arguments
 
-When implementing your own tool execution loop, use `validateToolCall` to validate arguments before passing them to your tools:
+When implementing your own tool execution loop, use `validateToolCall` to validate arguments before passing them to your tools. It coerces loosely typed arguments with pi-schema (`compile(schema, { coerce: true }).parse()`), returns the coerced arguments, and throws an error listing pi-schema's errors (`path: message`) followed by the arguments it received:
 
 ```typescript
 import { validateToolCall, type Tool } from '@earendil-works/pi-ai';
@@ -890,7 +894,7 @@ console.log(model.output); // ['image'] or ['image', 'text']
 
 ## Classification
 
-Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, and OpenAI's GPT-6 Luna are available from these built-in providers:
+Classifier models consume structured JSON state, and optionally images, and answer one or more typed questions. They do not use chat or image-generation APIs. TypeSafe's Jev model, Cloudflare's Clef models, OpenAI's GPT-6 Luna, and Microsoft-Decision-1 are available from these built-in providers:
 
 | Provider | Model IDs | Auth |
 | --- | --- | --- |
@@ -900,6 +904,7 @@ Classifier models consume structured JSON state, and optionally images, and answ
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
+| `github-copilot` | `microsoft-decision-1` | `COPILOT_GITHUB_TOKEN` or GitHub Copilot OAuth |
 
 ```typescript
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
@@ -1436,6 +1441,8 @@ Built-in API implementations live under `./api/<api-id>`:
 
 Importing an implementation module loads its SDK. The `./api/<id>.lazy` wrappers (used by the provider factories) defer that load to the first request when the runtime or bundler supports dynamic import chunking. Legacy raw API subpaths from older releases (`./anthropic`, `./google`, `./mistral`, `./openai-completions`, ...) were removed; use `@earendil-works/pi-ai/api/<api-id>`.
 
+**Anthropic message threads:** with `sessionId` set and `cacheRetention` not `"none"`, Anthropic requests continue from the previous reply on the server (`message-threads-2026-08-12` beta) and send only the new messages. When anything earlier in the request changed, or the server can't continue, the full request is sent. Token counts and prompt caching are unchanged. On by default only for the `anthropic` provider on `api.anthropic.com`; set `compat.supportsMessageThreads` to change that, for example for gateways that forward the `thread` field. Set `disableContinuation: true` on requests that repeat an earlier one, such as cache warming. Call `cleanupSessionResources(sessionId)` when a session ends.
+
 ### OpenAI Compatibility Settings
 
 The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, NVIDIA NIM, Together AI, zAi, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field supports Responses-specific flags.
@@ -1455,6 +1462,7 @@ interface OpenAICompletionsCompat {
   maxTokensField?: 'max_completion_tokens' | 'max_tokens';  // Which field name to use (default: max_completion_tokens)
   requiresToolResultName?: boolean;  // Whether tool results require the `name` field (default: false)
   requiresAssistantAfterToolResult?: boolean; // Whether tool results must be followed by an assistant message (default: false)
+  requiresNonNullAssistantContent?: boolean; // Whether replayed assistant messages with no text must send "" instead of null content (default: false)
   requiresThinkingAsText?: boolean;  // Whether thinking blocks must be converted to text (default: false)
   requiresReasoningContentOnAssistantMessages?: boolean; // Whether all replayed assistant messages must include empty reasoning_content when reasoning is enabled (default: auto-detected for DeepSeek)
   thinkingFormat?: 'openai' | 'openrouter' | 'deepseek' | 'together' | 'baseten' | 'zai' | 'qwen' | 'chat-template' | 'qwen-chat-template' | 'string-thinking' | 'ant-ling'; // Format for reasoning param: 'openai' uses reasoning_effort, 'openrouter' uses reasoning: { effort }, 'deepseek' uses thinking: { type } plus reasoning_effort when supported, 'together' uses reasoning: { enabled } plus reasoning_effort when supported, 'baseten' uses configurable chat_template_args plus reasoning_effort when supported, 'zai' uses thinking: { type }, 'qwen' uses enable_thinking, 'chat-template' uses configurable chat_template_kwargs, 'qwen-chat-template' uses chat_template_kwargs.enable_thinking and preserve_thinking, 'string-thinking' uses top-level thinking, 'ant-ling' uses reasoning: { effort } only for mapped efforts (default: openai)
@@ -1723,8 +1731,8 @@ models.setProvider(openaiProvider());
 
 Rules:
 
-- `@earendil-works/pi-ai/models` exports the model runtime (`createModels`, `createProvider`, model helpers, and their types) without TypeBox, built-in catalogs, or SDK implementations. Other types can still use `import type` from the root.
-- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, real provider factories, or SDK implementations, but it eagerly imports TypeBox and schema validation. Unbundled Node scripts do not tree-shake its unused exports; prefer `./models`, `./providers/faux`, and specific `./utils/*` subpaths when those are all you need.
+- `@earendil-works/pi-ai/models` exports the model runtime (`createModels`, `createProvider`, model helpers, and their types) without schema validation, built-in catalogs, or SDK implementations. Other types can still use `import type` from the root.
+- `@earendil-works/pi-ai` is the core entrypoint and does not import built-in catalogs, real provider factories, or SDK implementations, but it eagerly imports schema validation (pi-schema). Unbundled Node scripts do not tree-shake its unused exports; prefer `./models`, `./providers/faux`, and specific `./utils/*` subpaths when those are all you need.
 - `@earendil-works/pi-ai/providers/<provider>` imports that provider's catalog and lazy API wrapper only.
 - `@earendil-works/pi-ai/providers/all` imports every built-in provider factory and all catalogs. Use it only when you want the full built-in set.
 - With code splitting, provider SDKs stay in lazy chunks and load on first request.
@@ -1764,6 +1772,18 @@ setBedrockProviderModule(bedrockProviderModule);
 
 That explicit override bundles the AWS SDK. Without it, Bedrock's opaque runtime import expects the package's Bedrock implementation file to be available at runtime.
 
+Node bundles that split at dynamic imports (esbuild `splitting: true`) can keep Bedrock and the OAuth login flows inside the bundle but lazy: register loaders with literal dynamic imports, which the bundler turns into chunks that load on first use:
+
+```typescript
+import { registerLazyBedrockProvider } from '@earendil-works/pi-ai/lazy-bedrock-provider';
+import { registerLazyOAuthFlows } from '@earendil-works/pi-ai/lazy-oauth';
+
+registerLazyBedrockProvider();
+registerLazyOAuthFlows();
+```
+
+Both modules are Node-only; never import them into a browser bundle.
+
 ### Provider-Scoped Environment Overrides
 
 Pass `env` in stream options to scope provider configuration to a request. Values in `env` are used before process environment variables for provider auth and configuration such as Cloudflare account IDs, Azure OpenAI settings, Vertex project/location, Bedrock settings, `PI_CACHE_RETENTION`, and `HTTP_PROXY`/`HTTPS_PROXY`.
@@ -1789,7 +1809,7 @@ Several providers support OAuth authentication instead of static API keys:
 
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI** (Sign in with ChatGPT: uses the ChatGPT subscription with the OpenAI API)
-- **OpenAI Codex (legacy)** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
+- **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **OpenRouter** (OAuth PKCE that mints a user-controlled API key)
 
@@ -1869,7 +1889,7 @@ Built-in login and refresh flows are private provider implementations. Use provi
 
 Provider notes:
 
-**OpenAI Codex (legacy)**: Superseded by Sign in with ChatGPT on the OpenAI provider. Requires a ChatGPT Plus or Pro subscription. Provides access to GPT-5.x Codex models with extended context windows and reasoning capabilities. The library automatically handles session-based prompt caching when `sessionId` is provided in stream options unless `cacheRetention` is `"none"`. You can set `transport` in stream options to `"sse"`, `"websocket"`, or `"auto"` for Codex Responses transport selection. When using WebSocket with a `sessionId` and cache retention enabled, connections are reused per session and expire after 5 minutes of inactivity. Call `cleanupSessionResources(sessionId)` when finished so the pooled connection does not keep the process alive.
+**OpenAI Codex**: Superseded by Sign in with ChatGPT on the OpenAI provider. Requires a ChatGPT Plus or Pro subscription. Provides access to GPT-5.x Codex models with extended context windows and reasoning capabilities. The library automatically handles session-based prompt caching when `sessionId` is provided in stream options unless `cacheRetention` is `"none"`. You can set `transport` in stream options to `"sse"`, `"websocket"`, or `"auto"` for Codex Responses transport selection. When using WebSocket with a `sessionId` and cache retention enabled, connections are reused per session and expire after 5 minutes of inactivity. Call `cleanupSessionResources(sessionId)` when finished so the pooled connection does not keep the process alive.
 
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
@@ -1925,19 +1945,19 @@ Create a new API implementation file (for example `bedrock-converse-stream.ts`) 
 
 Add a lazy wrapper `src/api/<api-id>.lazy.ts` (`<name>Api()` via `lazyApi()`) so providers can reference the implementation without importing its SDK. Add any root-level `export type` re-exports in `src/index.ts` that should remain available from `@earendil-works/pi-ai`.
 
-#### 3. Model Generation (`scripts/generate-models.ts`)
+#### 3. Model Catalog (`catalog/providers/<id>.ts`)
 
-- Add logic to fetch and parse models from the provider's source (e.g., models.dev API)
+- Add a provider definition and register it in `catalog/providers/index.ts`; see `catalog/README.md` for the build order and helpers
 - Map chat/tool-capable provider data to `Model`, image-generation data to `ImageModel`, and models.dev `type: "decision"` entries to `ClassifierModel`; hydration groups the ignored `src/providers/data/<id>.json` values by API while stable `src/providers/<id>.models.ts` wrappers derive exact model/API types directly from those JSON keys
 - Keep model ids unique within each provider and model type; emit separate entries when an upstream model supports multiple operations
-- Handle provider-specific quirks (pricing format, capability flags, model ID transformations)
+- Handle provider-specific quirks (pricing format, capability flags, model ID transformations) in the provider definition
 
 #### 4. Provider Factory (`src/providers/<id>.ts`)
 
 - `createProvider()` wiring catalog + auth + the lazy API wrapper
 - Auth: `envApiKeyAuth` for standard key providers, a custom `ApiKeyAuth` for ambient auth (AWS profiles, ADC), `lazyOAuth` where an OAuth flow exists
 - Register the factory in `src/providers/all.ts`
-- If it is a new API: register it in the builtin list in `src/compat.ts` and add the package subpath export in `package.json`
+- If it is a new API: register it in the builtin list in `src/compat.ts`; the `./api/*` subpath export in `package.json` already covers the new module
 
 #### 5. Tests (`test/`)
 
@@ -1948,7 +1968,6 @@ Create or update test files to cover the new provider:
 - `abort.test.ts` - Request cancellation
 - `empty.test.ts` - Empty message handling
 - `context-overflow.test.ts` - Context limit errors
-- `image-limits.test.ts` - Image support (if applicable)
 - `unicode-surrogate.test.ts` - Unicode handling
 - `tool-call-without-result.test.ts` - Orphaned tool calls
 - `image-tool-result.test.ts` - Images in tool results
@@ -1964,15 +1983,15 @@ For providers with non-standard auth (AWS, Google Vertex), create a utility like
 
 Update `src/core/model-resolver.ts`:
 
-- Add a default model ID for the provider in `DEFAULT_MODELS`
+- Add a default model ID for the provider in `defaultModelPerProvider`
 
 Update `src/cli/args.ts`:
 
 - Add environment variable documentation in the help text
 
-Update `README.md`:
+Update `docs/providers.md`:
 
-- Add the provider to the providers section with setup instructions
+- Add setup instructions, the environment variable, and the `auth.json` key
 
 #### 7. Documentation
 

@@ -20,7 +20,7 @@ import {
 import { homedir, constants as osConstants, tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Context } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
 import { StreamDecoder } from "./decode.ts";
 import {
 	type BinaryReader,
@@ -28,6 +28,7 @@ import {
 	type ExecutionEnv,
 	ExecutionError,
 	err,
+	type FileChange,
 	FileError,
 	type FileInfo,
 	type FileKind,
@@ -41,7 +42,6 @@ import {
 	type TextLine,
 	type TextLineReader,
 	toError,
-	type WatchChange,
 	type WatchTarget,
 } from "./index.ts";
 import { LineScanner } from "./line-scan.ts";
@@ -627,7 +627,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 	async watch(
 		targets: readonly WatchTarget[],
-		onChange: (change: WatchChange) => void,
+		onChange: (change: FileChange) => void,
 		context: Context,
 	): Promise<Result<FileWatcher, FileError>> {
 		const aborted = abortResult<FileWatcher>(context.abortSignal);
@@ -641,7 +641,7 @@ export class NodeExecutionEnv implements ExecutionEnv {
 			);
 			const afterOpenAbort = abortResult<FileWatcher>(context.abortSignal);
 			if (afterOpenAbort) {
-				await watcher.close(context);
+				await watcher.stop(context);
 				return afterOpenAbort;
 			}
 			return ok(watcher);

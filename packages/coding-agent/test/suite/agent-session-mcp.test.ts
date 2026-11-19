@@ -1,5 +1,5 @@
 import { readFileSync, rmSync } from "node:fs";
-import { type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@earendil-works/pi-mcp";
+import { createMcpToolName, type JsonRpcRequest, LATEST_PROTOCOL_VERSION } from "@earendil-works/pi-mcp";
 import { createInMemoryTransportPair } from "@earendil-works/pi-mcp/testing";
 import { fauxAssistantMessage, fauxToolCall } from "@leo-labs-ai/pi-ai";
 import type { SystemMessage, ToolResultMessage } from "@leo-labs-ai/pi-ai/compat";
@@ -10,7 +10,6 @@ import type { SessionManager } from "../../src/core/session-manager.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import type { McpExposure, McpServerEntry } from "../../src/extensions/mcp/config.ts";
 import { createMcpExtension, MCP_SERVERS_SECTION } from "../../src/extensions/mcp/index.ts";
-import { createMcpToolName } from "../../src/extensions/mcp/tools.ts";
 import { createToolSearchExtension } from "../../src/extensions/tool-search/index.ts";
 import { TOOL_SEARCH_DESCRIPTION } from "../../src/extensions/tool-search/tool.ts";
 import { createTestExtensionsResult, createTestResourceLoader } from "../utilities.ts";
@@ -1033,6 +1032,22 @@ return [...new Set(await Promise.all(names.map(async (name) => (await describeNa
 		await harness.session.prompt("go");
 		expect(getMessageText(toolResult(harness, "tool_search"))).toBe("No matching tools found.");
 	});
+
+	it.each(["+slack search docs", "search (+slack) docs", "search,+slack docs"])(
+		"does not activate an unrelated deferred tool for %s (#653)",
+		async (query) => {
+			const { harness } = await setup("deferred");
+			harness.setResponses([
+				fauxAssistantMessage([fauxToolCall("tool_search", { query, limit: 1 })], {
+					stopReason: "toolUse",
+				}),
+				fauxAssistantMessage("done"),
+			]);
+			await harness.session.prompt("go");
+			expect(getMessageText(toolResult(harness, "tool_search"))).toBe("No matching tools found.");
+			expect(harness.session.getActiveToolNames()).toEqual(["tool_search"]);
+		},
+	);
 });
 
 describe("AgentSession MCP servers registered by extensions", () => {

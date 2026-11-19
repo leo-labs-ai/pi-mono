@@ -1,12 +1,14 @@
-import { copyJson, type Draft } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import { copyJson } from "@earendil-works/chord/json";
 import { defineDoc } from "../documents.ts";
-import { documentRetention } from "../session/session.ts";
+import { documentRetention, persistWithin } from "../session/session.ts";
 import type { ConversationId, ConversationRecord, Tx } from "../types.ts";
 import type {
 	Agent,
 	AgentChange,
 	AgentState,
 	CompactionPolicy,
+	CompactionSettings,
 	ConversationRetryPolicy,
 	Extension,
 	HarnessSettings,
@@ -34,6 +36,7 @@ export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
 export const DEFAULT_PROGRESS_POLICY: ProgressPolicy = {
 	partialIntervalMs: 100,
 	outputIntervalMs: 100,
+	persistWithinMs: 1_000,
 };
 
 /** The reserved section key of the agent's `instructions`. */
@@ -56,7 +59,7 @@ const DEFAULT_CONTEXT_RETENTION_MS = 600_000;
 /** Default `settings.restartLimit`. */
 export const DEFAULT_RESTART_LIMIT = 5;
 
-/** A restart limit as given when it is a number of restarts, `1` or more, rounded down (`Infinity` never parks); else the default. */
+/** A restart limit as given when it is a number of restarts, `1` or more, rounded down (`Infinity`: no task ends for restarts); else the default. */
 function restartLimit(limit: number | undefined): number {
 	return typeof limit === "number" && limit >= 1 ? Math.floor(limit) : DEFAULT_RESTART_LIMIT;
 }
@@ -73,6 +76,7 @@ export function resolveSettings(settings: HarnessSettings | undefined): Settings
 		progress: {
 			partialIntervalMs: settings?.progress?.partialIntervalMs ?? DEFAULT_PROGRESS_POLICY.partialIntervalMs,
 			outputIntervalMs: settings?.progress?.outputIntervalMs ?? DEFAULT_PROGRESS_POLICY.outputIntervalMs,
+			persistWithinMs: persistWithin(settings?.progress?.persistWithinMs),
 		},
 		toolExecution: settings?.toolExecution ?? "parallel",
 		steeringMode: settings?.steeringMode ?? "one-at-a-time",
@@ -156,6 +160,37 @@ function applyChange(state: Draft<AgentState>, change: AgentChange): void {
 	);
 	set("instructions", change.instructions);
 	set("cwd", change.cwd);
+	const maxTurns = change.maxTurns;
+	if (maxTurns !== undefined && maxTurns !== null && !(Number.isSafeInteger(maxTurns) && maxTurns >= 1)) {
+		throw new RangeError(`maxTurns must be an integer 1 or more, got ${String(maxTurns)}`);
+	}
+	set("maxTurns", maxTurns);
+	const compaction = change.compaction;
+	set("compaction", compaction === undefined || compaction === null ? compaction : compactionSettings(compaction));
+}
+
+/** A stored copy of a conversation's compaction settings, without undefined fields. */
+function compactionSettings(settings: CompactionSettings): CompactionSettings {
+	const { modelOverrides, ...policy } = settings;
+	if (modelOverrides === undefined) return compactionFields(policy);
+	const overrides = Object.entries(modelOverrides).map(([key, override]) => [key, compactionFields(override)]);
+	return { ...compactionFields(policy), modelOverrides: Object.fromEntries(overrides) };
+}
+
+const TOKEN_FIELDS = ["reserveTokens", "keepRecentTokens", "backgroundTokens"] as const;
+
+/** The set fields of `policy`; throws a `RangeError` for a token count that is not an integer `0` or more. */
+function compactionFields(policy: Partial<CompactionPolicy>): Partial<CompactionPolicy> {
+	const fields: Partial<CompactionPolicy> = policy.enabled === undefined ? {} : { enabled: policy.enabled };
+	for (const key of TOKEN_FIELDS) {
+		const value = policy[key];
+		if (value === undefined) continue;
+		if (!(Number.isSafeInteger(value) && value >= 0)) {
+			throw new RangeError(`compaction.${key} must be an integer 0 or more, got ${String(value)}`);
+		}
+		fields[key] = value;
+	}
+	return fields;
 }
 
 function isList<T>(value: readonly T[] | object): value is readonly T[] {
@@ -279,6 +314,8 @@ export function resolveAgent<Tool extends ToolRegistration>(
 		sections: agentSections,
 		...(instructions === undefined ? {} : { instructions }),
 		...(state?.cwd === undefined ? {} : { cwd: state.cwd }),
+		...(state?.maxTurns === undefined ? {} : { maxTurns: state.maxTurns }),
+		...(state?.compaction === undefined ? {} : { compaction: state.compaction }),
 	};
 	return agent;
 }

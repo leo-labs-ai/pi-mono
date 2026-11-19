@@ -129,6 +129,18 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
+		// #11901
+		it("prints non-finite numbers in console output and thrown values like text()", async () => {
+			const sandbox = createSandbox();
+			const logged = await sandbox.execute('console.log("avg", 0 / 0, 1 / 0, -1 / 0, { a: 1 }); text(0 / 0);');
+			expect(logged.output).toEqual([
+				{ type: "text", text: 'avg NaN Infinity -Infinity {"a":1}', console: true },
+				{ type: "text", text: "NaN" },
+			]);
+			const thrown = await sandbox.execute("throw NaN");
+			expect(thrown).toMatchObject({ ok: false, error: { kind: "script", message: "NaN" } });
+		});
+
 		it("rejects invalid text() and image() arguments", async () => {
 			const sandbox = createSandbox();
 			const result = await sandbox.execute(`
@@ -338,6 +350,61 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			});
 		});
 
+		describe("ALL_TOOLS output", () => {
+			const entries = Array.from({ length: 500 }, (_, i) => ({ name: `tool_${i}`, description: `Tool ${i}` }));
+			const catalogTools = entries.map((entry) => ({ ...entry, execute: () => null }));
+
+			it("summarizes a large catalog when emitted directly or through an alias", async () => {
+				const sandbox = createSandbox(catalogTools);
+				const result = await sandbox.execute(`
+					const catalog = ALL_TOOLS;
+					text(ALL_TOOLS);
+					text(catalog);
+					console.log(catalog);
+					return ALL_TOOLS;
+				`);
+				const names = entries.slice(0, 20).map((entry) => entry.name);
+				const summary = `ALL_TOOLS: 500 tools (first 20): ${names.join(", ")}\nUse searchTools(query) to find tools and describeTool(name) for details.`;
+				expect(result).toMatchObject({
+					ok: true,
+					value: summary,
+					output: [
+						{ type: "text", text: summary },
+						{ type: "text", text: summary },
+						{ type: "text", text: summary, console: true },
+					],
+				});
+			});
+
+			it("leaves filtered and mapped copies of the catalog untouched", async () => {
+				const sandbox = createSandbox(catalogTools);
+				const result = await sandbox.execute(`
+					text(ALL_TOOLS.filter((tool) => tool.name === "tool_499"));
+					text(ALL_TOOLS.map((tool) => tool.name));
+					return ALL_TOOLS.filter(() => true);
+				`);
+				expect(result).toMatchObject({
+					ok: true,
+					value: entries,
+					output: [
+						{ type: "text", text: JSON.stringify(entries.slice(-1)) },
+						{ type: "text", text: JSON.stringify(entries.map((entry) => entry.name)) },
+					],
+				});
+			});
+
+			it("prints a small catalog in full", async () => {
+				const sandbox = createSandbox(catalogTools.slice(0, 2));
+				const result = await sandbox.execute("text(ALL_TOOLS); return ALL_TOOLS;");
+				const small = entries.slice(0, 2);
+				expect(result).toMatchObject({
+					ok: true,
+					value: small,
+					output: [{ type: "text", text: JSON.stringify(small) }],
+				});
+			});
+		});
+
 		it("passes undefined arguments and results through", async () => {
 			const sandbox = createSandbox([{ name: "noop", execute: (args) => args }]);
 			const result = await sandbox.execute("return [await tools.noop(), await tools.noop(null)]");
@@ -363,6 +430,55 @@ describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 			`);
 			expect(result).toMatchObject({ ok: true, value: { isError: true, message: "tool exploded" } });
 			expect(result.calls).toMatchObject([{ name: "fail", status: "error" }]);
+		});
+
+		it("preserves names and messages when serializing settled rejections", async () => {
+			const sandbox = createSandbox([
+				echo,
+				{
+					name: "fail",
+					execute: () => {
+						throw new RangeError("tool limit exceeded");
+					},
+				},
+			]);
+			const result = await sandbox.execute(`
+				const settled = await Promise.allSettled([
+					tools.echo(42),
+					tools.fail(),
+					Promise.reject(Object.assign(new TypeError("script rejected"), { code: 7 })),
+				]);
+				if (!(settled[1].reason instanceof Error)) throw new Error("missing Error instance");
+				text(settled);
+				text(JSON.stringify(settled));
+				return settled;
+			`);
+			const expected = [
+				{ status: "fulfilled", value: 42 },
+				{ status: "rejected", reason: { name: "RangeError", message: "tool limit exceeded" } },
+				{ status: "rejected", reason: { name: "TypeError", message: "script rejected", code: 7 } },
+			];
+			expect(result).toMatchObject({ ok: true, value: expected });
+			expect(result.output.map((item) => (item.type === "text" ? JSON.parse(item.text) : item))).toEqual([
+				expected,
+				expected,
+			]);
+		});
+
+		it("preserves serialized errors in successful tool arguments and results", async () => {
+			const sandbox = createSandbox([
+				{
+					name: "report",
+					execute: (args) => ({ args, error: new RangeError("tool error data") }),
+				},
+			]);
+			expect(await sandbox.execute('return await tools.report(new TypeError("script error data"))')).toMatchObject({
+				ok: true,
+				value: {
+					args: { name: "TypeError", message: "script error data" },
+					error: { name: "RangeError", message: "tool error data" },
+				},
+			});
 		});
 
 		it("rejects calls to unknown tools", async () => {

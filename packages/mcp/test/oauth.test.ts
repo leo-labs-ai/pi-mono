@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
+import { createConnection } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { McpClient, StreamableHttpTransport } from "../src/index.ts";
 import {
@@ -17,6 +19,7 @@ import {
 	OAuthIssuerMismatchError,
 	type OAuthTokens,
 	registerClient,
+	startAuthorization,
 } from "../src/oauth/index.ts";
 import { closeServers, listen, readBody } from "./helpers.ts";
 
@@ -450,6 +453,39 @@ describe("MCP OAuth", () => {
 		await expect(discoverAuthorizationServerMetadata(origin)).rejects.toBeInstanceOf(OAuthIssuerMismatchError);
 	});
 
+	it("rejects non-HTTP authorization endpoints, which the platform URL handler would launch", async () => {
+		const endpoints = ["file://attacker.example/share/x.exe", "search-ms:query=x", "ms-msdt:/id"];
+		let endpoint = "";
+		const origin = await listen(async (_request, response, serverOrigin) => {
+			response.setHeader("content-type", "application/json");
+			response.end(
+				JSON.stringify({
+					issuer: serverOrigin,
+					authorization_endpoint: endpoint,
+					token_endpoint: `${serverOrigin}/token`,
+					response_types_supported: ["code"],
+				}),
+			);
+		});
+		for (const value of endpoints) {
+			endpoint = value;
+			await expect(discoverAuthorizationServerMetadata(origin)).rejects.toThrow("Invalid authorization endpoint");
+			const metadata = {
+				issuer: origin,
+				authorization_endpoint: value,
+				token_endpoint: `${origin}/token`,
+				response_types_supported: ["code"],
+			};
+			await expect(
+				startAuthorization(origin, {
+					metadata,
+					clientInformation: { client_id: "client" },
+					redirectUrl: "http://127.0.0.1/callback",
+				}),
+			).rejects.toThrow("Invalid authorization endpoint");
+		}
+	});
+
 	// #10172
 	it("uses a configured authorization server metadata document as is", async () => {
 		const origin = await listen(async (request, response, serverOrigin) => {
@@ -585,6 +621,25 @@ describe("OAuthCallbackServer pages", () => {
 			expect((await pending).code).toBe("abc");
 		} finally {
 			await callback.close();
+		}
+	});
+
+	// #11311
+	it("closes while the browser keeps an unused connection open", async () => {
+		const callback = await OAuthCallbackServer.listen();
+		const url = new URL(callback.redirectUrl);
+		const spare = createConnection({ host: url.hostname, port: Number(url.port) });
+		try {
+			await once(spare, "connect");
+			const pending = callback.waitForCallback("s1");
+			const response = await fetch(`${callback.redirectUrl}?code=abc&state=s1`);
+			expect(await response.text()).toBe("Authorization complete. You may close this window.");
+			expect((await pending).code).toBe("abc");
+			const closed = callback.close().then(() => "closed");
+			const timeout = new Promise((resolve) => setTimeout(() => resolve("timed out"), 2000));
+			expect(await Promise.race([closed, timeout])).toBe("closed");
+		} finally {
+			spare.destroy();
 		}
 	});
 

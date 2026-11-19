@@ -7,15 +7,16 @@ import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { mcpNamespace } from "@earendil-works/pi-mcp";
 import type { Provider } from "@leo-labs-ai/pi-ai";
 import type { KeyId } from "@leo-labs-ai/pi-tui";
 import type { createJiti } from "jiti";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary, isBundledNode } from "../../config.ts";
-import { resolvePath } from "../../utils/paths.ts";
+import { canonicalizePath, pathsEqual, resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
-import { type McpServerConfig, McpServerRegistry, mcpNamespace, validateMcpServerConfig } from "../mcp-servers.ts";
+import { type McpServerConfig, McpServerRegistry, validateMcpServerConfig } from "../mcp-servers.ts";
 import { readPiManifest } from "../pi-manifest.ts";
 import { createSyntheticSourceInfo, getSyntheticPathSource, isSyntheticPath } from "../source-info.ts";
 import { time } from "../timings.ts";
@@ -28,7 +29,9 @@ import type {
 	ExtensionRuntime,
 	ExtensionVirtualModel,
 	LoadExtensionsResult,
+	MarkdownMessageType,
 	MarkdownTransformer,
+	MarkdownTransformerOptions,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
@@ -88,10 +91,11 @@ function getAliases(): Record<string, string> {
 	const piCodingAgentEntry = packageIndex;
 	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@leo-labs-ai/pi-agent-core");
 	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@leo-labs-ai/pi-tui");
-	// Extensions resolve the pi-ai root to the compat entrypoint (a strict
-	// superset of the core entrypoint): existing extensions using the old
-	// global API keep working at runtime until compat is removed.
-	const piAiCompatEntry = resolveWorkspaceOrImport("ai/dist/compat.js", "@leo-labs-ai/pi-ai/compat");
+	// Extensions resolve the pi-ai root to the extension view: the compat
+	// entrypoint (a strict superset of the core entrypoint) plus TypeBox's Type,
+	// Static and TSchema, so extensions using the old global API and pi-ai's
+	// former TypeBox re-exports keep working.
+	const piAiCompatEntry = path.resolve(__dirname, "pi-ai-extension-view.js");
 	const piAiModelsEntry = resolveWorkspaceOrImport("ai/dist/models.js", "@leo-labs-ai/pi-ai/models");
 	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@leo-labs-ai/pi-ai/oauth");
 	const piAiProvidersEntry = resolveWorkspaceOrImport("ai/dist/providers/all.js", "@leo-labs-ai/pi-ai/providers/all");
@@ -151,7 +155,7 @@ export function clearExtensionCache(): void {
 
 function useExtensionCacheCwd(cwd: string): ExtensionCacheToken {
 	const resolvedCwd = resolvePath(cwd);
-	if (extensionCacheCwd !== undefined && extensionCacheCwd !== resolvedCwd) {
+	if (extensionCacheCwd !== undefined && !pathsEqual(extensionCacheCwd, resolvedCwd)) {
 		clearExtensionCache();
 	}
 	extensionCacheCwd = resolvedCwd;
@@ -249,6 +253,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
  * Registration methods write to the extension object.
  * Action methods delegate to the shared runtime.
  */
+const DEFAULT_MARKDOWN_MESSAGE_TYPES: readonly MarkdownMessageType[] = ["user", "assistant", "assistant-thinking"];
+
 function createExtensionAPI(
 	extension: Extension,
 	runtime: ExtensionRuntime,
@@ -365,9 +371,12 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
-		registerMarkdownTransformer(transformer: MarkdownTransformer): void {
+		registerMarkdownTransformer(transformer: MarkdownTransformer, options?: MarkdownTransformerOptions): void {
 			assertActive();
-			extension.markdownTransformer = transformer;
+			extension.markdownTransformer = {
+				transformer,
+				messageTypes: new Set(options?.messageTypes ?? DEFAULT_MARKDOWN_MESSAGE_TYPES),
+			};
 		},
 
 		registerEntryRenderer<T>(customType: string, renderer: EntryRenderer<T>): void {
@@ -590,7 +599,7 @@ async function loadExtensionModule(extensionPath: string, cacheToken?: Extension
 		...resolutionOptions,
 	});
 
-	const module = await jiti.import(fs.realpathSync(extensionPath), { default: true });
+	const module = await jiti.import(canonicalizePath(extensionPath), { default: true });
 	const factory = module as ExtensionFactory;
 	if (typeof factory !== "function") {
 		return undefined;

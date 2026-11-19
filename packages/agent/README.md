@@ -38,6 +38,14 @@ agent.subscribe((event) => {
 await agent.prompt("Hello!");
 ```
 
+`streamFn` is stored on the public `agent.streamFunction` field. That field is the provider seam: `prompt()` and `continue()` read it when a run starts and call that function for every turn of the run. Assigning `agent.streamFunction` after construction is honoured on the next prompt.
+
+```typescript
+agent.streamFunction = (model, context, options) => models.streamSimple(model, context, options);
+
+await agent.prompt("Hello again");
+```
+
 ## Core Concepts
 
 ### AgentMessage vs LLM Message
@@ -227,6 +235,8 @@ const agent = new Agent({
 
   // Required stream function. Receives a TranscriptContext: the prompt and tools
   // are in the transcript's system messages, not on the context.
+  // Copied onto `agent.streamFunction`. Assigning that field after construction
+  // is what the next prompt() or continue() calls.
   streamFn: models.streamSimple.bind(models),
 
   // Session ID for provider caching
@@ -455,18 +465,20 @@ const agent = new Agent({
 
 ## Tools
 
-Define tools using `AgentTool`:
+Define tools using `AgentTool`. `parameters` is any JSON Schema object; built with `@earendil-works/pi-schema`'s builders, it also types `params` (other schemas give `unknown`, `AgentTool<any>` gives `any`):
 
 ```typescript
-import { Type } from "typebox";
+import { obj, str } from "@earendil-works/pi-schema";
 
-const readFileTool: AgentTool = {
+const readFileParameters = obj({
+  path: str({ description: "File path" }),
+});
+
+const readFileTool: AgentTool<typeof readFileParameters> = {
   name: "read_file",
   label: "Read File",  // For UI display
   description: "Read a file's contents",
-  parameters: Type.Object({
-    path: Type.String({ description: "File path" }),
-  }),
+  parameters: readFileParameters,
   // Override execution mode for this tool (optional).
   // "sequential" forces the entire batch to run one at a time.
   // "parallel" allows concurrent execution with other tool calls.

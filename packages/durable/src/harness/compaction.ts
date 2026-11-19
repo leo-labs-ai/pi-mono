@@ -1,4 +1,5 @@
-import type { Context, Draft } from "@earendil-works/chord";
+import type { Context } from "@earendil-works/chord/context";
+import type { Draft } from "@earendil-works/chord/delta";
 import type { AssistantMessage, Message, ModelThinkingLevel, SimpleStreamOptions } from "@leo-labs-ai/pi-ai";
 import { calculateContextTokens, estimateMessageTokens } from "@leo-labs-ai/pi-ai/utils/estimate";
 import { isRetryableAssistantError, retryDelayMs } from "@leo-labs-ai/pi-ai/utils/retry";
@@ -18,6 +19,8 @@ import { orderToolResults } from "./context.ts";
 import {
 	addCompactionStatus,
 	compactionStatus,
+	cutOffCount,
+	cutOffTooOften,
 	failCompactionStatus,
 	LiveDoc,
 	type LiveState,
@@ -30,6 +33,7 @@ import type {
 	CompactionPolicy,
 	CompactionReason,
 	CompactionResult,
+	CompactionSettings,
 	ContextView,
 	ConversationStreamOptions,
 	ModelRef,
@@ -115,13 +119,14 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 	initial: () => ({ phase: "select" }),
 	phases: {
 		select: async (task, runtime, context) => {
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			const { conversationId } = runtime;
 			const agent = await runtime.agent(context);
 			const settings = runtime.settings;
 			const ref = agent.model;
 			const model = ref === undefined ? undefined : runtime.models.getModel(ref.provider, ref.modelId);
 			if (ref === undefined || model === undefined) return failNoModel(runtime, ref, context);
-			const policy = compactionPolicy(settings, ref);
+			const policy = compactionPolicy(settings, ref, agent.compaction);
 			const view = await runtime.context(conversationId, context);
 			const cut = selectCut(view, policy.keepRecentTokens);
 			if (cut === undefined) return complete(runtime, context);
@@ -155,6 +160,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 			await runtime.commit(() => ({ status: "running", checkpoint: { phase: "summarize", ...request } }), context);
 		},
 		summarize: async (task, runtime, context) => {
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			const { phase: _, ...request } = task.state.checkpoint;
 			const { model: ref, thinkingLevel, streamOptions, maxTokens, tail, firstKept, attempt } = request;
 			const model = runtime.models.getModel(ref.provider, ref.modelId);
@@ -219,6 +225,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 		/** After the backoff's sleep; a run before `until` (an early wake, or a record of an earlier version) sleeps again. */
 		retry: async (task, runtime, context) => {
 			const { phase: _, until, ...request } = task.state.checkpoint;
+			if (cutOffTooOften(task, runtime)) return failCutOff(runtime, task, context);
 			if (until > runtime.now()) return runtime.sleepUntil(until, task.state.checkpoint, context);
 			const attempt = request.attempt + 1;
 			await runtime.commit(async (tx) => {
@@ -253,20 +260,37 @@ export async function createCompaction(
 		owner === undefined ? ({ kind: "conversation" } as const) : { kind: "task" as const, taskId: owner };
 	const background = owner === undefined && input.reason !== "manual";
 	const taskId = await tx.createTask(CompactionTask, input, { ownership, conversationId, background });
-	const status = { taskId, reason: input.reason, blocking: owner !== undefined, attempt: 1 };
+	const status = { taskId, trigger: input.reason, blocking: owner !== undefined, attempt: 1 };
 	addCompactionStatus(await tx.doc(LiveDoc, conversationId), status);
 	return taskId;
 }
 
-/** The compaction policy for `model`: its `modelOverrides` entry over the harness-wide policy, field by field. */
-export function compactionPolicy(settings: Settings, model: ModelRef): CompactionPolicy {
-	const { modelOverrides, ...policy } = settings.compaction;
-	const override = modelOverrides?.[`${model.provider}/${model.modelId}`];
+/**
+ * The compaction policy for `model` in a conversation, field by field: the conversation's `modelOverrides` entry, the
+ * harness's, the conversation's own fields, then the harness-wide policy. A model-specific value beats a general one,
+ * and the conversation beats the harness at the same level. The exception: the conversation's own `enabled: false` also
+ * beats the harness's model override, since turning compaction off for a conversation does not depend on the model.
+ */
+export function compactionPolicy(
+	settings: Settings,
+	model: ModelRef,
+	conversation: CompactionSettings | undefined,
+): CompactionPolicy {
+	const key = `${model.provider}/${model.modelId}`;
+	const { modelOverrides, ...harness } = settings.compaction;
+	const conversationModel = conversation?.modelOverrides?.[key];
+	const layers: readonly (Partial<CompactionPolicy> | undefined)[] = [
+		conversationModel,
+		modelOverrides?.[key],
+		conversation,
+	];
+	const field = <K extends keyof CompactionPolicy>(name: K): CompactionPolicy[K] =>
+		layers.find((layer) => layer?.[name] !== undefined)?.[name] ?? harness[name];
 	return {
-		enabled: override?.enabled ?? policy.enabled,
-		reserveTokens: override?.reserveTokens ?? policy.reserveTokens,
-		keepRecentTokens: override?.keepRecentTokens ?? policy.keepRecentTokens,
-		backgroundTokens: override?.backgroundTokens ?? policy.backgroundTokens,
+		enabled: conversationModel?.enabled ?? (conversation?.enabled === false ? false : field("enabled")),
+		reserveTokens: field("reserveTokens"),
+		keepRecentTokens: field("keepRecentTokens"),
+		backgroundTokens: field("backgroundTokens"),
 	};
 }
 
@@ -470,6 +494,18 @@ async function complete(runtime: Runtime, context: Context): Promise<void> {
 	await runtime.commit(async (tx) => {
 		removeCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId);
 		return { status: "terminal", outcome: { status: "completed", result: {} } };
+	}, context);
+}
+
+/** Fail a compaction cut off `settings.restartLimit` times in a row (spec §5.4) instead of running it again. */
+async function failCutOff(runtime: Runtime, task: { readonly restarts?: number }, context: Context): Promise<void> {
+	const message = `Compaction was interrupted ${cutOffCount(task)}`;
+	await runtime.commit(async (tx) => {
+		failCompactionStatus(await tx.doc(LiveDoc, runtime.conversationId), runtime.taskId, message);
+		return {
+			status: "terminal",
+			outcome: { status: "failed", error: { message, detail: { reason: "restart_limit" } } },
+		};
 	}, context);
 }
 

@@ -200,6 +200,7 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 				message.ok ? vm.true : vm.false,
 				message.payload === undefined ? vm.undefined : vm.newString(message.payload),
 				message.properties === undefined ? vm.undefined : vm.newString(message.properties),
+				message.errorName === undefined ? vm.undefined : vm.newString(message.errorName),
 			);
 		});
 		drain();

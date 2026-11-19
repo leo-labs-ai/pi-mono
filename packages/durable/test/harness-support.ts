@@ -1,3 +1,4 @@
+import { obj } from "@earendil-works/pi-schema";
 import type {
 	AssistantMessage,
 	Message,
@@ -7,7 +8,7 @@ import type {
 	ToolResultMessage,
 	UserMessage,
 } from "@leo-labs-ai/pi-ai";
-import { createModels, Type } from "@leo-labs-ai/pi-ai";
+import { createModels } from "@leo-labs-ai/pi-ai";
 import {
 	type AnyTask,
 	createRegistry,
@@ -26,7 +27,7 @@ import {
 import { context } from "./session-support.ts";
 
 export function tool(name: string, description = `${name} tool`): ToolRegistration {
-	return defineTool({ name, description, parameters: Type.Object({}), execute: async () => ({ output: [] }) });
+	return defineTool({ name, description, parameters: obj({}), execute: async () => ({ output: [] }) });
 }
 
 /** Open a Harness with a fresh registry holding the named tools. */
@@ -40,7 +41,11 @@ export async function openHarness(
 		registry.install(defineExtension({ name: "tools", tools: toolNames.map((name) => tool(name)) }));
 	const harness = await Harness.open(
 		storage,
-		{ models: createModels(), registry, ...(options.onReport === undefined ? {} : { onReport: options.onReport }) },
+		{
+			models: createModels(),
+			registry,
+			...(options.onReport === undefined ? {} : { onReport: (report) => options.onReport?.(report.error) }),
+		},
 		context,
 	);
 	return { harness, registry };

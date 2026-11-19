@@ -1,4 +1,4 @@
-import { Type } from "@leo-labs-ai/pi-ai";
+import { obj } from "@earendil-works/pi-schema";
 import {
 	type AgentState,
 	CompactionTask,
@@ -25,7 +25,7 @@ function tool(name: string, extra: Partial<AppTool> = {}): AppTool {
 	return {
 		name,
 		description: `${name} tool`,
-		parameters: Type.Object({}),
+		parameters: obj({}),
 		execute: async () => ({ output: [] }),
 		...extra,
 	};
@@ -142,6 +142,7 @@ describe("settings", () => {
 		expect(resolveSettings({ progress: { partialIntervalMs: undefined, outputIntervalMs: 250 } }).progress).toEqual({
 			partialIntervalMs: 100,
 			outputIntervalMs: 250,
+			persistWithinMs: 1000,
 		});
 	});
 });

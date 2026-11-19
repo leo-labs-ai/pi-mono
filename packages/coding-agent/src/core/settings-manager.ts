@@ -342,6 +342,12 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			initialErrors.push(toSettingsError("project", projectLoad.error, settingsPaths.project));
 		}
+		for (const warning of globalLoad.warnings) {
+			initialErrors.push(toSettingsError("global", warning, settingsPaths.global));
+		}
+		for (const warning of projectLoad.warnings) {
+			initialErrors.push(toSettingsError("project", warning, settingsPaths.project));
+		}
 
 		return new SettingsManager(
 			storage,
@@ -385,12 +391,28 @@ export class SettingsManager {
 		storage: SettingsStorage,
 		scope: SettingsScope,
 		projectTrusted = true,
-	): { settings: Settings; error: Error | null } {
+	): { settings: Settings; error: Error | null; warnings: Error[] } {
 		try {
-			return { settings: SettingsManager.loadFromStorage(storage, scope, projectTrusted), error: null };
+			const settings = SettingsManager.loadFromStorage(storage, scope, projectTrusted);
+			return { settings, error: null, warnings: SettingsManager.dropInvalidResourceLists(settings) };
 		} catch (error) {
-			return { settings: {}, error: error as Error };
+			return { settings: {}, error: error as Error, warnings: [] };
 		}
+	}
+
+	/**
+	 * Resource loading iterates `extensions`, `skills`, `prompts` and `themes`. A value that is not an array,
+	 * such as `"extensions": {}`, crashed startup with "entries is not iterable". Drop it and report it.
+	 */
+	private static dropInvalidResourceLists(settings: Settings): Error[] {
+		const warnings: Error[] = [];
+		const values = settings as Record<string, unknown>;
+		for (const key of ["extensions", "skills", "prompts", "themes"]) {
+			if (values[key] === undefined || Array.isArray(values[key])) continue;
+			delete values[key];
+			warnings.push(new Error(`"${key}" must be an array of paths or patterns; the value is ignored`));
+		}
+		return warnings;
 	}
 
 	/** Migrate old settings format to new format */
@@ -494,6 +516,7 @@ export class SettingsManager {
 		if (projectLoad.error) {
 			this.recordError("project", projectLoad.error);
 		}
+		for (const warning of projectLoad.warnings) this.recordError("project", warning);
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
 
@@ -507,6 +530,7 @@ export class SettingsManager {
 			this.globalSettingsLoadError = globalLoad.error;
 			this.recordError("global", globalLoad.error);
 		}
+		for (const warning of globalLoad.warnings) this.recordError("global", warning);
 
 		this.modifiedFields.clear();
 		this.modifiedNestedFields.clear();
@@ -521,6 +545,7 @@ export class SettingsManager {
 			this.projectSettingsLoadError = projectLoad.error;
 			this.recordError("project", projectLoad.error);
 		}
+		for (const warning of projectLoad.warnings) this.recordError("project", warning);
 
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 	}
@@ -684,6 +709,19 @@ export class SettingsManager {
 	setLastChangelogVersion(version: string): void {
 		this.globalSettings.lastChangelogVersion = version;
 		this.markModified("lastChangelogVersion");
+		this.save();
+	}
+
+	getExtensionChangelogVersion(key: string): string | undefined {
+		return this.settings.extensionChangelogVersions?.[key];
+	}
+
+	setExtensionChangelogVersion(key: string, version: string): void {
+		this.globalSettings.extensionChangelogVersions = {
+			...(this.globalSettings.extensionChangelogVersions ?? {}),
+			[key]: version,
+		};
+		this.markModified("extensionChangelogVersions", key);
 		this.save();
 	}
 

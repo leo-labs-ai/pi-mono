@@ -251,6 +251,31 @@ describe("SettingsManager", () => {
 			]);
 			expect(manager.drainErrors()).toEqual([]);
 		});
+
+		// leo-labs-ai/pi-mono#670: `"extensions": {}` crashed startup with "entries is not iterable".
+		it("should ignore and report resource lists that are not arrays", () => {
+			const globalSettingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				globalSettingsPath,
+				JSON.stringify({ theme: "dark", extensions: {}, prompts: "prompts", themes: ["themes"] }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getGlobalSettings().extensions).toBeUndefined();
+			expect(manager.getGlobalSettings().prompts).toBeUndefined();
+			expect(manager.getGlobalSettings().themes).toEqual(["themes"]);
+			expect(manager.getGlobalSettings().theme).toBe("dark");
+			const errors = manager.drainErrors();
+			expect(errors).toMatchObject([
+				{ scope: "global", path: globalSettingsPath },
+				{ scope: "global", path: globalSettingsPath },
+			]);
+			expect(errors.map((entry) => entry.error.message)).toEqual([
+				'"extensions" must be an array of paths or patterns; the value is ignored',
+				'"prompts" must be an array of paths or patterns; the value is ignored',
+			]);
+		});
 	});
 
 	describe("project trust", () => {
@@ -411,17 +436,17 @@ describe("SettingsManager", () => {
 	});
 
 	describe("cacheWarming", () => {
-		it("defaults to streaming and ignores project settings", () => {
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
-
-			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
-			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
-
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "idle" }));
+		it("defaults to idle and ignores project settings", () => {
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 
-			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ cacheWarming: "streaming" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "streaming" }));
 			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("streaming");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ cacheWarming: "bogus" }));
+			expect(SettingsManager.create(projectDir, agentDir).getCacheWarmingMode()).toBe("idle");
 		});
 
 		it("persists the mode globally", async () => {

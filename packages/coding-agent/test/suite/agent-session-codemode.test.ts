@@ -18,7 +18,11 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/core/extensions/types.ts";
 import type { CustomEntry } from "../../src/core/session-manager.ts";
-import { createToolDefinitionFromAgentTool } from "../../src/core/tools/tool-definition-wrapper.ts";
+import { createBashToolDefinition } from "../../src/core/tools/bash.ts";
+import {
+	createToolDefinitionFromAgentTool,
+	type TypeBoxAgentTool,
+} from "../../src/core/tools/tool-definition-wrapper.ts";
 import { joinAdjacentText, readCodemodeStore } from "../../src/extensions/codemode/execute.ts";
 import { createCodemodeExtension } from "../../src/extensions/codemode/index.ts";
 import {
@@ -33,7 +37,7 @@ const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
 
 const echoSchema = Type.Object({ text: Type.String({ description: "Text to echo" }) });
-const echoTool: AgentTool<typeof echoSchema> = {
+const echoTool: TypeBoxAgentTool<typeof echoSchema> = {
 	name: "echo",
 	label: "Echo",
 	description: "Echo text back.\n\nSecond paragraph.",
@@ -182,6 +186,93 @@ describe("AgentSession codemode tool", () => {
 		// Without codemode, tools keep their plain descriptions.
 		harness.session.setActiveToolsByName(["echo"]);
 		expect(description("echo")).toBe("Echo text back.\n\nSecond paragraph.");
+	});
+
+	// #11501
+	it("summarizes union and multi-line output types instead of inlining them", async () => {
+		const outputTool = (name: string, outputSchema: AgentTool["outputSchema"]): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema,
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const process = outputTool(
+			"process",
+			Type.Union([
+				Type.Object({
+					action: Type.Literal("start"),
+					process: Type.Object({ id: Type.String({ description: "Process id" }), pid: Type.Integer() }),
+				}),
+				Type.Object({
+					action: Type.Literal("list"),
+					processes: Type.Array(Type.Object({ id: Type.String() })),
+					truncated: Type.Optional(Type.Boolean()),
+				}),
+			]),
+		);
+		const entries = outputTool("entries", Type.Array(Type.Object({ id: Type.String(), size: Type.Integer() })));
+		const count = outputTool("count", Type.Number());
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [process, entries, count]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["process", "entries", "count", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("process")).toBe(
+			'process tool\n\nCodemode: `tools.process(args)` resolves to `{ action: "start", process } | { action: "list", processes, truncated? }`.',
+		);
+		expect(description("entries")).toBe(
+			'entries tool\n\nCodemode: `tools.entries(args)` resolves to a value; `await describeTool("entries")` shows its type.',
+		);
+		expect(description("count")).toBe("count tool\n\nCodemode: `tools.count(args)` resolves to `number`.");
+	});
+
+	it("summarizes output fields behind local schema references", async () => {
+		const outputTool = (name: string, outputSchema: Record<string, unknown>): AgentTool => ({
+			name,
+			label: name,
+			description: `${name} tool`,
+			parameters: Type.Object({}),
+			outputSchema: Type.Unsafe(outputSchema),
+			execute: async () => ({ content: [], details: {} }),
+		});
+		const report = outputTool("report", {
+			$ref: "#/$defs/Report",
+			$defs: {
+				Report: {
+					type: "object",
+					properties: { kind: { $ref: "#/$defs/Kind" }, summary: { $ref: "#/$defs/Summary" } },
+					required: ["kind", "summary"],
+				},
+				Kind: { const: "ledger" },
+				Summary: { type: "object", properties: { total: { type: "number" } }, required: ["total"] },
+			},
+		});
+		const result = outputTool("result", {
+			anyOf: [{ $ref: "#/$defs/Ok" }, { $ref: "#/$defs/Failed" }],
+			$defs: {
+				Ok: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+				Failed: { type: "object", properties: { error: { type: "string" } }, required: ["error"] },
+			},
+		});
+		const harness = await setup([
+			(pi: ExtensionAPI) => {
+				for (const tool of [report, result]) pi.registerTool(createToolDefinitionFromAgentTool(tool));
+			},
+		]);
+		harness.session.setActiveToolsByName(["report", "result", "codemode"]);
+		const description = (name: string) =>
+			harness.session.agent.state.tools.find((tool) => tool.name === name)?.description ?? "";
+		expect(description("report")).toBe(
+			'report tool\n\nCodemode: `tools.report(args)` resolves to `{ kind: "ledger", summary: { total } }`.',
+		);
+		expect(description("result")).toBe(
+			"result tool\n\nCodemode: `tools.result(args)` resolves to `{ value } | { error }`.",
+		);
 	});
 
 	// #10343
@@ -595,7 +686,7 @@ describe("codemode options and store", () => {
 		expect(large / small).toBeLessThan(12);
 	});
 
-	it("resolves bash calls to structured results, also for non-zero exit codes", async () => {
+	it("resolves small, empty, failing and large bash calls to structured results", async () => {
 		const harness = await createHarness({
 			initialActiveToolNames: ["codemode", "bash"],
 			extensionFactories: [createCodemodeExtension()],
@@ -603,10 +694,120 @@ describe("codemode options and store", () => {
 		harnesses.push(harness);
 		const result = await run(
 			harness,
-			'const r = await tools.bash({ command: "echo out; exit 3" });\ntext(JSON.stringify([r.output, r.exit_code, typeof r.wall_time_seconds]));',
+			`
+			const small = await tools.bash({ command: "printf small" });
+			const empty = await tools.bash({ command: ":" });
+			const failed = await tools.bash({ command: "printf out; exit 3" });
+			const medium = await tools.bash({ command: "printf '%8192s' x" });
+			const large = await tools.bash({ command: "printf 'start%1100000send' x" });
+			return {
+				small, empty, failed,
+				medium: { ...medium, output: medium.output === " ".repeat(8191) + "x" },
+				large: {
+					...large,
+					output: [large.output.slice(0, 5), large.output.includes("bytes omitted"), large.output.slice(-4)],
+				},
+			};
+		`,
 		);
 		expect(result.isError).toBe(false);
-		expect(resultText(result)).toBe('["out\\n",3,"number"]');
+		const value = JSON.parse(resultText(result)) as { large: { full_output_path?: string } };
+		const path = value.large.full_output_path;
+		try {
+			expect(value).toEqual({
+				small: { output: "small", truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				empty: { output: "", truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				failed: { output: "out", truncated: false, exit_code: 3, wall_time_seconds: expect.any(Number) },
+				medium: { output: true, truncated: false, exit_code: 0, wall_time_seconds: expect.any(Number) },
+				large: {
+					output: ["start", true, "xend"],
+					truncated: true,
+					full_output_path: expect.any(String),
+					exit_code: 0,
+					wall_time_seconds: expect.any(Number),
+				},
+			});
+			if (!path) throw new Error("No full bash output file");
+			expect(readFileSync(path, "utf8")).toBe(`start${" ".repeat(1099999)}xend`);
+		} finally {
+			if (path) rmSync(path, { force: true });
+		}
+	});
+
+	it("keeps partial bash output and warns about earlier steps on timeout", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "bash"],
+			extensionFactories: [
+				createCodemodeExtension(),
+				(pi) => {
+					pi.registerTool(
+						createBashToolDefinition(process.cwd(), {
+							operations: {
+								exec: async (_command, _cwd, { onData }) => {
+									onData(Buffer.from("first step finished"));
+									throw new Error("timeout:1");
+								},
+							},
+						}),
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		const result = await run(harness, 'await tools.bash({ command: "printf first && sleep 60", timeout: 1 });');
+		expect(result.isError).toBe(true);
+		const text = resultText(result);
+		expect(text).toContain("first step finished\n\nCommand timed out after 1 seconds");
+		expect(text).toContain("Earlier steps may have completed.");
+	});
+
+	it.skipIf(process.platform === "win32")("passes shq() values to bash byte for byte", async () => {
+		const harness = await createHarness({
+			initialActiveToolNames: ["codemode", "bash"],
+			extensionFactories: [createCodemodeExtension()],
+		});
+		harnesses.push(harness);
+		const values = [
+			"'single quotes'",
+			'"double quotes"',
+			"`printf expanded`",
+			"$VAR",
+			"$(printf expanded)",
+			" leading and trailing spaces ",
+			"first\nsecond\n",
+			"",
+			"-n",
+			"café 雪 🌱",
+		];
+		const result = await run(
+			harness,
+			`
+				const args = await Promise.all(${JSON.stringify(values)}.map(value => shq(value)));
+				const result = await tools.bash({ command: "set -- " + args.join(" ") + "; printf '%s\\\\0' \\"$@\\" > argv.bin" });
+				return result.exit_code;
+			`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(resultText(result)).toBe("0");
+		// NUL delimiters preserve argument boundaries, even for an empty argument or a trailing newline.
+		expect(readFileSync(join(harness.tempDir, "argv.bin"))).toEqual(Buffer.from(`${values.join("\0")}\0`));
+	});
+
+	it("declares shq() and rejects values that cannot be passed as shell arguments", async () => {
+		const harness = await setup();
+		const codemode = harness.session.agent.state.tools.find((tool) => tool.name === "codemode");
+		expect(codemode?.description).toContain("declare function shq(value: string): Promise<string>;");
+		const result = await run(
+			harness,
+			`const results = await Promise.allSettled([shq(42), shq("bad\\0arg"), shq("\\ud800")]);
+			return results.map(result => result.status === "rejected" ? result.reason.message : result.value);`,
+		);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(JSON.parse(resultText(result))).toEqual([
+			"shq() expects a string",
+			"shq() cannot quote a string containing NUL",
+			"shq() expects well-formed Unicode",
+		]);
 	});
 
 	// https://github.com/earendil-works/pi/issues/10251
