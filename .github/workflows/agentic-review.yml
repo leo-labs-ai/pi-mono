@@ -234,6 +234,8 @@ jobs:
                   name: "Claude Opus 5.5",
                   api: "anthropic-messages",
                   reasoning: true,
+                  thinkingLevelMap: { off: null },
+                  compat: { forceAdaptiveThinking: true },
                   input: ["text", "image"],
                   contextWindow: 1000000,
                   maxTokens: 128000
