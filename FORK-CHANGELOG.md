@@ -6,6 +6,18 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Anthropic SSE CRLF parsing
+
+- **Fixes Anthropic SSE parsing when a CRLF pair splits across network chunks.** The parser consumed a trailing CR at once, so the LF at the start of the next chunk looked like a blank line and dispatched a partial event. It now holds a terminal CR while streaming and consumes it at end of stream. A frame cut off by end of stream after `message_start` and before `message_stop` now raises the existing retryable `Anthropic stream ended before message_stop` error instead of a JSON parse error; no JSON is repaired or invented. Completed malformed frames still fail with the parse error. Upstream report: earendil-works/pi#10390.
+
+### Upstream sync 1.5.1
+
+- **Merges upstream Pi `v1.5.1`** using three-way inputs B `f9a263655` (`v1.5.0`), L `94b0b09fe` (fork head) and U `dd30101cf` (`v1.5.1`). The fork keeps its `@leo-labs-ai/pi-*` package names, its CI and build-gate seams, and its compaction and tool seams. Details: `docs/fork-merge-conflict-log-2026-11-10.md`.
+- **Upstream Chord v2 moved from `next` to the package root.** The merge follows upstream's deletion of the old v1 code and of the issue-triage files. The old manager timeout is obsolete: the fork had already planned its removal.
+- **Adopted upstream's `lovely-mermaid`.**
+- **Rejected upstream's `preview-packages` and `p2-cloud-bundle` workflows.** They publish to upstream infrastructure, which the fork cannot use.
+- **Refreshed the immutable catalog pin to SHA256 `d1cdce8a84fa8b63211a8cda9b2a176fca8155ba2182795284ab31b6631c0914`.** Upstream's older pin lacks the Fable 5.2 entries that 1.5.1 tests require. The fork keeps its Kimi K3 cost override.
+
 ### Upstream sync 1.5.0
 
 - **Merges upstream Pi `v1.5.0`** (from `v1.4.0`). Fork-owned packages keep `@leo-labs-ai/pi-*` names. The new upstream package `@earendil-works/pi-schema` keeps its upstream name, like `chord`, `pi-codemode` and `pi-mcp`. Details: `docs/fork-merge-conflict-log-2026-11-09.md`.
@@ -38,9 +50,12 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ### Added
 
+- **Codemode `await shq(value)`** quotes one string for use as a literal POSIX shell argument without changing the `bash` tool.
 - **`createAgentSession({ omitCwdSection: true })` leaves the `<cwd>` section out of the system prompt.** Sessions in different directories then send byte-identical system prompts and share one prompt-cache entry. The caller must tell the model its directory another way. my-pi's `spawnAgent` uses it so Workflow worktree children share one cache entry again (leo-labs-ai/my-pi#1759). Regression test in `packages/coding-agent/test/system-prompt-updates.test.ts` (red before the change). Default behavior is unchanged.
 
 ### Fixed
+
+- **The Release job no longer fails while opening the version PR because private `p2` has no `CHANGELOG.md`.** `@changesets/config@3.1.4` treats a missing `privatePackages` key as `{ version: true, tag: false }`. With that default, `updateInternalDependencies: "patch"` bumps private `p2` whenever the fixed group bumps, and `changesets/action` then reads `CHANGELOG.md` for every package whose version changed. `"changelog": false` does not create that file, so the action throws `ENOENT` on `apps/p2/CHANGELOG.md` after `changeset version` has already succeeded. `.changeset/config.json` now sets `privatePackages` to `{ version: false, tag: false }`, so private packages are not versioned or tagged. `changeset publish` already skips `private: true`. `p2` stays at `0.0.3`; its exact dependency pins still follow the published packages. No changelog files were added.
 
 - **A non-array `extensions`, `skills`, `prompts` or `themes` value in `settings.json` no longer stops startup (#670).** `"extensions": {}` used to throw `entries is not iterable`. The value is now ignored and reported as a settings warning.
 - **Upstream Sync workflow falls back to `GITHUB_TOKEN` when `UPSTREAM_SYNC_TOKEN` cannot push (#637).** The secret predates the move to `leo-labs-ai`, so every daily run failed with 403 in the stale-branch cleanup. The workflow now tests the secret with a push dry-run first. When `GITHUB_TOKEN` may not open pull requests, the run warns with a compare link instead of failing. The `dry_run` input now works: its conditions compared a boolean with the string `'true'`, so a dry run did the real push.
@@ -74,6 +89,8 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 - **Source internal processes resolve the fork scope from source.** `packages/coding-agent/src/experimental/source-resolver.ts` only applied the `@earendil-works/*` tsconfig aliases, so `@leo-labs-ai/pi-*` imports fell through to package `dist` files — absent on a fresh checkout, which made every `test:mcp-conformance` case fail in CI with `client.ts wrote no report`. It now honors both scopes. The `extensions-discovery` regression for #9863 also creates its fake dependency under `node_modules/@leo-labs-ai/`, matching the name it imports.
 - **Linked extension entries resolve relative imports beside their targets.** Canonicalize the module path before Jiti imports it, matching Node’s default module resolution. This keeps the configured/user-visible link identity while allowing the Tokenjuice policy wrapper to find its existing sibling policy module. A linked-entry regression is red before the fix and green afterward.
 - **Upstream-scoped extensions reuse the fork’s host modules.** Restore `@earendil-works/pi-{coding-agent,agent-core,tui,ai}` aliases (including existing compat/oauth/providers-all entries) in both the unbundled Node loader and embedded virtual modules. Third-party extensions such as the pinned Codex adapter and pi-fff no longer fail to resolve host imports; aliases point at the same module instances, not a second installed runtime.
+- **Compaction distinguishes volatile snapshots from standing constraints (PMF-1).** The prompts keep observation time and source for quota, load, remote heads, and board state and instruct the next agent to re-read them. Split-turn checkpoint requests include the early turn's evidence so newer direct user decisions can clear stale blockers.
+- **Codemode keeps error names and messages in JSON**, including `Promise.allSettled()` rejection reasons. Bash timeouts still show partial output and now warn that earlier steps may have completed. Tool descriptions are unchanged.
 
 ### Changed
 

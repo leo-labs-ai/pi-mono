@@ -233,7 +233,7 @@ See [`collectEntriesForBranchSummary()`](https://github.com/earendil-works/pi/bl
 
 ## Summary Format
 
-Both formats include Goal, Constraints & Preferences, Progress, Key Decisions, and Next Steps. Compaction summaries also include Critical Context. Branch summaries stop after Next Steps. Pi appends file lists to either format when relevant.
+Both formats include Goal, Constraints & Preferences, Progress, Key Decisions, and Next Steps. Compaction summaries also include Critical Context and Volatile Snapshots (readings of quota, machine load, remote heads, and board state recorded with their observation time and source, to be re-read before use). Branch summaries stop after Next Steps. Pi appends file lists to either format when relevant.
 
 Compaction summaries use this format:
 
@@ -262,6 +262,9 @@ Compaction summaries use this format:
 
 ## Critical Context
 - [Data needed to continue]
+
+## Volatile Snapshots
+- [Reading; observed at; source; re-read before use, or "(none)"]
 
 <read-files>
 path/to/file1.ts

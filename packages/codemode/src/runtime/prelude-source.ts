@@ -17,8 +17,8 @@
  * with a successful "done".
  *
  * Evaluates to a function `(bridge, toolsJson, globalsJson, storeJson) => { settle, run, stalled }`.
- * `settle(id, ok, payload, propertiesJson)` settles call `id`; a rejection's `Error` gets the own properties of the
- * `propertiesJson` object, except `name`, `message`, and `stack`.
+ * `settle(id, ok, payload, propertiesJson, errorName)` settles call `id`; a rejection's `Error` gets the own
+ * properties of the `propertiesJson` object, except `name`, `message`, and `stack`.
  * `toolsJson` lists `{ name, jsName, description }`: `tools[jsName]` and `tools[name]` call the
  * tool, and `ALL_TOOLS` lists `{ name: jsName, description }`.
  * `stalled()` reports a script that has not finished while no host call is pending: with no timers
@@ -47,6 +47,13 @@ const IMAGE_HELPER_EXPECTS =
 
 export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson, storeJson) {
 	"use strict";
+
+	// Error's name and message are not enumerable. Keep them in JSON, including nested rejection reasons.
+	Object.defineProperty(Error.prototype, "toJSON", {
+		value() { return { ...this, name: String(this.name), message: String(this.message) }; },
+		writable: true,
+		configurable: true,
+	});
 
 	// Freeze every object reachable from the built-in globals, plus the intrinsics that are only
 	// reachable from instances (iterator and generator prototypes, %TypedArray%).
@@ -173,6 +180,8 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	function format(value) {
 		if (typeof value === "string") return value;
 		if (value instanceof ErrorCtor) return errorText(value);
+		// JSON.stringify turns NaN and Infinity into "null".
+		if (typeof value === "number") return String(value);
 		try {
 			const json = stringify(value);
 			return json === undefined ? String(value) : json;
@@ -223,6 +232,15 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	}
 	Object.freeze(tools);
 	Object.freeze(allTools);
+
+	// Only summarize direct output of the original catalog, not explicit copies or projections.
+	function summarizeToolCatalog(value) {
+		const limit = 20;
+		if (value !== allTools || allTools.length <= limit) return value;
+		const names = allTools.slice(0, limit).map((tool) => tool.name).join(", ");
+		return "ALL_TOOLS: " + allTools.length + " tools (first " + limit + "): " + names +
+			"\\nUse searchTools(query) to find tools and describeTool(name) for details.";
+	}
 
 	// Reading a member that does not exist throws an error that names the close matches, instead of
 	// a later "not a function". \`in\` checks still work.
@@ -366,7 +384,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	function text(value) {
 		let rendered;
 		try {
-			rendered = outputText(value);
+			rendered = outputText(summarizeToolCatalog(value));
 		} catch (error) {
 			throw new TypeErrorCtor(error instanceof ErrorCtor ? error.message : String(error));
 		}
@@ -443,7 +461,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	const console = {};
 	for (const level of ["log", "info", "warn", "error", "debug"]) {
 		console[level] = (...args) => {
-			output("console", args.map(format).join(" "));
+			output("console", args.map((value) => format(summarizeToolCatalog(value))).join(" "));
 		};
 	}
 	Object.freeze(console);
@@ -456,12 +474,15 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 	Object.defineProperty(globalThis, "exit", { value: exit, enumerable: true });
 
 	return {
-		settle(id, ok, payload, propertiesJson) {
+		settle(id, ok, payload, propertiesJson, errorName) {
 			const entry = pending.get(id);
 			if (!entry) return;
 			pending.delete(id);
 			if (!ok) {
 				const error = new ErrorCtor(payload);
+				if (errorName !== undefined && errorName !== error.name) {
+					Object.defineProperty(error, "name", { value: errorName, writable: true, configurable: true });
+				}
 				if (propertiesJson !== undefined) {
 					const properties = parse(propertiesJson);
 					for (const key of Object.keys(properties)) {
@@ -494,7 +515,7 @@ export const PRELUDE_SOURCE: string = `(function (bridge, toolsJson, globalsJson
 				(value) => {
 					let json;
 					try {
-						json = serialize(value);
+						json = serialize(summarizeToolCatalog(value));
 					} catch (error) {
 						done(false, describeError(error));
 						return;

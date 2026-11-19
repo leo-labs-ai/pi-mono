@@ -28,6 +28,7 @@ The result starts with `Script completed` or `Script failed`, the wall time, and
 | `return value` | A top-level `return` adds the value like `text()`. |
 | `exit()` | End the script successfully. |
 | `store(key, value)` / `load(key)` | Keep small JSON values across `codemode` calls. See [Store values](#store-values). |
+| `await shq(value)` | Quote one string as a POSIX shell argument. Insert it without surrounding quotes, e.g. `"grep -F -- " + await shq(pattern) + " file.txt"`. Quoting does not stop the command from interpreting options; use `--` where supported. NUL and unpaired surrogates are rejected. |
 | `ALL_TOOLS` | Every callable tool as `{ name, description }`, including tools the description does not list. |
 | `searchTools(query, { limit?, namespace? })` | Rank callable tools by relevance (BM25, default limit 8). Resolves to `{ name, description }[]`. |
 | `describeTool(name)` | Resolves to a tool's description and TypeScript declaration, or `undefined`. |

@@ -1,4 +1,5 @@
-import type { Draft, JsonValue } from "@earendil-works/chord";
+import type { Draft } from "@earendil-works/chord/delta";
+import type { JsonValue } from "@earendil-works/chord/json";
 import { type ConversationId, defineDoc, defineDocFamily, type JsonObject, type TaskId } from "@leo-labs-ai/pi-durable";
 import { describe, expect, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
