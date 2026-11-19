@@ -4,6 +4,9 @@ import { execFileSync } from "node:child_process";
 
 const DEFAULT_BASE_REF = process.env.CHANGELOG_BASE_REF ?? "origin/main";
 const diffRange = process.argv[2] ?? `${DEFAULT_BASE_REF}...HEAD`;
+const SEMVER = String.raw`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`;
+const AI_MANIFEST = "packages/ai/package.json";
+const AI_VERSION_MODULE = "packages/ai/src/utils/version.ts";
 
 function git(args) {
 	return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -53,10 +56,9 @@ function isVersionLine(content) {
 	// A package's own version bump or an internal @leo-labs-ai/* dependency pin bump, e.g.
 	//   "version": "0.80.3",
 	//   "@leo-labs-ai/pi-ai": "0.80.3",
-	const semver = String.raw`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`;
 	return (
-		new RegExp(String.raw`^"version":\s*"${semver}",?$`).test(content) ||
-		new RegExp(String.raw`^"@leo-labs-ai/[^"]+":\s*"[~^]?${semver}",?$`).test(content)
+		new RegExp(String.raw`^"version":\s*"${SEMVER}",?$`).test(content) ||
+		new RegExp(String.raw`^"@leo-labs-ai/[^"]+":\s*"[~^]?${SEMVER}",?$`).test(content)
 	);
 }
 
@@ -87,6 +89,42 @@ function isVersionOnlyPackageJson(path) {
 	return sawChange;
 }
 
+function patchLines(diff) {
+	const firstHunk = diff.indexOf("\n@@ ");
+	if (firstHunk === -1) return [];
+	return diff.slice(firstHunk).split("\n").filter((line) => /^[+-]/.test(line));
+}
+
+// sync-versions.js mirrors pi-ai's manifest in this file so browsers do not
+// need to read package.json. Exempt only that substitution, with matching old
+// and new manifest versions in the same diff; do not exempt the file itself.
+function isGeneratedAiVersion(path) {
+	if (path !== AI_VERSION_MODULE) return false;
+	try {
+		const diff = (comparison, file) => git(["diff", "--unified=0", comparison, "--", file]);
+		const committed = diff(diffRange, path);
+		const staged = diff("--cached", path);
+		if (committed && (staged || diff("--cached", AI_MANIFEST))) return false;
+		const manifestChanges = patchLines(diff(committed ? diffRange : "--cached", AI_MANIFEST));
+		const manifestVersion = (sign) =>
+			manifestChanges
+				.filter((line) => line.startsWith(sign))
+				.map((line) => line.slice(1).trim().match(new RegExp(String.raw`^"version":\s*("${SEMVER}"),?$`))?.[1])
+				.filter(Boolean);
+		const before = manifestVersion("-");
+		const after = manifestVersion("+");
+		if (before.length !== 1 || after.length !== 1 || before[0] === after[0]) return false;
+		const changes = patchLines(committed || staged);
+		return (
+			changes.length === 2 &&
+			changes[0] === `-export const PI_AI_VERSION = ${before[0]};` &&
+			changes[1] === `+export const PI_AI_VERSION = ${after[0]};`
+		);
+	} catch {
+		return false;
+	}
+}
+
 function isIgnored(path) {
 	return (
 		isChangelog(path) ||
@@ -94,7 +132,8 @@ function isIgnored(path) {
 		isTestOnly(path) ||
 		path.startsWith(".github/") ||
 		isLockfile(path) ||
-		isVersionOnlyPackageJson(path)
+		isVersionOnlyPackageJson(path) ||
+		isGeneratedAiVersion(path)
 	);
 }
 
