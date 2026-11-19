@@ -6,6 +6,10 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Release versioning
+
+- **Changesets no longer bumps the vendored `@earendil-works/chord`.** Chord depends on `@leo-labs-ai/pi-telemetry`, so `changeset version` bumped it as a dependent and rewrote its pins in `pi-durable`, `pi-env` and `apps/p2`, which failed the changelog gate on the version PR and would have tried to publish an upstream package. `.changeset/config.json` now sets `bumpVersionsWithWorkspaceProtocolOnly` (no fork pin uses `workspace:`, so Changesets bumps only packages with a changeset or in the fixed group) and adds `@leo-labs-ai/pi-env` to the fixed group so it stays in lockstep. `scripts/sync-versions.js`, run by `version-packages`, rewrites the internal `@leo-labs-ai/*` pins. Vendored packages keep their upstream versions.
+
 ### Anthropic SSE CRLF parsing
 
 - **Fixes Anthropic SSE parsing when a CRLF pair splits across network chunks.** The parser consumed a trailing CR at once, so the LF at the start of the next chunk looked like a blank line and dispatched a partial event. It now holds a terminal CR while streaming and consumes it at end of stream. A frame cut off by end of stream after `message_start` and before `message_stop` now raises the existing retryable `Anthropic stream ended before message_stop` error instead of a JSON parse error; no JSON is repaired or invented. Completed malformed frames still fail with the parse error. Upstream report: earendil-works/pi#10390.
