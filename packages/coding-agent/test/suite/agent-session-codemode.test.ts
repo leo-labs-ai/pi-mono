@@ -142,6 +142,24 @@ describe("AgentSession codemode tool", () => {
 		return harness;
 	}
 
+	it("writes the documented Markdown example, including its backticks", async () => {
+		const harness = await setup();
+		harness.session.setActiveToolsByName(["write", "codemode"]);
+		const docs = readFileSync(new URL("../../docs/codemode.md", import.meta.url), "utf8");
+		const code = /```js\n(await tools\.write\([^\n]+)\n```/.exec(docs)?.[1];
+		if (!code) throw new Error("Missing CodeMode Markdown example");
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("codemode", { code }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await harness.session.prompt("write notes with inline Markdown code");
+
+		const result = codemodeResult(harness);
+		expect(result.isError, resultText(result)).toBe(false);
+		expect(readFileSync(join(harness.tempDir, "notes.md"), "utf8")).toBe("# Notes\nUse `code` here.\n");
+	});
+
 	it("presents callable tools per codemode.mode", async () => {
 		const harness = await setup();
 		const description = (name: string) =>

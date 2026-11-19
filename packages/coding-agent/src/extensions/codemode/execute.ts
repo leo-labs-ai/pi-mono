@@ -396,7 +396,7 @@ function formatError(
 		error.phase === "parse" &&
 		error.name === "SyntaxError" &&
 		/\b(?:content|markdown)\s*[:=]\s*`/i.test(code)
-			? "\n\nA template literal may contain unescaped backticks or ${. Put file contents in a separate string with escaped backticks and \\${, or use the write tool directly when available."
+			? "\n\nA template literal may contain unescaped backticks or ${. Use a quoted string with escaped newlines, keep the template literal with escaped backticks and \\${, or use the write tool directly when available."
 			: "";
 	return `${head}${hint}\n\n${formatCallSummary(calls)}`;
 }

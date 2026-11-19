@@ -144,7 +144,7 @@ function discardOutput(memory: { readonly buffer: ArrayBufferLike }) {
 	};
 }
 
-function describeException(error: JSException): string {
+function describeParseException(error: JSException): string {
 	const head = error.message ? `${error.name}: ${error.message}` : error.name;
 	const stack = error.stack?.trimEnd();
 	return JSON.stringify({
@@ -333,7 +333,7 @@ export async function startVm(options: StartVmOptions): Promise<VmSession> {
 			fn = vm.evalCode(`(async (tools, console) => {${data.code}\n})`, "codemode.js");
 		} catch (error) {
 			if (!(error instanceof JSException)) throw error;
-			post({ type: "done", ok: false, error: describeException(error) });
+			post({ type: "done", ok: false, error: describeParseException(error) });
 			return session;
 		}
 		vm.callFunction(run, api, fn).dispose();
