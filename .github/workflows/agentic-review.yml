@@ -226,9 +226,13 @@ jobs:
             if (.providers // {} | type) != "object" then error("ci-models.json providers must be an object") else . end
             | .providers = ((.providers // {}) | del(."claude-bridge") | .clawrouter = {
                 name: "ClawRouter",
-                baseUrl: "https://clawrouter.openclaw.ai",
+                baseUrl: "https://clawrouter.myhorizon.co.za",
                 api: "anthropic-messages",
                 apiKey: "$CLAWROUTER_API_KEY",
+                headers: {
+                  "CF-Access-Client-Id": "$CF_ACCESS_CLIENT_ID",
+                  "CF-Access-Client-Secret": "$CF_ACCESS_CLIENT_SECRET"
+                },
                 models: [{
                   id: "anthropic/claude-opus-5-5",
                   name: "Claude Opus 5.5",
@@ -286,9 +290,11 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         env:
           CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          if [ -z "${CLAWROUTER_API_KEY:-}" ]; then
-            echo "::error::Required repository secret CLAWROUTER_API_KEY is not configured"
+          if [ -z "${CLAWROUTER_API_KEY:-}" ] || [ -z "${CF_ACCESS_CLIENT_ID:-}" ] || [ -z "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+            echo "::error::Required repository secrets CLAWROUTER_API_KEY, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must all be configured"
             exit 1
           fi
 
@@ -296,6 +302,8 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         env:
           CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         # Fail loudly and specifically if the profile can't boot against this fork,
         # instead of the cryptic "no review result produced" from a crashed pi.
         run: |
@@ -322,7 +330,7 @@ jobs:
           JS
           # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
           set -e
-          echo "model request provider=clawrouter endpoint=https://clawrouter.openclaw.ai model=anthropic/claude-opus-5-5"
+          echo "model request provider=clawrouter endpoint=https://clawrouter.myhorizon.co.za model=anthropic/claude-opus-5-5"
           if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
             STATUS=0
           else
@@ -355,6 +363,8 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           ADVISORY: ${{ needs.gate.outputs.advisory_only }}
           CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p /tmp/agentic-review
           AR="$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review"
