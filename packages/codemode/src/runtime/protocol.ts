@@ -69,6 +69,8 @@ export type HostToWorkerMessage =
 		id: number;
 		ok: boolean;
 		payload: string | undefined;
+		/** Name of the host error when `ok: false`, if the tool threw an Error. */
+		errorName?: string;
 		seq?: number;
 		now?: number;
 		/** Deterministic mode, `ok: false`: a JSON object whose properties the script's `Error` gets. */
