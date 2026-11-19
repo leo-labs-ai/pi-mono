@@ -4,6 +4,9 @@ import { execFileSync } from "node:child_process";
 
 const DEFAULT_BASE_REF = process.env.CHANGELOG_BASE_REF ?? "origin/main";
 const diffRange = process.argv[2] ?? `${DEFAULT_BASE_REF}...HEAD`;
+const SEMVER = String.raw`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`;
+const AI_MANIFEST = "packages/ai/package.json";
+const AI_VERSION_MODULE = "packages/ai/src/utils/version.ts";
 
 function git(args) {
 	return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -44,7 +47,7 @@ function isTestOnly(path) {
 }
 
 // Generated lockfiles have no documentable surface. Match by basename, not an exact root
-// path: the fork's npm-shrinkwrap.json lives at packages/coding-agent/npm-shrinkwrap.json.
+// path, so a lockfile nested in a workspace is ignored too.
 function isLockfile(path) {
 	return /(^|\/)(package-lock\.json|npm-shrinkwrap\.json)$/.test(path);
 }
@@ -53,10 +56,9 @@ function isVersionLine(content) {
 	// A package's own version bump or an internal @leo-labs-ai/* dependency pin bump, e.g.
 	//   "version": "0.80.3",
 	//   "@leo-labs-ai/pi-ai": "0.80.3",
-	const semver = String.raw`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?`;
 	return (
-		new RegExp(String.raw`^"version":\s*"${semver}",?$`).test(content) ||
-		new RegExp(String.raw`^"@leo-labs-ai/[^"]+":\s*"[~^]?${semver}",?$`).test(content)
+		new RegExp(String.raw`^"version":\s*"${SEMVER}",?$`).test(content) ||
+		new RegExp(String.raw`^"@leo-labs-ai/[^"]+":\s*"[~^]?${SEMVER}",?$`).test(content)
 	);
 }
 
@@ -87,6 +89,45 @@ function isVersionOnlyPackageJson(path) {
 	return sawChange;
 }
 
+function patchLines(diff) {
+	const firstHunk = diff.indexOf("\n@@ ");
+	if (firstHunk === -1) return [];
+	return diff.slice(firstHunk).split("\n").filter((line) => /^[+-]/.test(line));
+}
+
+// sync-versions.js mirrors pi-ai's manifest in this file so browsers do not
+// need to read package.json. Exempt only that substitution, with matching old
+// and new manifest versions in the same diff; do not exempt the file itself.
+function isGeneratedAiVersion(path) {
+	if (path !== AI_VERSION_MODULE) return false;
+	try {
+		const diff = (comparison, file) => git(["diff", "--unified=0", comparison, "--", file]);
+		const committed = diff(diffRange, path);
+		const staged = diff("--cached", path);
+		if (committed && (staged || diff("--cached", AI_MANIFEST))) return false;
+		const comparison = committed ? diffRange : "--cached";
+		const manifestDiff = git(["diff", "--raw", "--no-abbrev", "--no-renames", comparison, "--", AI_MANIFEST]);
+		const blobs = /^:\d+ \d+ ([0-9a-f]+) ([0-9a-f]+) M\t/.exec(manifestDiff);
+		if (!blobs) return false;
+		const version = (blob) => JSON.parse(git(["cat-file", "blob", blob])).version;
+		const before = version(blobs[1]);
+		const after = version(blobs[2]);
+		const semver = new RegExp(`^${SEMVER}$`);
+		if (before === after || typeof before !== "string" || typeof after !== "string") return false;
+		if (!semver.test(before) || !semver.test(after)) return false;
+		const sourceDiff = committed || staged;
+		if (/^old mode /m.test(sourceDiff)) return false;
+		const changes = patchLines(sourceDiff);
+		return (
+			changes.length === 2 &&
+			changes[0] === `-export const PI_AI_VERSION = "${before}";` &&
+			changes[1] === `+export const PI_AI_VERSION = "${after}";`
+		);
+	} catch {
+		return false;
+	}
+}
+
 function isIgnored(path) {
 	return (
 		isChangelog(path) ||
@@ -94,7 +135,8 @@ function isIgnored(path) {
 		isTestOnly(path) ||
 		path.startsWith(".github/") ||
 		isLockfile(path) ||
-		isVersionOnlyPackageJson(path)
+		isVersionOnlyPackageJson(path) ||
+		isGeneratedAiVersion(path)
 	);
 }
 
