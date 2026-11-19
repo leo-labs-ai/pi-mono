@@ -226,13 +226,9 @@ jobs:
             if (.providers // {} | type) != "object" then error("ci-models.json providers must be an object") else . end
             | .providers = ((.providers // {}) | del(."claude-bridge") | .clawrouter = {
                 name: "ClawRouter",
-                baseUrl: "https://clawrouter.myhorizon.co.za",
+                baseUrl: "http://127.0.0.1:9100",
                 api: "anthropic-messages",
-                apiKey: "$CLAWROUTER_API_KEY",
-                headers: {
-                  "CF-Access-Client-Id": "$CF_ACCESS_CLIENT_ID",
-                  "CF-Access-Client-Secret": "$CF_ACCESS_CLIENT_SECRET"
-                },
+                apiKey: "injected-by-sidecar",
                 models: [{
                   id: "anthropic/claude-opus-5-5",
                   name: "Claude Opus 5.5",
@@ -260,7 +256,7 @@ jobs:
           {
             "defaultProvider": "clawrouter",
             "defaultModel": "anthropic/claude-opus-5-5",
-            "enabledModels": ["clawrouter/*"],
+            "enabledModels": ["clawrouter/anthropic/claude-opus-5-5"],
             "defaultTools": ["+Workflow"],
             "extensions": $EXTENSIONS
           }
@@ -286,7 +282,12 @@ jobs:
           # The extensions load in place from my-pi@main source (including the
           # Workflow tool). Local paths need no `pi install`/download.
 
-      - name: Verify ClawRouter credential is configured
+      # Credentials stay out of pi's environment: the review runs PR-influenced
+      # tool calls (Bash inherits pi's env), so a local sidecar on 127.0.0.1:9100
+      # adds the ClawRouter key and Cloudflare Access service-token headers and
+      # forwards to lue-kube ClawRouter. The sidecar reads them from stdin, so its
+      # own process environment does not hold them either.
+      - name: Start ClawRouter credential sidecar
         if: env.RUN_REVIEW == 'true'
         env:
           CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
@@ -297,13 +298,36 @@ jobs:
             echo "::error::Required repository secrets CLAWROUTER_API_KEY, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must all be configured"
             exit 1
           fi
+          cat > "$RUNNER_TEMP/clawrouter-sidecar.mjs" <<'JS'
+          import http from "node:http";
+          import https from "node:https";
+          const chunks = [];
+          for await (const c of process.stdin) chunks.push(c);
+          const [key, id, secret] = Buffer.concat(chunks).toString("utf8").split("\n");
+          const UPSTREAM = "clawrouter.myhorizon.co.za";
+          http.createServer((req, res) => {
+            if (req.url === "/health") { res.end("ok"); return; }
+            const headers = { ...req.headers, host: UPSTREAM, "x-api-key": key, "cf-access-client-id": id, "cf-access-client-secret": secret };
+            delete headers.authorization;
+            const up = https.request({ host: UPSTREAM, port: 443, method: req.method, path: req.url, headers }, (r) => {
+              res.writeHead(r.statusCode ?? 502, r.headers);
+              r.pipe(res);
+            });
+            up.on("error", (e) => { res.writeHead(502); res.end(`sidecar upstream error: ${e.code ?? e.message}`); });
+            req.pipe(up);
+          }).listen(9100, "127.0.0.1", () => console.log("clawrouter sidecar listening on 127.0.0.1:9100"));
+          JS
+          printf '%s\n%s\n%s' "$CLAWROUTER_API_KEY" "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" \
+            | env -u CLAWROUTER_API_KEY -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
+              nohup node "$RUNNER_TEMP/clawrouter-sidecar.mjs" > /tmp/clawrouter-sidecar.log 2>&1 &
+          for _ in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:9100/health >/dev/null; then echo "clawrouter sidecar up"; exit 0; fi
+            sleep 1
+          done
+          echo "clawrouter sidecar failed to start"; cat /tmp/clawrouter-sidecar.log; exit 1
 
       - name: Boot smoke (actions profile loads against this fork)
         if: env.RUN_REVIEW == 'true'
-        env:
-          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         # Fail loudly and specifically if the profile can't boot against this fork,
         # instead of the cryptic "no review result produced" from a crashed pi.
         run: |
@@ -330,7 +354,7 @@ jobs:
           JS
           # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
           set -e
-          echo "model request provider=clawrouter endpoint=https://clawrouter.myhorizon.co.za model=anthropic/claude-opus-5-5"
+          echo "model request provider=clawrouter endpoint=https://clawrouter.myhorizon.co.za (via 127.0.0.1:9100 sidecar) model=anthropic/claude-opus-5-5"
           if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
             STATUS=0
           else
@@ -362,9 +386,6 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           ADVISORY: ${{ needs.gate.outputs.advisory_only }}
-          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           mkdir -p /tmp/agentic-review
           AR="$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review"

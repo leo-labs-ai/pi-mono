@@ -1,0 +1,29 @@
+name: clawrouter-probe
+on:
+  workflow_dispatch:
+  push:
+    branches: ["lue/pmf4-review-clawrouter-access"]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Start the review workflow's sidecar exactly as written
+        env:
+          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          RUN_REVIEW: "true"
+        run: |
+          yq -r '.jobs.review.steps[] | select(.name == "Start ClawRouter credential sidecar") | .run' .github/workflows/agentic-review.yml > "$RUNNER_TEMP/start.sh"
+          bash -e "$RUNNER_TEMP/start.sh"
+      - name: One tiny request through the sidecar (no credentials in this step)
+        run: |
+          code=$(curl -sS -o /tmp/r.json -w '%{http_code}' -X POST http://127.0.0.1:9100/v1/messages \
+            -H "anthropic-version: 2023-06-01" -H 'content-type: application/json' \
+            -d '{"model":"anthropic/claude-opus-5-5","max_tokens":16,"messages":[{"role":"user","content":"Reply with exactly: READY"}]}')
+          echo "provider=clawrouter endpoint=https://clawrouter.myhorizon.co.za via sidecar key=pi_mono_review_ci status=$code"
+          jq -c '{model, type, stop_reason, text: (.content[0].text // null), error: (.error.message // null)}' /tmp/r.json 2>/dev/null || head -c 300 /tmp/r.json
+          [ "$code" = 200 ]
