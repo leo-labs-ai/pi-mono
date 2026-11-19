@@ -151,7 +151,7 @@ jobs:
         if: env.RUN_REVIEW == 'true'
         run: npm install --prefix "$RUNNER_TEMP/ar" @valkyriweb/agentic-review@0.1.0
 
-      # Skills (private) + bridge (private) — need a PAT with repo read.
+      # Skills (private) — need a PAT with repo read.
       - name: Checkout skills (agent-scripts)
         if: env.RUN_REVIEW == 'true'
         uses: actions/checkout@v7
@@ -171,14 +171,6 @@ jobs:
           repository: valkyriweb/skills
           path: skills-sot
           token: ${{ secrets.GH_CLONE_TOKEN }}
-      - name: Checkout claude-bridge
-        if: env.RUN_REVIEW == 'true'
-        uses: actions/checkout@v7
-        with:
-          repository: leo-labs-ai/pi-claude-bridge
-          path: pi-claude-bridge
-          token: ${{ secrets.GH_ORG_CLONE_TOKEN }}
-
       # Detect the rusty-review engine across the SoT layouts instead of hardcoding
       # one path, and FAIL LOUDLY if it is absent — a missing engine must break the
       # required check, never silently pass as a manual review (issue #318).
@@ -225,11 +217,32 @@ jobs:
         # ~/.npmrc configured above provides GitHub Packages auth. --ignore-scripts:
         # pi loads the .ts extensions directly (jiti), so no build postinstall.
         run: npm --prefix my-pi ci --ignore-scripts
-      - name: Stage pi agent config (bridge provider + actions profile source + skills)
+      - name: Stage pi agent config (ClawRouter provider + actions profile source + skills)
         if: env.RUN_REVIEW == 'true'
         run: |
           mkdir -p "$HOME/.pi/agent"
           cp "$RUNNER_TEMP/ar/node_modules/@valkyriweb/agentic-review/ci-models.json" "$HOME/.pi/agent/models.json"
+          jq '
+            if (.providers // {} | type) != "object" then error("ci-models.json providers must be an object") else . end
+            | .providers = ((.providers // {}) | del(."claude-bridge") | .clawrouter = {
+                name: "ClawRouter",
+                baseUrl: "http://127.0.0.1:9100",
+                api: "anthropic-messages",
+                apiKey: "injected-by-sidecar",
+                models: [{
+                  id: "anthropic/claude-opus-5-5",
+                  name: "Claude Opus 5.5",
+                  api: "anthropic-messages",
+                  reasoning: true,
+                  thinkingLevelMap: { off: null },
+                  compat: { forceAdaptiveThinking: true },
+                  input: ["text", "image"],
+                  contextWindow: 1000000,
+                  maxTokens: 128000
+                }]
+              })
+          ' "$HOME/.pi/agent/models.json" > "$RUNNER_TEMP/clawrouter-models.json"
+          mv "$RUNNER_TEMP/clawrouter-models.json" "$HOME/.pi/agent/models.json"
           # Load the actions profile's extension list minus native-tool-overrides
           # and tool-search: they call fork extension APIs (pi.hooks, pi.harness,
           # pi.getExtensionConfig, pi.tools deferral) that fork 1.0.x does not have,
@@ -241,9 +254,9 @@ jobs:
             "$PROFILE/package.json")
           cat > "$HOME/.pi/agent/settings.json" <<EOF
           {
-            "defaultProvider": "claude-bridge",
-            "defaultModel": "claude-opus-4-8",
-            "enabledModels": ["claude-bridge/*"],
+            "defaultProvider": "clawrouter",
+            "defaultModel": "anthropic/claude-opus-5-5",
+            "enabledModels": ["clawrouter/anthropic/claude-opus-5-5"],
             "defaultTools": ["+Workflow"],
             "extensions": $EXTENSIONS
           }
@@ -269,20 +282,57 @@ jobs:
           # The extensions load in place from my-pi@main source (including the
           # Workflow tool). Local paths need no `pi install`/download.
 
-      - name: Start claude-bridge sidecar
+      # Credentials stay out of pi's environment: the review runs PR-influenced
+      # tool calls (Bash inherits pi's env), so a local sidecar on 127.0.0.1:9100
+      # adds the ClawRouter key and Cloudflare Access service-token headers and
+      # forwards to lue-kube ClawRouter. The sidecar reads them from stdin, so its
+      # own process environment does not hold them either.
+      - name: Start ClawRouter credential sidecar
         if: env.RUN_REVIEW == 'true'
+        env:
+          CLAWROUTER_API_KEY: ${{ secrets.CLAWROUTER_API_KEY }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          cd pi-claude-bridge
-          # The bridge repo intentionally has no committed lockfile (gitignored),
-          # so `npm ci` (which requires one) fails — use `npm install`.
-          npm install
-          printf '_BRIDGE_OAUTH_TOKEN=%s\n' '${{ secrets._BRIDGE_OAUTH_TOKEN }}' > .env
-          nohup npm start > /tmp/bridge.log 2>&1 &
+          if [ -z "${CLAWROUTER_API_KEY:-}" ] || [ -z "${CF_ACCESS_CLIENT_ID:-}" ] || [ -z "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+            echo "::error::Required repository secrets CLAWROUTER_API_KEY, CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must all be configured"
+            exit 1
+          fi
+          cat > "$RUNNER_TEMP/clawrouter-sidecar.mjs" <<'JS'
+          import http from "node:http";
+          import https from "node:https";
+          const chunks = [];
+          for await (const c of process.stdin) chunks.push(c);
+          const [key, id, secret] = Buffer.concat(chunks).toString("utf8").split("\n");
+          const UPSTREAM = "clawrouter.myhorizon.co.za";
+          http.createServer((req, res) => {
+            if (req.url === "/health") { res.end("ok"); return; }
+            // Only the Messages API the review uses; ClawRouter's USD 30/month policy cap bounds spend.
+            if (!(req.method === "POST" && /^\/v1\/messages(\/count_tokens)?(\?|$)/.test(req.url ?? ""))) { res.writeHead(403); res.end("sidecar: route not allowed"); return; }
+            const headers = { ...req.headers, host: UPSTREAM, "x-api-key": key, "cf-access-client-id": id, "cf-access-client-secret": secret };
+            delete headers.authorization;
+            const up = https.request({ host: UPSTREAM, port: 443, method: req.method, path: req.url, headers }, (r) => {
+              res.writeHead(r.statusCode ?? 502, r.headers);
+              r.on("error", () => res.destroy());
+              r.pipe(res);
+            });
+            up.on("error", (e) => {
+              if (res.headersSent) { res.destroy(); return; }
+              res.writeHead(502); res.end(`sidecar upstream error: ${e.code ?? e.message}`);
+            });
+            // Abandoned client request: stop upstream generation and billing.
+            res.on("close", () => { if (!res.writableFinished) up.destroy(); });
+            req.pipe(up);
+          }).listen(9100, "127.0.0.1", () => console.log("clawrouter sidecar listening on 127.0.0.1:9100"));
+          JS
+          printf '%s\n%s\n%s' "$CLAWROUTER_API_KEY" "$CF_ACCESS_CLIENT_ID" "$CF_ACCESS_CLIENT_SECRET" \
+            | env -u CLAWROUTER_API_KEY -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
+              nohup node "$RUNNER_TEMP/clawrouter-sidecar.mjs" > /tmp/clawrouter-sidecar.log 2>&1 &
           for _ in $(seq 1 30); do
-            if curl -sf http://127.0.0.1:9100/health >/dev/null; then echo "bridge up"; exit 0; fi
+            if curl -sf http://127.0.0.1:9100/health >/dev/null; then echo "clawrouter sidecar up"; exit 0; fi
             sleep 1
           done
-          echo "bridge failed to start"; cat /tmp/bridge.log; exit 1
+          echo "clawrouter sidecar failed to start"; cat /tmp/clawrouter-sidecar.log; exit 1
 
       - name: Boot smoke (actions profile loads against this fork)
         if: env.RUN_REVIEW == 'true'
@@ -312,6 +362,7 @@ jobs:
           JS
           # Keep errexit enabled; the conditional captures failure without hiding diagnostics.
           set -e
+          echo "model request provider=clawrouter endpoint=https://clawrouter.myhorizon.co.za (via 127.0.0.1:9100 sidecar) model=anthropic/claude-opus-5-5"
           if OUT=$(node packages/coding-agent/dist/cli.js -p "Reply with exactly: READY" 2>&1); then
             STATUS=0
           else
@@ -326,7 +377,7 @@ jobs:
             echo "::error::actions profile failed to load against this fork (extension/API skew) — see output above"; exit 1
           fi
           if ! printf '%s' "$OUT" | grep -q "READY"; then
-            echo "::error::boot smoke got no model reply (bridge/model issue) — see output above"; exit 1
+            echo "::error::boot smoke got no model reply (ClawRouter/model issue) — see output above"; exit 1
           fi
           echo "boot smoke OK"
 
