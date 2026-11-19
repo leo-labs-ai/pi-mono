@@ -15,8 +15,12 @@ import { estimateTokens } from "../../src/core/compaction/index.ts";
 import { createHarness, getUserTexts, type Harness } from "./harness.ts";
 
 type SessionWithCompactionInternals = {
-	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
-	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+	_checkCompaction: (assistantMessage: AssistantMessage, phase?: "pre-prompt" | "post-run") => Promise<boolean>;
+	_runAutoCompaction: (
+		reason: "overflow" | "threshold",
+		willRetry: boolean,
+		continuesTurn?: boolean,
+	) => Promise<boolean>;
 };
 
 function createUsage(totalTokens: number) {
@@ -942,7 +946,7 @@ describe("AgentSession compaction characterization", () => {
 
 		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
-		await sessionInternals._checkCompaction(staleAssistant, false);
+		await sessionInternals._checkCompaction(staleAssistant, "pre-prompt");
 
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
@@ -972,7 +976,7 @@ describe("AgentSession compaction characterization", () => {
 
 		await sessionInternals._checkCompaction(errorAssistant);
 
-		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false, false);
 	});
 
 	it("does not trigger threshold compaction for error messages when no prior usage exists", async () => {

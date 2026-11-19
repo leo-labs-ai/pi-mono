@@ -125,6 +125,8 @@ For split user-message spans, Pi generates two summaries and merges them:
 1. **History summary**: Previous context (if any)
 2. **User-message-span prefix summary**: The early part of the split user-message span
 
+When the agent loop resumes the split turn right after the compaction (threshold compaction after a tool result, or an overflow retry), the summary ends with an instruction to continue the turn, placed after the file lists: the model resumes mid-turn from a checkpoint and would otherwise often answer with a status report and end its turn. The summary stays plain if the cut splits an older turn, if the agent is waiting for a new message, or if you run `/compact` manually.
+
 ### Cut Point Rules
 
 Valid cut points are:

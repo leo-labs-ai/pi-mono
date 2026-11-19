@@ -180,6 +180,7 @@ async function runLoop(
 	let currentContext = initialContext;
 	let config = initialConfig;
 	let lastCompletedTurn: PrepareNextTurnContext | undefined;
+	let continuesAfterTools = false;
 	let explicitContinuation = false;
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
@@ -192,7 +193,7 @@ async function runLoop(
 		while (hasMoreToolCalls || pendingMessages.length > 0) {
 			let preparedMessages: AgentMessage[] = [];
 			if (lastCompletedTurn) {
-				const nextTurnSnapshot = await config.prepareNextTurn?.(lastCompletedTurn);
+				const nextTurnSnapshot = await config.prepareNextTurn?.({ ...lastCompletedTurn, continuesAfterTools });
 				if (nextTurnSnapshot) {
 					currentContext = nextTurnSnapshot.context ?? currentContext;
 					preparedMessages = nextTurnSnapshot.messages ?? [];
@@ -230,6 +231,7 @@ async function runLoop(
 					context: currentContext,
 					model: config.model,
 					thinkingLevel: config.reasoning ?? "off",
+					continuesAfterTools,
 				},
 				signal,
 			);
@@ -286,6 +288,7 @@ async function runLoop(
 				}
 			}
 
+			continuesAfterTools = hasMoreToolCalls;
 			lastCompletedTurn = {
 				message,
 				toolResults,

@@ -921,14 +921,17 @@ export class AgentSession {
 		return { ...system, ...(tools.length > 0 ? { toolsAdded: tools } : {}) };
 	}
 
-	private async _compactBeforeNextAssistantResponse(context: AgentContext): Promise<AgentContext> {
+	private async _compactBeforeNextAssistantResponse(
+		context: AgentContext,
+		continuesTurn: boolean,
+	): Promise<AgentContext> {
 		const projection = this.sessionManager.buildSessionProjection();
 		// A virtual selection is checked in prepareRequest, against the model the request is routed to.
 		const model = this.model;
 		if (!model || isVirtualModel(model) || !this._exceedsCompactionThreshold(model, projection)) {
 			return { ...context, messages: projection.messages };
 		}
-		await this._runAutoCompaction("threshold", false);
+		await this._runAutoCompaction("threshold", false, continuesTurn);
 		return { ...context, messages: this.sessionManager.buildSessionProjection().messages };
 	}
 
@@ -984,7 +987,10 @@ export class AgentSession {
 			// The route stands: the router already decided this request. The state entry does not change
 			// the projection.
 			if (this._exceedsCompactionThreshold(route.model, projection)) {
-				await this._runAutoCompaction("threshold", false);
+				// A custom message can start a fresh run after a terminating tool, so past tool results
+				// are not enough to tell whether this request continues the interrupted turn.
+				const continuesTurn = !userTurn && (failed !== undefined || request.continuesAfterTools === true);
+				await this._runAutoCompaction("threshold", false, continuesTurn);
 				({ previous, context } = await prepare());
 			}
 			return { ...previous, context, model: route.model, thinkingLevel: route.thinkingLevel };
@@ -1050,7 +1056,11 @@ export class AgentSession {
 				? async (_turn: PrepareNextTurnContext, signal?: AbortSignal) => await this.agent.prepareNextTurn?.(signal)
 				: undefined);
 		this.agent.prepareNextTurnWithContext = async (turn, signal) => {
-			const context = await this._compactBeforeNextAssistantResponse(turn.context);
+			// Terminating tools also return results, but don't schedule a continuation.
+			const context = await this._compactBeforeNextAssistantResponse(
+				turn.context,
+				turn.continuesAfterTools === true,
+			);
 			const previousSnapshot = await previousPrepareNextTurnWithContext?.({ ...turn, context }, signal);
 			const nextContext = previousSnapshot?.context ?? context;
 			const runOptions =
@@ -2143,7 +2153,7 @@ export class AgentSession {
 		// The starting message is sent below, so do not call agent.continue() here.
 		const lastAssistant = this._findLastAssistantMessage();
 		if (lastAssistant) {
-			await this._checkCompaction(lastAssistant, false);
+			await this._checkCompaction(lastAssistant, "pre-prompt");
 		}
 
 		const selectedToolsBefore = this._baseSystemPromptOptions.selectedTools;
@@ -2222,7 +2232,7 @@ export class AgentSession {
 			this._retryAttempt = 0;
 		}
 
-		if (await this._checkCompaction(message)) {
+		if (await this._checkCompaction(message, "post-run")) {
 			return !this._agentRunAbortRequested;
 		}
 
@@ -3051,6 +3061,7 @@ export class AgentSession {
 		customInstructions: string | undefined,
 		signal: AbortSignal,
 		reason: "manual" | "threshold" | "overflow",
+		continuesTurn: boolean,
 	): Promise<CompactionResult> {
 		// Resolve the request only when Pi summarizes itself: routing may call models or fail.
 		const request = await this._getSummarizationRequestAuth(model, signal);
@@ -3081,6 +3092,7 @@ export class AgentSession {
 			// ID. This is the ID the main loop sends on every turn (`Agent.sessionId`).
 			this.agent.sessionId,
 			cacheSafeContext,
+			continuesTurn,
 		);
 	}
 
@@ -3175,6 +3187,7 @@ export class AgentSession {
 					customInstructions,
 					this._compactionAbortController.signal,
 					"manual",
+					false,
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -3292,15 +3305,18 @@ export class AgentSession {
 	 * supplies a custom result.
 	 *
 	 * @param assistantMessage The assistant message to check
-	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 * @param phase Whether the post-run loop can retry this turn or a new prompt will replace it
 	 * @returns Whether the post-run loop should call `agent.continue()` for overflow recovery or queued messages
 	 */
-	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<boolean> {
+	private async _checkCompaction(
+		assistantMessage: AssistantMessage,
+		phase: "pre-prompt" | "post-run" = "post-run",
+	): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings(this.model);
 		if (!settings.enabled) return false;
 
-		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
-		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return false;
+		// A cancelled run must not retry, but a new prompt may still compact its history.
+		if (phase === "post-run" && assistantMessage.stopReason === "aborted") return false;
 
 		// Skip overflow check if the message came from a different model.
 		// This handles the case where user switched from a smaller-context model (e.g. opus)
@@ -3360,7 +3376,7 @@ export class AgentSession {
 			// Case 2: the response completed successfully. Compact, but do not retry because
 			// agent.continue() cannot continue from a completed assistant response.
 			if (!willRetry) {
-				return await this._runAutoCompaction("overflow", false);
+				return await this._runAutoCompaction("overflow", false, false);
 			}
 
 			if (this._overflowRecoveryAttempted) {
@@ -3388,7 +3404,8 @@ export class AgentSession {
 			// Persistently omit the selected final attempt before post-run recovery compaction.
 			this._overflowRecoveryAttempted = true;
 			this._omitRecoveryAttempt(assistantMessage);
-			const retry = await this._runAutoCompaction("overflow", willRetry);
+			// Only the post-run loop retries the turn; before a prompt, the new prompt replaces it.
+			const retry = await this._runAutoCompaction("overflow", willRetry, phase === "post-run");
 			if (retry) this._failedResponse = assistantMessage;
 			return retry;
 		}
@@ -3426,7 +3443,7 @@ export class AgentSession {
 			contextTokens = directContextTokens;
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			return await this._runAutoCompaction("threshold", false);
+			return await this._runAutoCompaction("threshold", false, false);
 		}
 		return false;
 	}
@@ -3439,9 +3456,15 @@ export class AgentSession {
 	 *
 	 * @param reason Automatic trigger selected by `_checkCompaction()`
 	 * @param willRetry Whether to continue the interrupted turn after overflow compaction
+	 * @param continuesTurn Whether the agent loop sends the next request for the same turn right after
+	 *   this compaction, so a split turn's summary ends with an instruction to continue
 	 * @returns Whether the post-run loop should call `agent.continue()`
 	 */
-	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+	private async _runAutoCompaction(
+		reason: "overflow" | "threshold",
+		willRetry: boolean,
+		continuesTurn = false,
+	): Promise<boolean> {
 		const model = this.model;
 		const settings = this.settingsManager.getCompactionSettings(model);
 		let abortController: AbortController | undefined;
@@ -3512,6 +3535,7 @@ export class AgentSession {
 					undefined,
 					abortController.signal,
 					reason,
+					continuesTurn,
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;

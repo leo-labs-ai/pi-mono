@@ -174,6 +174,8 @@ export interface PrepareRequestContext {
 	context: AgentContext;
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	/** Tool results from this invocation scheduled the next response, not just queued messages. */
+	continuesAfterTools?: boolean;
 }
 
 /** Replacement runtime state for the provider request being prepared. */
@@ -188,7 +190,10 @@ export type PrepareRequest = (
 	signal?: AbortSignal,
 ) => AgentRequestUpdate | void | Promise<AgentRequestUpdate | undefined> | Promise<void>;
 
-export interface PrepareNextTurnContext extends AgentTurnContext {}
+export interface PrepareNextTurnContext extends AgentTurnContext {
+	/** The loop would request another response for these tool results even without queued messages. */
+	continuesAfterTools?: boolean;
+}
 
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;

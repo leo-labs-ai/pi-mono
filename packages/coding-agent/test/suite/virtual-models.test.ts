@@ -44,7 +44,7 @@ describe("AgentSession virtual models", () => {
 				{ id: "small", contextWindow: 1000 },
 				{ id: "large", contextWindow: 50_000, maxTokens: 4000, reasoning: true },
 			],
-			tools: [echoTool],
+			tools: options.tools ?? [echoTool],
 			extensionFactories: [
 				...(options.extensionFactories ?? []),
 				(pi) => {
@@ -256,37 +256,56 @@ describe("AgentSession virtual models", () => {
 		expect(dispatched().at(-1)).toBe("faux/small:off");
 	});
 
-	it("compacts between turns of a run when the next request is routed to a smaller window", async () => {
-		const route: Route = (request, ctx) =>
-			request.reason === "continuation"
-				? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
-				: defaultRoute(request, ctx);
-		const { harness, dispatched } = await createRoutedHarness(route, {
-			settings: { compaction: { keepRecentTokens: 1, reserveTokens: 0 } },
-			extensionFactories: [
-				(pi) => {
-					pi.on("session_before_compact", async ({ preparation: { firstKeptEntryId, tokensBefore } }) => ({
-						compaction: { summary: "compacted", firstKeptEntryId, tokensBefore },
-					}));
+	it.each([false, true])(
+		"routed threshold compaction resumes only a nonterminating tool turn: %s",
+		async (terminate) => {
+			const route: Route = (request, ctx) =>
+				request.reason === "continuation"
+					? { model: ctx.modelRegistry.find("faux", "small")!, thinkingLevel: "off" }
+					: defaultRoute(request, ctx);
+			const { harness, dispatched } = await createRoutedHarness(route, {
+				settings: { compaction: { keepRecentTokens: 64, reserveTokens: 0 } },
+				tools: [{ ...echoTool, execute: async (...args) => ({ ...(await echoTool.execute(...args)), terminate }) }],
+			});
+			let compactedBeforeSmall = false;
+			let resumedRequest = "";
+			harness.setResponses([
+				fauxAssistantMessage(fauxToolCall("echo", { text: "hi".repeat(200) }), { stopReason: "toolUse" }),
+				fauxAssistantMessage("## Original Request\nEcho the input"),
+				(context) => {
+					compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
+					resumedRequest = JSON.stringify(context.messages);
+					return fauxAssistantMessage("small answer");
 				},
-			],
-		});
-		let compactedBeforeSmall = false;
-		harness.setResponses([
-			fauxAssistantMessage(fauxToolCall("echo", { text: "hi" }), { stopReason: "toolUse" }),
-			() => {
-				compactedBeforeSmall = harness.eventsOfType("compaction_end").length === 1;
-				return fauxAssistantMessage("small answer");
-			},
-		]);
+			]);
 
-		// About 2k tokens fit the large model of the first turn, but not the small model of the second.
-		await harness.session.prompt("x".repeat(8000));
+			// About 2k tokens fit the large model of the first turn, but not the small model of the second.
+			await harness.session.prompt("x".repeat(8000));
+			if (terminate) {
+				expect(harness.eventsOfType("compaction_start")).toHaveLength(0);
+				await harness.session.sendCustomMessage(
+					{ customType: "wake", content: "Start a new task.", display: false },
+					{ triggerTurn: true },
+				);
+			}
 
-		expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
-		expect(compactedBeforeSmall).toBe(true);
-		expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
-	});
+			expect(harness.eventsOfType("compaction_start").map((event) => event.reason)).toEqual(["threshold"]);
+			expect(compactedBeforeSmall).toBe(true);
+			const [summary] = harness.sessionManager
+				.getBranch()
+				.flatMap((entry) => (entry.type === "compaction" ? [entry.summary] : []));
+			expect(summary).toContain("**Turn Context (split turn):**");
+			const end = "Continue it now from this summary and the messages after it; do not stop to report progress.";
+			expect(summary.endsWith(end)).toBe(!terminate);
+			if (terminate) {
+				expect(resumedRequest).not.toContain(end);
+				expect(resumedRequest).toContain("Start a new task.");
+			} else {
+				expect(resumedRequest).toContain(end);
+			}
+			expect(dispatched()).toEqual(["faux/large:high", "faux/small:off"]);
+		},
+	);
 
 	it("projects the session once per request under a virtual selection", async () => {
 		const { harness } = await createRoutedHarness();

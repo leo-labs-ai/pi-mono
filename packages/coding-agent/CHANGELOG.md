@@ -9,6 +9,7 @@ This package's release notes are split:
 
 ## Unreleased
 
+- Fix: an automatic compaction that splits the turn the agent loop is about to resume (threshold compaction after a tool result, or an overflow retry) ends its summary with an instruction to continue the task instead of stopping to report. The model otherwise often answered the mid-turn checkpoint with a status report and ended its turn. Compaction that waits for a new user message, including manual `/compact`, keeps its current text. `compact()` takes an optional trailing `continuesTurn` argument.
 - Fix: quitting fullscreen mode turns mouse reporting off before draining input. Before, pointer motion reports sent during the exit drain could leak into the parent shell as escape text ([#656](https://github.com/leo-labs-ai/pi-mono/issues/656)).
 - Fix: in fullscreen mode, Cmd+C copies the active selection in terminals that forward it as `super+c` (Rex, Kitty protocol). Fullscreen mouse tracking owns the selection, so the terminal had nothing to copy. The new `tui.altScreen.copy` binding defaults to `super+c` ([#656](https://github.com/leo-labs-ai/pi-mono/issues/656)).
 - Fix: compaction checkpoints include the live tool declarations, even before their activation delta is written to the transcript. Legacy compactions without a checkpoint recover one from the preceding session projection, so later tool deltas retain a valid starting state after reload.
