@@ -1,6 +1,6 @@
 {
 	"name": "@leo-labs-ai/pi-durable",
-	"version": "1.5.2",
+	"version": "1.5.3",
 	"description": "Durable conversation, task, and document runtime for Pi",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -161,8 +161,8 @@
 		"@earendil-works/chord": "1.5.2",
 		"@earendil-works/pi-codemode": "1.5.2",
 		"@earendil-works/pi-schema": "1.5.2",
-		"@leo-labs-ai/pi-ai": "1.5.2",
-		"@leo-labs-ai/pi-telemetry": "1.5.2",
+		"@leo-labs-ai/pi-ai": "1.5.3",
+		"@leo-labs-ai/pi-telemetry": "1.5.3",
 		"@silvia-odwyer/photon": "0.3.3",
 		"diff": "8.0.4"
 	},
