@@ -99,7 +99,7 @@ After the version PR merges, the Release run on the merge commit must be green:
 
 - #663 (1.5.3) leaves `PI_AI_VERSION` at 1.5.2; #664 is the proposed generation fix.
 - #663 also bumps public `@earendil-works/chord` through its telemetry dependency; the changed pins
-  in `durable` and `env` fail `check:changelog`. The private-package opt-out does not protect Chord,
-  and publish may try to publish a version missing from npmjs. Stop and ask the maintainer to decide
-  the Chord policy and verify the dependency before allowing Release to regenerate the PR.
+  in `apps/p2`, `durable`, and `env` fail `check:changelog`. The private-package opt-out does not
+  protect Chord, and publish may try to publish a version missing from npmjs. Stop and ask the
+  maintainer to decide the Chord policy and verify the dependency before Release regenerates the PR.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0.

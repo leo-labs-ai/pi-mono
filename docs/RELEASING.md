@@ -181,12 +181,13 @@ explicit, maintainer-reviewed fallback.
   failing `packages/ai/test/identity.test.ts`. #664 fixes generation of the constant, not the
   existing generated branch; rerun generation after the source fixes land.
 - #663 also bumps public `@earendil-works/chord` to 1.5.3 because it depends on
-  `@leo-labs-ai/pi-telemetry`. The resulting Chord pins in `durable` and `env` are not a recognized
-  fork-only version bump, so `check:changelog` asks for changelog updates. #676's private-package
-  opt-out and #664's identity fix do not address this. A version already on npmjs can be skipped by
-  `changeset publish`, but registry presence alone does not establish that the upstream package is
-  compatible. If the version is missing, publish may attempt it and fail, potentially after other
-  packages have been published. The maintainer must decide how to keep Chord on an approved upstream
-  release, verify its resolution, and regenerate a green version PR before approving the release.
+  `@leo-labs-ai/pi-telemetry`. The resulting Chord pins in `apps/p2`, `durable`, and `env` are not a
+  recognized fork-only version bump, so `check:changelog` asks for fork, durable, and env changelog
+  updates. #676's private-package opt-out and #664's identity fix do not address this. A version
+  already on npmjs can be skipped by `changeset publish`, but registry presence alone does not
+  establish that the upstream package is compatible. If the version is missing, publish may
+  attempt it and fail, potentially after other packages have been published. The maintainer must
+  decide how to keep Chord on an approved upstream release, verify its resolution, and regenerate
+  a green version PR before approving the release.
 - `FORK-CHANGELOG.md` has had no version heading cut since 0.82.0; every release since is under
   `[Unreleased]`.
