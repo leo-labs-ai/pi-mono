@@ -137,7 +137,7 @@ import { parseGitUrl } from "../../utils/git.ts";
 import { ensurePngTranscoder } from "../../utils/image-convert.ts";
 import { getCwdRelativePath, shortenHomePath } from "../../utils/paths.ts";
 import { getPiUserAgent } from "../../utils/pi-user-agent.ts";
-import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { killTrackedDetachedChildren, quotePosixArgument } from "../../utils/shell.ts";
 import { loadAllHighlightLanguages } from "../../utils/syntax-highlight.ts";
 import { stripBom } from "../../utils/text.ts";
 import { ensureTool, type ToolStatus } from "../../utils/tools-manager.ts";
@@ -345,7 +345,7 @@ function quoteIfNeeded(value: string): string {
 	if (value.length > 0 && !/[^a-zA-Z0-9_\-./~:@]/.test(value)) {
 		return value;
 	}
-	return `'${value.replace(/'/g, `'\\''`)}'`;
+	return quotePosixArgument(value);
 }
 
 export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
