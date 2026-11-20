@@ -6,6 +6,11 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 
 ## [Unreleased]
 
+### Upstream sync 1.6.0
+
+- **Merges upstream Pi `v1.6.0` (`faac58588`) while keeping the fork package names and release checks.** Refreshes the offline model snapshot for GPT-6.2 Astra, GPT-6.2 Sol and Copilot `mai-code-2`, and applies Biome formatting to 17 Durable tests and examples. The companion vanilla rollout in [my-pi #2105](https://github.com/leo-labs-ai/my-pi/pull/2105) ports the Anthropic SSE CRLF, deferred tool cache, fullscreen follow and scrollback shrink patches. Upstream 1.6.0 covers the read-abort fix.
+- **The fork does not run upstream’s p2-mac nightly publish workflow.** It signs and publishes builds to `pkg.earendil.com`, which the fork does not own.
+
 ### Release versioning
 
 - **Changesets no longer bumps the vendored `@earendil-works/chord`.** Chord depends on `@leo-labs-ai/pi-telemetry`, so `changeset version` bumped it as a dependent and rewrote its pins in `pi-durable`, `pi-env` and `apps/p2`, which failed the changelog gate on the version PR and would have tried to publish an upstream package. `.changeset/config.json` now sets `bumpVersionsWithWorkspaceProtocolOnly` (no fork pin uses `workspace:`, so Changesets bumps only packages with a changeset or in the fixed group) and adds `@leo-labs-ai/pi-env` to the fixed group so it stays in lockstep. `scripts/sync-versions.js`, run by `version-packages`, rewrites the internal `@leo-labs-ai/*` pins. Vendored packages keep their upstream versions.

@@ -200,3 +200,43 @@ test("leaves local and protocol specifiers alone, even when they name a package 
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+test("syncs to the published packages only, not to private fixtures or nested copies of a package", async () => {
+	const root = await mkdtemp(join(tmpdir(), "pi-sync-versions-"));
+	try {
+		await writeManifest(root, "packages/coding-agent", {
+			name: "@leo-labs-ai/pi-coding-agent",
+			version: "2.0.0",
+		});
+		// Leftover output of scripts/build-binaries.sh: a non-private copy of the manifest at an older version.
+		await writeManifest(root, "packages/coding-agent/binaries/darwin-arm64", {
+			name: "@leo-labs-ai/pi-coding-agent",
+			version: "1.0.0",
+		});
+		await writeManifest(root, "packages/chord/test/examples/deps/greeting", {
+			name: "example-greeting",
+			version: "1.0.0",
+			private: true,
+		});
+		await writeManifest(root, "packages/chord/test/examples/plugins/report", {
+			name: "report",
+			private: true,
+			dependencies: { "example-greeting": "file:../../deps/greeting" },
+		});
+		await writeManifest(root, "packages/evals", {
+			name: "@leo-labs-ai/pi-evals",
+			version: "2.0.0",
+			private: true,
+			dependencies: { "@leo-labs-ai/pi-coding-agent": "1.0.0" },
+		});
+
+		const result = runSyncVersions(root);
+		assert.equal(result.status, 0, result.stderr);
+		const evalsManifest = await readManifest(root, "packages/evals");
+		assert.equal(evalsManifest.dependencies["@leo-labs-ai/pi-coding-agent"], "2.0.0");
+		const pluginManifest = await readManifest(root, "packages/chord/test/examples/plugins/report");
+		assert.equal(pluginManifest.dependencies["example-greeting"], "file:../../deps/greeting");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

@@ -15,7 +15,7 @@ const internalPackagePrefix = "@leo-labs-ai/pi-";
 const internalPackageNames = new Set(["@earendil-works/chord", "@earendil-works/pi-codemode", "@earendil-works/pi-mcp", "@earendil-works/pi-schema"]);
 const installPackageName = "@leo-labs-ai/pi-coding-agent-install";
 const allowedInstallScriptPackages = new Map([
-	["@google/genai@2.21.0", "preinstall is a no-op in the published package"],
+	["@google/genai@2.32.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.6", "postinstall only warns about protobufjs version scheme mismatches"],
 	["koffi@2.16.2", "fork keeps koffi optionalDependency for Windows VT input (Shift+Tab); install scripts build the native addon"],
 ]);

@@ -225,7 +225,12 @@ jobs:
         shell: bash
         run: |
           "${{ steps.binary.outputs.binary }}" --help
-          "${{ steps.binary.outputs.binary }}" --version
+          expected="${RELEASE_TAG#v}"
+          actual="$(env -u PI_PACKAGE_DIR "${{ steps.binary.outputs.binary }}" --version)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Release $RELEASE_TAG contains a binary that reports $actual"
+            exit 1
+          fi
           node scripts/smoke-test-codemode-binary.mjs "${{ steps.binary.outputs.binary }}"
 
   stage-github-release:
