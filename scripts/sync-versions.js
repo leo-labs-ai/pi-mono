@@ -4,11 +4,14 @@
  * Validates lockstep versions for published packages, then synchronizes
  * exact internal dependency versions in all workspace packages, including private ones,
  * and in the apps next to the packages directory (`apps/*`, never published).
+ * Only dependencies on published packages are rewritten: private packages, such as the
+ * fixtures in Chord's examples, are referenced by path or git URL and must stay that way.
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { findPackageDirectories, isVendoredUpstreamPackage } from "./package-workspaces.mjs";
+import { getPublicWorkspacePackages } from "./release-packages.mjs";
 
 const GENERATED_PACKAGE_SUFFIXES = [join("coding-agent", "install-lock")];
 
@@ -29,18 +32,17 @@ const workspacePackages = readManifests(
 const appRoot = join(dirname(packageRoot), "apps");
 const appPackages = existsSync(appRoot) ? readManifests(findPackageDirectories(appRoot)) : [];
 
-// Vendored upstream packages are versioned by upstream, so they neither join the
-// fork's lockstep set nor supply versions for the dependency rewrite below.
-const forkOwnedPackages = workspacePackages.filter((pkg) => !isVendoredUpstreamPackage(pkg.data.name));
-const publishedPackages = forkOwnedPackages.filter((pkg) => pkg.data.private !== true);
-const versionMap = new Map(forkOwnedPackages.map((pkg) => [pkg.data.name, pkg.data.version]));
+// Only fork-owned direct releases supply versions. Nested artifacts and
+// vendored upstream packages do not take part in the fork's lockstep.
+const publishedPackages = getPublicWorkspacePackages(packageRoot).filter((pkg) => !isVendoredUpstreamPackage(pkg.name));
+const versionMap = new Map(publishedPackages.map((pkg) => [pkg.name, pkg.version]));
 
 console.log("Current versions:");
-for (const pkg of [...publishedPackages].sort((a, b) => a.data.name.localeCompare(b.data.name))) {
-	console.log(`  ${pkg.data.name}: ${pkg.data.version}`);
+for (const pkg of [...publishedPackages].sort((a, b) => a.name.localeCompare(b.name))) {
+	console.log(`  ${pkg.name}: ${pkg.version}`);
 }
 
-const versions = new Set(publishedPackages.map((pkg) => pkg.data.version));
+const versions = new Set(publishedPackages.map((pkg) => pkg.version));
 if (versions.size > 1) {
 	console.error("\nERROR: Not all non-private packages have the same version.");
 	console.error("Expected lockstep versioning. Run one of:");
