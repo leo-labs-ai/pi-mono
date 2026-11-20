@@ -9,6 +9,7 @@ Release numbers track the fork's GitHub Packages releases, versioned in lockstep
 ### Upstream sync 1.6.0
 
 - **Merges upstream Pi `v1.6.0` (`faac58588`) while keeping the fork package names and release checks.** Refreshes the offline model snapshot for GPT-6.2 Astra, GPT-6.2 Sol and Copilot `mai-code-2`, and applies Biome formatting to 17 Durable tests and examples. The companion vanilla rollout in [my-pi #2105](https://github.com/leo-labs-ai/my-pi/pull/2105) ports the Anthropic SSE CRLF, deferred tool cache, fullscreen follow and scrollback shrink patches. Upstream 1.6.0 covers the read-abort fix.
+- **The fork does not run upstream’s p2-mac nightly publish workflow.** It signs and publishes builds to `pkg.earendil.com`, which the fork does not own.
 
 ### Release versioning
 
